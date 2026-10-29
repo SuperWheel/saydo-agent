@@ -1,0 +1,33 @@
+# 言行策略规则（M0）
+# 阈值是比赛原型参数，不是法定线。风险只升不降：命中任何规则都只会把等级往上调。
+version: m0-2026-10-29
+
+rules:
+  - id: cumulative_outflow
+    window: natural_day              # natural_day；rolling_24h 在 M1 加
+    yellow_max_fen: 100000           # 当日累计转出（已成功 + 待确认预占）≤ 1000 元走 🟡
+    elevate_to: RED
+    reason: "今日累计转出将达 {after} 元，超过 {limit} 元（含待确认金额）"
+
+  - id: new_payee
+    elevate_to: RED                  # 任意金额
+    reason: "首次向该收款人转账"
+
+  - id: velocity
+    window_s: 300
+    max_count: 3                     # 5 分钟内第 3 笔起上浮
+    elevate_to: RED
+    reason: "5 分钟内转账频繁"
+
+  - id: injection_suspected
+    elevate_to: RED
+    reason: "本轮对话含疑似绕过验证的指令"
+
+bank_hard_limits:
+  non_counter_daily_max_fen: 5000000
+  reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"
+
+auth:
+  YELLOW: []
+  RED: [face, sms]                   # 人脸不能作为唯一因子
+  sms_max_attempts: 3

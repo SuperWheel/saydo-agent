@@ -1,0 +1,9 @@
+.env
+data/*.db
+data/*.db-*
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+apps/web/dist/
+.DS_Store

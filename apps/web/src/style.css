@@ -1,0 +1,65 @@
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --text: #1d2330;
+  --muted: #7a8291;
+  --line: #e7eaf0;
+  --brand: #c8102e;
+  --brand-soft: #fbe9ec;
+  --user-bubble: #c8102e;
+  --yellow: #d48806;
+  --yellow-soft: #fff7e6;
+  --red: #cf1322;
+  --red-soft: #fff1f0;
+  --green: #389e0d;
+  --green-soft: #f6ffed;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: #dfe3ea;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+  margin-top: 8px;
+  box-shadow: 0 1px 2px rgba(20, 30, 50, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  padding: 5px 0;
+}
+
+.row .k { color: var(--muted); flex-shrink: 0; }
+.row .v { text-align: right; word-break: break-all; }
+
+.money { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.capital { color: var(--muted); font-size: 12px; }
+.meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+.btns { display: flex; gap: 8px; margin-top: 12px; }
+.btns .van-button { flex: 1; }
+
+.done-mask { color: var(--muted); font-size: 13px; text-align: center; margin-top: 10px; }
