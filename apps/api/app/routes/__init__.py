@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, clock
@@ -18,6 +18,7 @@ from ..db import Base, get_db, get_engine, new_session
 from ..flags import kill_switch_on, set_flag
 from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
+from ..security import breaker
 
 api = APIRouter(prefix="/api")
 admin = APIRouter(prefix="/admin")
@@ -133,6 +134,76 @@ def action_list(db: Session = Depends(get_db)):
     rows = db.scalars(select(PendingAction).order_by(PendingAction.created_at.desc()).limit(50)).all()
     return [{"id": a.id, "level": a.level, "status": a.status, "display": a.display, "reasons": a.reasons,
              "trace_id": a.trace_id, "created_at": a.created_at.isoformat()} for a in rows]
+
+
+# 按 trace 回放：一轮对话从用户消息到执行结果的全部审计事件都带同一个 trace_id（确认、验证沿用出卡时的 trace）
+_OUTCOME_EVENTS = {"execution": None, "execution_failed": "failed", "action_cancelled": "cancelled",
+                   "action_expired": "expired", "action_invalidated": "invalidated", "breaker_blocked": "blocked",
+                   "auth_challenge": "awaiting_auth", "action_created": "pending"}
+
+
+def _trace_summary(trace_id: str, events: list[AuditLog]) -> dict:
+    first = next((e for e in events if e.event_type == "user_message"), None)
+    level, outcome, flags = None, "replied", []
+    for e in events:
+        p = e.payload
+        if e.event_type in ("action_created", "policy_decision") and p.get("level"):
+            level = p["level"]
+        if e.event_type == "policy_decision" and p.get("block"):
+            outcome = "blocked"
+        if e.event_type in _OUTCOME_EVENTS:
+            outcome = _OUTCOME_EVENTS[e.event_type] or p.get("status", "succeeded")
+        if e.event_type == "injection_suspected":
+            flags = p.get("flags", [])
+    return {"trace_id": trace_id, "session_id": events[0].session_id, "text": first.payload.get("text") if first else None,
+            "started_at": events[0].created_at.isoformat(), "ended_at": events[-1].created_at.isoformat(),
+            "events": len(events), "level": level, "outcome": outcome, "flags": flags,
+            "breaker": any(e.event_type in ("breaker_tripped", "breaker_blocked") for e in events)}
+
+
+@admin.get("/traces")
+def trace_list(limit: int = 20, db: Session = Depends(get_db)):
+    """最近的对话轮次（不含运营操作），每条带用户原话、风险等级和最终结果，供运营后台选择回放。"""
+    rows = db.execute(select(AuditLog.trace_id).where(AuditLog.trace_id.not_in(("admin", "system")))
+                      .group_by(AuditLog.trace_id).order_by(func.max(AuditLog.id).desc()).limit(min(limit, 100))).all()
+    out = []
+    for (trace_id,) in rows:
+        events = db.scalars(select(AuditLog).where(AuditLog.trace_id == trace_id).order_by(AuditLog.id)).all()
+        out.append(_trace_summary(trace_id, list(events)))
+    return out
+
+
+# ---------- 熔断（技术文档 §5.7） ----------
+
+@admin.get("/risk-events")
+def risk_events(limit: int = 50, db: Session = Depends(get_db)):
+    """熔断处置记录、最近的安全事件、工具断路器状态和当前阈值。"""
+    return breaker.overview(db, min(limit, 200))
+
+
+class ReleaseIn(BaseModel):
+    operator: str = Field(default="运营后台", max_length=32)
+    note: str = Field(default="", max_length=200)
+
+
+def _breaker_op(fn, db: Session, *args, **kwargs):
+    try:
+        out = fn(db, *args, **kwargs)
+    except breaker.BreakerError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    db.commit()
+    return out
+
+
+@admin.post("/breaker/trips/{trip_id}/release")
+def breaker_release(trip_id: str, body: ReleaseIn, db: Session = Depends(get_db)):
+    return breaker.trip_view(_breaker_op(breaker.release, db, trip_id, operator=body.operator, note=body.note))
+
+
+@admin.post("/breaker/circuits/{tool}/reset")
+def circuit_reset(tool: str, body: ReleaseIn, db: Session = Depends(get_db)):
+    _breaker_op(breaker.reset_circuit, db, tool, operator=body.operator)
+    return {"tool": tool, "state": "closed"}
 
 
 # ---------- 开发接口（仅演示模式） ----------

@@ -167,3 +167,36 @@ class SystemFlag(Base):
     __tablename__ = "system_flags"
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON)
+
+
+class SecurityEvent(Base):
+    """熔断器计数用的安全事件（认证失败、疑似注入、发起转账、越权调用）。审计哈希链里另有一份完整记录。"""
+
+    __tablename__ = "security_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    session_id: Mapped[str | None] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32))  # auth_failed / auth_passed / injection / injection_high / ...
+    tool: Mapped[str | None] = mapped_column(String(48))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class BreakerTrip(Base):
+    """熔断处置：readonly 会话只读 / freeze 暂停办理 / handoff 转人工。到期或在运营后台解除后失效。"""
+
+    __tablename__ = "breaker_trips"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    session_id: Mapped[str | None] = mapped_column(String(32))  # 有值 = 只限这个会话
+    trigger: Mapped[str] = mapped_column(String(32))  # breaker.yaml 里的触发条件 id
+    level: Mapped[str] = mapped_column(String(16))
+    tools: Mapped[list] = mapped_column(JSON)  # 拦截范围：["*"] 全部写工具 / ["@moves_money"] 资金类 / 具体工具名
+    reason: Mapped[str] = mapped_column(String(64))  # 给用户看的原因类别
+    trace_id: Mapped[str | None] = mapped_column(String(32))
+    watermark: Mapped[int] = mapped_column(Integer, default=0)  # 已计入的最后一条 security_events.id，解除后从这里重新计数
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)  # 为空 = 只能人工解除
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+    released_by: Mapped[str | None] = mapped_column(String(32))
+    release_note: Mapped[str | None] = mapped_column(String(200))

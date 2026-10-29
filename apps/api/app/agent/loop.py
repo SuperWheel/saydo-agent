@@ -17,10 +17,10 @@ from ..clock import now
 from ..config import get_settings
 from ..models import ChatMessage, ChatSession, User
 from ..nlu import amounts_in, rule_intent
-from ..security import inspect, mask_pii
+from ..security import breaker, inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance, propose
-from ..tools.gateway import GatewayError, run_read_tool
+from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
 from .prompts import NO_BYPASS, help_text, system_prompt
@@ -67,6 +67,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
                                                 "selection": selection, "channel": channel}, session.id)
     if guard.suspicious:
         audit.record(db, trace_id, "injection_suspected", {"flags": guard.flags}, session.id)
+        breaker.on_injection(db, user_id=user_id, session_id=session.id, trace_id=trace_id, flags=guard.flags)
     if guard.text:
         db.add(ChatMessage(session_id=session.id, role="user", content=guard.text, trace_id=trace_id))
         db.flush()
@@ -111,6 +112,9 @@ def _run_tool_call(ctx: ToolContext, tc) -> ToolResult:
         result = run_read_tool(spec, ctx, args)
     except (GatewayError, json.JSONDecodeError, TypeError) as e:
         result = ToolResult({"status": "error", "message": str(e)})
+        if spec is None or isinstance(e, ToolViolation):  # 越权调用：同一会话反复出现就降为只读
+            breaker.on_tool_violation(ctx.db, user_id=ctx.user_id, session_id=ctx.session.id, trace_id=ctx.trace_id,
+                                      tool=spec.name if spec else tc.function.name, error=str(e))
     audit.record(ctx.db, ctx.trace_id, "tool_call", {
         "tool": spec.name if spec else tc.function.name, "args": mask_pii(tc.function.arguments or "")[:500],
         "status": result.data.get("status", "ok"), "card": result.card["type"] if result.card else None,
