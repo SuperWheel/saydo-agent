@@ -1,25 +1,34 @@
-# 言行策略规则（M0）
+# 言行策略规则
 # 阈值是比赛原型参数，不是法定线。风险只升不降：命中任何规则都只会把等级往上调。
-version: m0-2026-10-29
+#
+# 每条规则：
+#   tool_in    只对列出的写工具生效；不写表示对所有写工具生效
+#   when       工具特有事实的相等条件，如 {direction: loosen}；不写时按 id（或 match）找内置匹配函数
+#   elevate_to 命中后升到的等级
+# 新场景只在末尾追加规则，不改已有规则。
+version: p0-2026-10-30
 
 rules:
   - id: cumulative_outflow
+    tool_in: [transfer.create]
     window: natural_day              # natural_day；rolling_24h 在 M1 加
     yellow_max_fen: 100000           # 当日累计转出（已成功 + 待确认预占）≤ 1000 元走 🟡
     elevate_to: RED
     reason: "今日累计转出将达 {after} 元，超过 {limit} 元（含待确认金额）"
 
   - id: new_payee
+    tool_in: [transfer.create]
     elevate_to: RED                  # 任意金额
     reason: "首次向该收款人转账"
 
   - id: velocity
+    tool_in: [transfer.create]
     window_s: 300
     max_count: 3                     # 5 分钟内第 3 笔起上浮
     elevate_to: RED
     reason: "5 分钟内转账频繁"
 
-  - id: injection_suspected
+  - id: injection_suspected       # 对所有写工具生效
     elevate_to: RED
     reason: "本轮对话含疑似绕过验证的指令"
 

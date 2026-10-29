@@ -41,8 +41,10 @@ def test_small_transfer_yellow(client):
     r = say(client, "给我妈转500，备注生活费")
     card = r["cards"][0]
     assert card["type"] == "confirm" and card["level"] == "YELLOW"
-    assert (card["payee"], card["tail"], card["amount"], card["amount_capital"], card["memo"]) == \
+    f = card["fields"]
+    assert (f["payee"], f["tail"], card["amount"], card["amount_capital"], f["memo"]) == \
            ("王*英", "1234", "500.00", "伍佰元整", "生活费")
+    assert card["rows"] == [["收款人", "王*英"], ["收款银行", "工商银行 · 尾号 1234"], ["备注", "生活费"]]
     out = confirm(client, card).json()
     assert out["status"] == "succeeded" and out["card"]["type"] == "receipt"
     assert balance(client) == "28,150.32"
@@ -113,7 +115,7 @@ def test_same_name_clarify(client):
     pick = clar["options"][1]
     r2 = say(client, "", r["session_id"], selection=pick["selection"])
     card = r2["cards"][0]
-    assert card["type"] == "confirm" and card["tail"] == "3307" and card["amount"] == "200.00"
+    assert card["type"] == "confirm" and card["fields"]["tail"] == "3307" and card["amount"] == "200.00"
 
 
 def test_amount_follow_up(client):

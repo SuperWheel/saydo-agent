@@ -23,7 +23,7 @@ from ..tools.bank import get_balance, propose
 from ..tools.gateway import GatewayError, run_read_tool
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
-from .prompts import HELP_TEXT, NO_BYPASS, system_prompt
+from .prompts import NO_BYPASS, help_text, system_prompt
 
 MAX_TOOL_STEPS = 4
 HISTORY_MESSAGES = 8
@@ -177,7 +177,7 @@ def _context_facts() -> set[str]:
 
 def _template_reply(cards: list[dict]) -> str:
     if not cards:
-        return HELP_TEXT
+        return help_text()
     c = cards[-1]
     match c["type"]:
         case "balance":
@@ -213,7 +213,7 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         if result.data.get("status") == "need_amount":
             return prefix + "要转多少钱？", "rule"
         return prefix + _apply(ctx, result), "rule"
-    return prefix + HELP_TEXT, "rule"
+    return prefix + help_text(), "rule"
 
 
 def _apply(ctx: ToolContext, result: ToolResult) -> str:

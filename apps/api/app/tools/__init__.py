@@ -1,4 +1,8 @@
-"""工具注册表。风险元数据跟着工具定义走，不依赖提示词。"""
+"""工具注册表。风险元数据跟着工具定义走，不依赖提示词。
+
+新场景的写操作：注册一个 side_effect=True 的执行工具（带 policy_context 构造器），
+再注册一个模型可见的提议工具，在里面调用 auth.actions.propose_action 生成确认卡。
+"""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,6 +23,11 @@ class ToolSpec:
     description: str
     parameters: dict
     fn: Callable
+    moves_money: bool = False  # 资金转出：做余额 / 限额检查，生成确认卡时预占额度，args 里必须有 amount_fen
+    stop_loss: bool = False  # 止损类操作（锁卡、挂失），只读保护下仍可执行
+    policy_context: Callable | None = None  # (db, args, env) -> PolicyContext；不填用 base_context
+    capability: str = ""  # 给用户看的能力短语，如「查余额」，用于提示词和帮助语
+    examples: tuple[str, ...] = ()  # 示范说法，如「我还有多少钱」
 
     @property
     def llm_name(self) -> str:  # OpenAI 函数名不允许出现点号
@@ -47,22 +56,29 @@ REGISTRY: dict[str, ToolSpec] = {}
 
 
 def bank_tool(*, name: str, domain: str, base_risk: Risk, side_effect: bool = False, llm_visible: bool = True,
-              description: str = "", parameters: dict | None = None):
+              description: str = "", parameters: dict | None = None, moves_money: bool = False, stop_loss: bool = False,
+              policy_context: Callable | None = None, capability: str = "", examples: tuple[str, ...] = ()):
     def deco(fn: Callable) -> Callable:
         REGISTRY[name] = ToolSpec(
             name=name, domain=domain, base_risk=base_risk, side_effect=side_effect, llm_visible=llm_visible,
             description=description, parameters=parameters or {"type": "object", "properties": {}}, fn=fn,
+            moves_money=moves_money, stop_loss=stop_loss, policy_context=policy_context, capability=capability,
+            examples=examples,
         )
         return fn
 
     return deco
 
 
+def model_tools() -> list[ToolSpec]:
+    """模型能调用的工具：只读工具和提议工具，写工具永远不暴露给模型。"""
+    return [s for s in REGISTRY.values() if s.llm_visible and not s.side_effect]
+
+
 def llm_tool_specs() -> list[dict]:
     return [
         {"type": "function", "function": {"name": s.llm_name, "description": s.description, "parameters": s.parameters}}
-        for s in REGISTRY.values()
-        if s.llm_visible and not s.side_effect
+        for s in model_tools()
     ]
 
 

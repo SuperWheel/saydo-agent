@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { showToast } from 'vant'
-import { api } from '../api'
+import { api } from '../../api'
 
 const props = defineProps({ card: { type: Object, required: true } })
 const emit = defineEmits(['outcome', 'modify'])
@@ -47,20 +47,18 @@ async function act(kind) {
         {{ isRed ? '🔴' : '🟡' }} {{ card.level_label }}
       </van-tag>
     </div>
-    <div class="amount">
+    <div v-if="card.amount" class="amount">
       <span class="money">¥{{ card.amount }}</span>
       <div class="capital">{{ card.amount_capital }}</div>
     </div>
-    <div class="row"><span class="k">收款人</span><span class="v">{{ card.payee }}</span></div>
-    <div class="row"><span class="k">收款银行</span><span class="v">{{ card.bank }} · 尾号 {{ card.tail }}</span></div>
-    <div v-if="card.memo" class="row"><span class="k">备注</span><span class="v">{{ card.memo }}</span></div>
-    <div class="row"><span class="k">今日累计转出</span><span class="v">¥{{ card.today_after }}</span></div>
+    <div v-for="[k, v] in card.rows" :key="k" class="row"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></div>
+    <div v-if="card.today_after" class="row"><span class="k">今日累计转出</span><span class="v">¥{{ card.today_after }}</span></div>
     <div class="reasons">
       <div v-for="r in card.reasons" :key="r">· {{ r }}</div>
       <div v-if="card.auth_hint" class="hint">{{ card.auth_hint }}</div>
     </div>
     <div v-if="done" class="done-mask">{{ done }}</div>
-    <div v-else-if="expired" class="done-mask">确认卡已过期，未发生资金变动</div>
+    <div v-else-if="expired" class="done-mask">确认卡已过期，{{ card.amount ? '未发生资金变动' : '没有做任何变更' }}</div>
     <template v-else>
       <div class="btns">
         <van-button size="small" :disabled="busy" @click="act('cancel')">取消</van-button>

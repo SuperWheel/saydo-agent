@@ -4,59 +4,9 @@ import json
 
 import pytest
 
-from app.agent import loop
-from app.agent.llm import LLMError, LLMReply
+from app.agent.llm import LLMError
 
-from .conftest import say
-
-
-class _Fn:
-    def __init__(self, name, arguments):
-        self.name, self.arguments = name, arguments
-
-
-class _ToolCall:
-    def __init__(self, name, args, id="call_1"):
-        self.id, self.type = id, "function"
-        self.function = _Fn(name, json.dumps(args, ensure_ascii=False))
-
-    def model_dump(self, **_):
-        return {"id": self.id, "type": "function",
-                "function": {"name": self.function.name, "arguments": self.function.arguments}}
-
-
-def tool(name, **args):
-    return LLMReply(content="", tool_calls=[_ToolCall(name, args)], usage={})
-
-
-def text(content):
-    return LLMReply(content=content, tool_calls=[], usage={})
-
-
-class FakeLLM:
-    def __init__(self, script):
-        self.script = list(script)
-        self.calls = []
-
-        class _S:
-            llm_model = "fake"
-        self.settings = _S()
-
-    def chat(self, messages, tools=None, tool_choice="auto"):
-        self.calls.append({"messages": messages, "tools": tools, "tool_choice": tool_choice})
-        step = self.script.pop(0)
-        if isinstance(step, Exception):
-            raise step
-        return step
-
-
-@pytest.fixture
-def fake(monkeypatch):
-    def install(*script):
-        f = FakeLLM(script)
-        monkeypatch.setattr(loop, "get_llm", lambda: f)
-        return f
-    return install
+from .conftest import say, text, tool
 
 
 def test_llm_proposes_transfer(llm_client, fake):

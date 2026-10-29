@@ -41,7 +41,7 @@ def execute_write(action: PendingAction, token: str, db) -> dict:
         raise GatewayError("令牌与动作不匹配")
     if compute_digest(action.tool, action.args, action.user_id, action.nonce) != action.digest:
         raise GatewayError("动作参数与确认内容不一致")
-    if kill_switch_on(db):
+    if kill_switch_on(db) and not spec.stop_loss:
         raise GatewayError("系统处于只读保护状态")
     action.token_jti = None  # 用过即作废
     try:

@@ -47,7 +47,7 @@ def main() -> int:
             cost = time.perf_counter() - t0
             total += cost
             sid = r["session_id"]
-            cards = ", ".join(f"{x['type']}{'/' + x['level'] if 'level' in x else ''}" for x in r["cards"]) or "无"
+            cards = ", ".join(f"{x['type']}/{x['level']}" if x["type"] == "confirm" else x["type"] for x in r["cards"]) or "无"
             events = c.get(f"/admin/audit?trace_id={r['trace_id']}").json()
             tools = [e["payload"]["tool"] for e in events if e["event"] == "tool_call"]
             llm_calls = sum(e["event"] == "llm_call" for e in events)

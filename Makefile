@@ -1,4 +1,4 @@
-.PHONY: install api web dev test smoke-llm seed
+.PHONY: install api web dev test smoke-llm eval-llm seed
 
 install:
 	cd apps/api && uv sync
@@ -17,9 +17,13 @@ dev:
 test:
 	cd apps/api && uv run pytest -q
 
-# 用 .env 里的真实模型跑几句对话，检查工具调用是否正常（需要 LLM_API_KEY）
+# 用 .env 里的真实模型跑几句对话，检查工具调用是否正常（需要模型密钥）
 smoke-llm:
 	cd apps/api && uv run python scripts/llm_smoke.py
+
+# 真实模型回归集（apps/api/evals/regression.yaml），意图准确率低于 90% 时失败
+eval-llm:
+	cd apps/api && uv run python scripts/llm_eval.py
 
 # 重置演示数据（后端需在运行）
 seed:

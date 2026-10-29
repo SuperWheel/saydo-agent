@@ -4,13 +4,45 @@
     {
       "name": "api",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "--directory", "apps/api", "uvicorn", "app.main:app", "--port", "8000"],
+      "runtimeArgs": [
+        "run",
+        "--directory",
+        "apps/api",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "api-rules",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "LLM_ENABLED=false",
+        "uv",
+        "run",
+        "--directory",
+        "apps/api",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8000"
+      ],
       "port": 8000
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/web", "run", "dev", "--", "--host", "127.0.0.1"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/web",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1"
+      ],
       "port": 5173
     }
   ]

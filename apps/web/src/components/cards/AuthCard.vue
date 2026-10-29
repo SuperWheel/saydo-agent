@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
-import { api } from '../api'
+import { api } from '../../api'
 
 const props = defineProps({ card: { type: Object, required: true } })
 const emit = defineEmits(['outcome'])
