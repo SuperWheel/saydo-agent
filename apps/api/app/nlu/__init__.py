@@ -111,6 +111,11 @@ _MERCHANT = re.compile(r"(?:只在|仅在|仅限|只限|专门在|只能在)(?P<
 _COUNTER = re.compile(r"\s*(?:张|个|次|笔|天|日)")
 
 
+def card_hint(text: str) -> str:
+    """话里指明是哪张卡的部分（尾号、卡种），如「尾号6688」「信用卡」；没有就是空串。"""
+    return "".join(_CARD_HINT.findall(text))
+
+
 def card_amount_text(text: str) -> str | None:
     """卡片限额的金额原话：跳过尾号和「一张」「一次性」这类量词。"""
     for m in _AMOUNT_SPAN.finditer(text):
@@ -122,7 +127,7 @@ def card_amount_text(text: str) -> str | None:
 
 
 def _card_intent(text: str) -> RuleIntent | None:
-    hint = "".join(_CARD_HINT.findall(text))
+    hint = card_hint(text)
     for op, pat in (("unlock", _CARD_UNLOCK), ("report_loss", _CARD_REPORT)):
         if pat.search(text):
             return RuleIntent("card", {"op": op, "card_hint": hint})

@@ -256,6 +256,13 @@ def test_lost_specific_card_goes_straight_to_lock(client):
     assert "随时解锁" in r["reply"]["text"] and "挂失" in r["reply"]["text"]
 
 
+
+def test_rule_mode_fills_in_card_from_earlier_turn(client):
+    sid = say(client, "我的信用卡被偷了")["session_id"]  # 先出锁卡确认卡
+    c = only_card(say(client, "直接挂失吧", sid))  # 没说哪张卡：沿用上一句的「信用卡」
+    assert (c["title"], c["level"], c["fields"]["card_tail"]) == ("挂失确认", "RED", "3721")
+
+
 def test_lost_card_on_model_path(llm_client, fake):
     f = fake(tool("card_lock_propose"), text("别着急，建议先锁卡。要锁哪张卡？"),
              tool("card_lock_propose", card_hint="借记卡"), text("请核对锁卡确认卡。"))
@@ -364,6 +371,8 @@ def test_card_list(client):
     assert ["境外交易", "已关闭"] in debit["rows"] and ["单日限额", "¥30,000.00"] in debit["rows"]
     assert ["可用额度", "¥46,321.50"] in credit["rows"]
     assert client.get("/api/accounts").json()[0]["balance"] == "28,650.32"  # 卡片种子不影响账户余额
+    r = say(client, "我信用卡还有多少可用额度")
+    assert [x["tail"] for x in only_card(r)["cards"]] == ["3721"] and r["reply"]["text"] == "查到了，状态和限额见卡片。"
 
 
 def test_card_numbers_never_leave_the_backend(client):

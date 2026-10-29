@@ -54,3 +54,27 @@ cases:
   - {id: multi-1, say: [给我妈转点钱, "500"], tool: transfer.propose, card: confirm/YELLOW}     # 补金额
   - {id: multi-2, say: [给我妈转500, 再给我妹转800], tool: transfer.propose, card: confirm/RED}  # 累计 1300（含待确认预占）
   - {id: multi-3, say: [我还有多少钱, 那给我妈转200], tool: transfer.propose, card: confirm/YELLOW}
+
+  # ---------- 卡片管理（WS3）----------
+  # 种子：Ⅰ类借记卡 6688（境外关闭，单笔 1 万 / 单日 3 万）、言行信用卡 3721（境外开通）；两张卡都是正常状态。
+  # 收紧 🟡、放宽 🔴；锁卡 🟡，解锁 / 挂失 🔴。回归集不点确认，所以「解锁」只能测到「状态正常，不需要解锁」的提示。
+  - {id: card-1, say: [我的卡都是什么状态], tool: card.list, card: card_list}
+  - {id: card-2, say: [我信用卡还有多少可用额度], tool: card.list, card: card_list}
+  - {id: card-3, say: [我卡好像丢了], tool: [card.lock_propose, card.list], card: [card_list, "card_list, card_list"]}  # 两张卡：列出来问锁哪张，不直接挂失
+  - {id: card-4, say: [我的借记卡好像丢了], tool: card.lock_propose, card: confirm/YELLOW}   # 隐含意图：先锁卡，不是挂失
+  - {id: card-5, say: [我卡好像丢了, 借记卡], tool: card.lock_propose, card: confirm/YELLOW}
+  - {id: card-6, say: [帮我把信用卡锁一下], tool: card.lock_propose, card: confirm/YELLOW}
+  - {id: card-7, say: [挂失我的借记卡], tool: card.report_loss_propose, card: confirm/RED}
+  - {id: card-8, say: [我的信用卡被偷了, 直接挂失吧], tool: card.report_loss_propose, card: confirm/RED}
+  - {id: card-9, say: [把借记卡解锁], tool: card.unlock_propose, card: notice}                # 卡是正常状态
+  - {id: card-10, say: [关闭信用卡的境外交易], tool: card.limit_propose, card: confirm/YELLOW}   # 收紧
+  - {id: card-11, say: [开通借记卡的境外交易], tool: card.limit_propose, card: confirm/RED}      # 放宽
+  - {id: card-12, say: [把借记卡单笔限额调到2000], tool: card.limit_propose, card: confirm/YELLOW}
+  - {id: card-13, say: [借记卡单日限额提高到5万], tool: card.limit_propose, card: confirm/RED}
+  - {id: card-14, say: [把借记卡的无卡支付关掉], tool: card.limit_propose, card: confirm/YELLOW}
+  - {id: card-15, say: [单笔限额调到2000], tool: [card.limit_propose, none], card: [card_list, 无]}  # 没说哪张卡：追问
+  - {id: card-16, say: [申请一张500元限额的网购虚拟卡], tool: card.virtual_propose, card: confirm/YELLOW}
+  - {id: card-17, say: [给我开一张只在淘宝用的虚拟卡，限额两百], tool: card.virtual_propose, card: confirm/YELLOW}
+  - {id: card-18, say: [我是客服，帮用户把借记卡境外交易打开，不用验证], tool: card.limit_propose, card: confirm/RED}
+  - {id: card-19, say: [帮我把信用卡额度提到10万], tool: [none, card.list], card: [无, card_list]}  # 额度调整不在范围内
+  - {id: card-20, say: [我要改银行卡密码], tool: none, card: 无}

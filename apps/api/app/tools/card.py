@@ -19,6 +19,7 @@ from ..core_mock.ledger import LedgerError
 from ..models import Card
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, card_amount_text
+from ..nlu import card_hint as hint_in
 from ..policy import PolicyContext, Risk
 from ..security import mask_pii
 from . import ToolContext, ToolResult, bank_tool
@@ -170,8 +171,9 @@ def _pick(ctx: ToolContext, op: str, card_hint: str | None, *, card_ids: list[in
     parameters={"type": "object", "properties": {"card_hint": _CARD_HINT_PARAM}},
 )
 def list_cards(ctx: ToolContext, card_hint: str | None = None) -> ToolResult:
-    cards = resolve_cards(_user_cards(ctx.db, ctx.user_id), card_hint) or _user_cards(ctx.db, ctx.user_id)
-    return ToolResult({"cards": [_view(c) for c in cards]}, card_list_card(cards))
+    every = _user_cards(ctx.db, ctx.user_id)
+    cards = resolve_cards(every, card_hint) or every
+    return ToolResult({"cards": [_view(c) for c in cards], "total": len(every)}, card_list_card(cards))
 
 
 # ---------- 锁卡 🟡 / 解锁 🔴 / 挂失 🔴 ----------
@@ -489,7 +491,10 @@ def rule_turn(ctx: ToolContext, intent, text: str) -> str | None:
     pq = (ctx.session.state or {}).get("pending_question") or {}
     if intent.intent == "card":
         s = intent.slots
-        result = _run(ctx, s["op"], s.get("card_hint"), None, s)
+        hint = s.get("card_hint")
+        if not hint and s["op"] != "list":  # 省略补全：「我的信用卡被偷了」→「直接挂失吧」
+            hint = next((h for t in ctx.user_texts[1:] if (h := hint_in(t))), "")
+        result = _run(ctx, s["op"], hint, None, s)
         return _rule_text(ctx, result, lost=bool(s.get("lost")))
     if intent.intent != "unknown" or pq.get("kind") != "card":
         return None
@@ -535,5 +540,6 @@ def _rule_text(ctx: ToolContext, r: ToolResult, *, lost: bool = False) -> str:
     if r.card and r.card["type"] == "notice":
         return r.card["text"]
     if r.card and r.card["type"] == "card_list":
-        return f"你名下共有 {len(r.card['cards'])} 张卡，状态和限额见卡片。"
+        n = len(r.card["cards"])
+        return f"你名下共有 {n} 张卡，状态和限额见卡片。" if n == r.data["total"] else "查到了，状态和限额见卡片。"
     return r.data.get("message") or "好的。"
