@@ -52,6 +52,7 @@ _PATTERNS = [
     ("prompt_probe", re.compile(
         r"system\s*prompt|系统提示词|你的(提示词|指令|规则设定)是什么"
         r"|(输出|打印|显示|告诉我|泄露|复述|重复|原样)[^。！？\n]{0,8}(提示词|系统指令|初始指令|instructions)"
+        r"|(提示词|系统指令|初始指令)[^。！？\n]{0,6}(输出|打印|发给我|告诉我|泄露|复述)"
         r"|(print|reveal|show)\s+(me\s+)?your\s+(system\s+)?(prompt|instructions)", re.I)),
 ]
 

@@ -19,7 +19,11 @@ export const api = {
   cancel: (actionId) => post(`/api/actions/${actionId}/cancel`),
   verify: (challengeId, factor, value) => post(`/api/auth/challenges/${challengeId}/verify`, { factor, value }),
   audit: (traceId) => get(`/admin/audit?trace_id=${encodeURIComponent(traceId)}`),
-  auditRecent: () => get('/admin/audit?limit=60'),
   verifyAudit: () => post('/admin/audit/verify'),
+  traces: (limit = 30) => get(`/admin/traces?limit=${limit}`),
+  riskEvents: () => get('/admin/risk-events'),
+  releaseTrip: (tripId, note) => post(`/admin/breaker/trips/${tripId}/release`, { operator: '运营后台', note }),
+  resetCircuit: (tool) => post(`/admin/breaker/circuits/${encodeURIComponent(tool)}/reset`, { operator: '运营后台' }),
+  killSwitch: (enabled, reason) => post('/admin/kill-switch', { enabled, reason }),
   reset: () => post('/dev/seed'),
 }
