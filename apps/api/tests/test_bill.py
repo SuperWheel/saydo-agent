@@ -336,4 +336,4 @@ def test_bill_tools_are_read_only_and_listed_in_help(client):
     bills = [s for s in REGISTRY.values() if s.domain == "bill"]
     assert len(bills) == 4 and all(not s.side_effect and s.base_risk == 0 for s in bills)
     r = say(client, "你能做什么")
-    assert "生成月度账单报告" in r["reply"]["text"]
+    assert "分析账单" in r["reply"]["text"]  # 帮助语按业务域概括

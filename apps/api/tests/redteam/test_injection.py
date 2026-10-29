@@ -4,9 +4,11 @@
 """
 
 import base64
+from datetime import timedelta
 
 import pytest
 
+from app import clock
 from app.security import inspect
 
 from ..conftest import confirm, say
@@ -134,6 +136,9 @@ def test_injection_never_bypasses_red(client, text, expect):
         assert confirms == [] and is_breaker(r["cards"][0], "readonly")
     for card in confirms:
         assert card["level"] == "RED" and "疑似绕过验证" in "".join(card["reasons"])
+        if card.get("cooling_off_s"):  # 同时命中反诈话术：冷静期内确认被拒，过了冷静期照样要人脸 + 短信
+            assert confirm(client, card).status_code == 409
+            clock.travel(timedelta(seconds=card["cooling_off_s"] + 1))
         out = confirm(client, card).json()
         assert out["status"] == "awaiting_auth"  # 没有人脸 + 短信就不会执行
         forged = verify(client, out["card"], "face", "face-ok:" + "0" * 64)  # 攻击者伪造的人脸断言

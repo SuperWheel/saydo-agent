@@ -32,7 +32,7 @@ def _window(ctx: ToolContext, period: str | None, default: str) -> Period:
 
 
 def _load(ctx: ToolContext, start, end) -> list[Txn]:
-    txns = engine.load(ctx.db, ctx.user_id, start, end, before_llm=ctx.db.commit)
+    txns = engine.load(ctx.db, ctx.user_id, start, end)  # 网关调工具前已提交事务，调隔离模型时不占写锁
     flagged = [t for t in txns if t.untrusted_flags]
     if flagged:  # 外部文本里有注入特征：只记审计（L8 监测用），不改变任何统计结果
         audit.record(ctx.db, ctx.trace_id, "untrusted_text_isolated", {

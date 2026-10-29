@@ -13,6 +13,10 @@ from ..models import ChatSession
 from ..policy import Risk
 
 
+# 业务域在帮助语里的叫法，也是帮助语的先后顺序。新业务域在这里加一行；没加的用该域第一个工具的 capability，排在最后
+DOMAINS = {"account": "查余额", "transfer": "转账和 AA 收款", "bill": "分析账单", "card": "管理银行卡"}
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str

@@ -13,6 +13,7 @@ from app.nlu import rule_intent
 from app.policy import Risk
 
 from .conftest import confirm, say, text, tool
+from .helpers import is_breaker
 from .test_flows import pass_auth
 
 DEBIT_NO, CREDIT_NO = "6230581000006688", "6259651000003721"
@@ -219,7 +220,8 @@ def test_failed_sms_cancels_unlock(client):
     url = f"/api/auth/challenges/{out['card']['challenge_id']}/verify"
     for _ in range(3):
         r = client.post(url, json={"factor": "sms", "value": "000000"}).json()
-    assert r["status"] == "cancelled" and "账户设置没有变化" in r["card"]["text"]
+    # 连错 3 次：本次授权取消，同时触发「同一业务连续 3 次验证失败」熔断（WS4）
+    assert r["status"] == "cancelled" and is_breaker(r["card"], "freeze")
     assert card("debit").status == "locked"
 
 

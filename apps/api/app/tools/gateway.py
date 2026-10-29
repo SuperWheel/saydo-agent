@@ -32,8 +32,9 @@ def run_read_tool(spec: ToolSpec, ctx: ToolContext, args: dict) -> ToolResult:
         raise ToolViolation("参数只能是标量")
     if (block := breaker.circuit_block(ctx.db, spec)) is not None:  # 断路器：下游异常过多时先不调
         raise GatewayError(block.text)
+    ctx.db.commit()  # 先提交本轮已写的内容：工具里的慢调用（如隔离模型）不占着写锁
     try:
-        with ctx.db.begin_nested():  # 工具内部出错时回滚它写了一半的东西
+        with ctx.db.begin_nested():  # 工具内部出错时回滚它写了一半的东西；工具里不能再 commit
             result = spec.fn(ctx, **args)
     except GatewayError:
         raise

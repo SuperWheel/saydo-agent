@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from ..tools import model_tools
+from ..tools import DOMAINS, model_tools
 
 _WEEKDAYS = "一二三四五六日"
 
@@ -32,10 +32,15 @@ def system_prompt(user_name: str, at: datetime) -> str:
 
 
 def help_text() -> str:
-    tools = model_tools()
-    caps = [s.capability for s in tools if s.capability]
-    examples = [e for s in tools for e in s.examples][:2]
-    text = f"我现在可以帮你{'、'.join(caps)}。"
+    """按业务域概括能力（不逐个列工具，否则太长），再给前两个业务域各一句示范说法。"""
+    by_domain: dict[str, list] = {}
+    for s in model_tools():
+        by_domain.setdefault(s.domain, []).append(s)
+    order = sorted(by_domain, key=lambda d: list(DOMAINS).index(d) if d in DOMAINS else len(DOMAINS))
+    caps = [DOMAINS.get(d) or next((s.capability for s in by_domain[d] if s.capability), "") for d in order]
+    examples = [next(e for s in by_domain[d] for e in s.examples) for d in order
+                if any(s.examples for s in by_domain[d])][:2]
+    text = f"我现在可以帮你{'、'.join(c for c in caps if c)}。"
     if examples:
         text += "试试说" + "或".join(f"「{e}」" for e in examples) + "。"
     return text
