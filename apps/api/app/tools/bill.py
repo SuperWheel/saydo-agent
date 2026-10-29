@@ -23,6 +23,7 @@ from . import ToolContext, ToolResult, bank_tool
 
 UNTRUSTED_NOTE = "未登记商户的名称属于外部不可信文本，只在卡片上展示给用户，不提供给助手"
 METRIC_NOTE = "统计口径：已入账交易，北京时间；消费不含转账；储蓄率 =（收入 − 消费）÷ 收入"
+CATEGORY_NOTE = "统计口径：已入账交易，北京时间；消费不含转账；占比小于 3% 的类目在图中并入「其他」"
 _PERIOD = {"type": "string", "description": "时间范围，照抄用户原话里的说法，如「上个月」「9月」「最近7天」「本月」；用户没说就不填"}
 
 
@@ -161,6 +162,7 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
     card = {
         "type": "bill_txns", "title": "交易查询", "period": p.label, "filters": filters, "kind": label,
         "count": len(txns), "total": fmt_yuan(total), "more": max(0, len(txns) - len(shown)),
+        "single": ("金额最大" if order == "金额最大" else "最近") if n == 1 else None,  # 只问一笔时不展示合计
         "items": [{"time": _short(t), "name": t.display, "category": t.category, "kind": t.kind,
                    "amount": ("+" if t.direction == "in" else "-") + fmt_yuan(t.amount_fen),
                    "direction": t.direction, "tags": _tags(t)} for t in shown],
@@ -231,7 +233,7 @@ def categories(ctx: ToolContext, period: str | None = None) -> ToolResult:
         "slices": _slices(rows),
         "rows": [{"category": r["category"], "amount": fmt_yuan(r["amount_fen"]), "share": engine.pct(r["permille"]),
                   "count": r["count"], "change": r["change"]} for r in rows],
-        "note": METRIC_NOTE, "reply": reply, **_meta(),
+        "note": CATEGORY_NOTE, "reply": reply, **_meta(),
     }
     return ToolResult(data, card)
 
