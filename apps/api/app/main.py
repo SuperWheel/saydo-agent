@@ -9,6 +9,7 @@ from .core_mock.seed import seed
 from .db import Base, init_engine, new_session
 from .routes import admin, api, dev
 from .tools import bank  # noqa: F401  注册银行工具
+from .tools import card  # noqa: F401  注册卡片工具
 
 
 def create_app() -> FastAPI:

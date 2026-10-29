@@ -20,6 +20,7 @@ from ..nlu import amounts_in, rule_intent
 from ..security import inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance, propose
+from ..tools.card import rule_turn as card_rule_turn
 from ..tools.gateway import GatewayError, run_read_tool
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
@@ -213,6 +214,8 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         if result.data.get("status") == "need_amount":
             return prefix + "要转多少钱？", "rule"
         return prefix + _apply(ctx, result), "rule"
+    if (reply := card_rule_turn(ctx, intent, text)) is not None:  # 卡片意图，以及「锁哪张卡」这类追问的回答
+        return prefix + reply, "rule"
     return prefix + help_text(), "rule"
 
 

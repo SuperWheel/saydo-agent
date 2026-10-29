@@ -85,4 +85,62 @@ def rule_intent(text: str) -> RuleIntent:
         return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": "", "memo": memo})
     if _BALANCE.search(text):
         return RuleIntent("balance")
+    if card := _card_intent(text):
+        return card
     return RuleIntent("unknown")
+
+
+# ---------- 卡片（WS3）：锁卡、解锁、挂失、「卡丢了」、交易限制、虚拟卡、查卡 ----------
+_CARD_HINT = re.compile(r"尾号\s*\d{4}|\d{4}(?=\s*(?:的|那张)?(?:卡|借记卡|储蓄卡|信用卡|虚拟卡))|借记卡|储蓄卡|工资卡|信用卡|虚拟卡")
+_CARD_UNLOCK = re.compile(r"解锁|解除.{0,6}(锁定|锁卡|冻结|挂失)|解挂|取消.{0,4}(锁卡|锁定|挂失)|恢复使用")
+_CARD_REPORT = re.compile(r"挂失")
+_CARD_LOST = re.compile(r"卡.{0,8}(丢了|丢失|掉了|不见了|找不到|被偷|被盗|被人捡)|(丢|掉)了.{0,4}卡|盗刷")
+_CARD_LOCK = re.compile(r"锁.{0,10}卡|锁定|锁住|锁一下|锁上|冻结|(把|将).{0,12}锁")
+_CARD_VIRTUAL = re.compile(r"(申请|办|开|要|来|弄|新建|生成).{0,12}虚拟卡")
+_CARD_SETTINGS = [
+    ("overseas", re.compile(r"境外|海外|国外|出境")),
+    ("online", re.compile(r"无卡|线上|网上|网络支付|网购|在线支付|快捷支付")),
+    ("atm", re.compile(r"ATM|atm|取现|取款")),
+    ("per_txn", re.compile(r"单笔")),
+    ("daily", re.compile(r"单日|每日|每天|日累计")),
+]
+_SWITCH_OFF = re.compile(r"关闭|关掉|关了|关上|停用|禁止|禁用|不允许|不让|屏蔽|停掉")
+_SWITCH_ON = re.compile(r"开通|开启|打开|允许|启用|开放|放开|恢复")
+_CARD_LIST = re.compile(r"我的卡|几张卡|哪些卡|查.{0,3}卡|卡.{0,4}(状态|情况|限额|额度)|限额|额度")
+_MERCHANT = re.compile(r"(?:只在|仅在|仅限|只限|专门在|只能在)(?P<m>[^\s，,。！!？?的]{1,10}?)(?:上|里)?(?:用|使用|消费|购物|买|的|$)")
+_COUNTER = re.compile(r"\s*(?:张|个|次|笔|天|日)")
+
+
+def card_amount_text(text: str) -> str | None:
+    """卡片限额的金额原话：跳过尾号和「一张」「一次性」这类量词。"""
+    for m in _AMOUNT_SPAN.finditer(text):
+        if re.search(r"尾号\s*$", text[:m.start()]) or _COUNTER.match(text, m.end()):
+            continue
+        if parse_amount(m.group()):
+            return m.group()
+    return None
+
+
+def _card_intent(text: str) -> RuleIntent | None:
+    hint = "".join(_CARD_HINT.findall(text))
+    for op, pat in (("unlock", _CARD_UNLOCK), ("report_loss", _CARD_REPORT)):
+        if pat.search(text):
+            return RuleIntent("card", {"op": op, "card_hint": hint})
+    if _CARD_LOST.search(text):  # 隐含意图：先建议锁卡止损，挂失由用户自己决定
+        return RuleIntent("card", {"op": "lock", "card_hint": hint, "lost": True})
+    if _CARD_LOCK.search(text):
+        return RuleIntent("card", {"op": "lock", "card_hint": hint})
+    setting = next((k for k, pat in _CARD_SETTINGS if pat.search(text)), None)
+    if setting in ("overseas", "online", "atm") and (_SWITCH_OFF.search(text) or _SWITCH_ON.search(text)):
+        enabled = not _SWITCH_OFF.search(text)
+        return RuleIntent("card", {"op": "limit", "setting": setting, "enabled": enabled, "card_hint": hint})
+    amount = card_amount_text(text)
+    if amount and (setting in ("per_txn", "daily") or (setting is None and "限额" in text and not _CARD_VIRTUAL.search(text))):
+        return RuleIntent("card", {"op": "limit", "setting": setting or "daily", "amount_text": amount, "card_hint": hint})
+    if _CARD_VIRTUAL.search(text):
+        merchant = (m := _MERCHANT.search(text)) and m.group("m")
+        return RuleIntent("card", {"op": "virtual_apply", "amount_text": amount, "merchant": merchant,
+                                   "one_time": "一次性" in text})
+    if _CARD_LIST.search(text):
+        return RuleIntent("card", {"op": "list", "card_hint": hint})
+    return None

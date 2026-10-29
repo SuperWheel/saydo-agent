@@ -136,3 +136,25 @@ def seed(db: Session) -> None:
         at = e.pop("at")
         post(db, account=acct, at=at, **e)
     db.commit()
+    _seed_cards(db, acct)
+
+
+# ---------- 卡片（WS3）：借记卡尾号与账户一致，另有一张信用卡 ----------
+# 演示用：借记卡境外交易关闭（「开通境外交易」演示放宽 🔴）；信用卡境外开通（「关闭境外交易」演示收紧 🟡）
+from ..models import Card  # noqa: E402  共享文件只在末尾追加
+
+CARDS = [
+    # kind, name, card_no, limits, credit_limit_fen, available_fen
+    ("debit", "Ⅰ类借记卡", "6230581000006688",
+     {"overseas": False, "online": True, "atm": True, "per_txn_fen": 1_000_000, "daily_fen": 3_000_000}, None, None),
+    ("credit", "言行信用卡", "6259651000003721",
+     {"overseas": True, "online": True, "atm": False, "per_txn_fen": 2_000_000, "daily_fen": 5_000_000},
+     5_000_000, 4_632_150),
+]
+
+
+def _seed_cards(db: Session, acct: Account) -> None:
+    db.add_all(Card(user_id=1, kind=kind, name=name, card_no=no, limits=limits, credit_limit_fen=credit,
+                    available_fen=available, account_id=acct.id if kind == "debit" else None)
+               for kind, name, no, limits, credit, available in CARDS)
+    db.commit()
