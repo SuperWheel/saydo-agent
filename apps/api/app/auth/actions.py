@@ -20,6 +20,7 @@ from ..config import get_settings
 from ..flags import kill_switch_on
 from ..models import Account, AuthChallenge, LimitCounter, PendingAction
 from ..policy import Decision, PolicyContext, Risk, evaluate, load_rules
+from ..security import breaker
 from ..tools import REGISTRY, ToolContext, ToolResult
 from ..tools.gateway import GatewayError, execute_write
 from .tokens import compute_digest, issue_execution_token, otp_for
@@ -121,6 +122,8 @@ def propose_action(ctx: ToolContext, *, tool: str, args: dict, display: dict, da
     """提议工具的统一出口：定级 → 拦截或生成待确认动作 → 返回确认卡。data 是给模型看的补充信息（已脱敏）。"""
     db = ctx.db
     expire_stale(db, ctx.user_id)
+    if (blocked := breaker.check_propose(ctx, tool, data)) is not None:  # 熔断：只读 / 暂停 / 转人工，止损类放行
+        return blocked
     decision = decide(db, tool, args, PolicyEnv(ctx.user_id, ctx.channel, ctx.injection_flag))
     audit.record(db, ctx.trace_id, "policy_decision", {"tool": tool, "summary": display["summary"],
                                                        **decision.as_dict()}, ctx.session.id)
@@ -191,6 +194,9 @@ def _invalidate(db: Session, a: PendingAction, reason: str) -> Outcome:
 
 def _revalidate(db: Session, a: PendingAction) -> Outcome | None:
     """执行前用同一个构造器重新取上下文（余额、额度、收款人状态等）；风险比生成确认卡时高，就作废授权。"""
+    if (block := breaker.check(db, user_id=a.user_id, tool=a.tool, session_id=a.session_id)) is not None:
+        _invalidate(db, a, "安全保护：" + block.reason)
+        return Outcome("invalidated", block.card)
     decision = decide(db, a.tool, a.args, PolicyEnv(a.user_id, "app", a.display.get("injection_flag", False), exclude=a))
     audit.record(db, a.trace_id, "policy_revalidated", {"action_id": a.id, **decision.as_dict()}, a.session_id)
     if decision.block:
@@ -264,6 +270,11 @@ def verify_factor(db: Session, *, challenge_id: str, factor: str, value: str, us
         ch.attempts += 1
         audit.record(db, a.trace_id, "auth_failed", {"challenge_id": ch.id, "factor": factor,
                                                      "attempts": ch.attempts}, a.session_id)
+        if (block := breaker.on_auth_failed(db, a)) is not None:  # 触发熔断：本次直接取消
+            ch.status = "failed"
+            _release(db, a)
+            a.status = "cancelled"
+            return Outcome("cancelled", block.card)
         if ch.attempts >= load_rules()["auth"]["sms_max_attempts"]:
             ch.status = "failed"
             _release(db, a)
@@ -274,6 +285,7 @@ def verify_factor(db: Session, *, challenge_id: str, factor: str, value: str, us
 
     ch.factors_passed = [*ch.factors_passed, factor]
     audit.record(db, a.trace_id, "auth_passed", {"challenge_id": ch.id, "factor": factor}, a.session_id)
+    breaker.on_auth_passed(db, a)  # 「连续失败」从这里重新计数
     if set(ch.factors_passed) < set(ch.factors_required):
         return _auth_outcome(a, ch)
     ch.status = "passed"

@@ -28,3 +28,8 @@ eval-llm:
 # 重置演示数据（后端需在运行）
 seed:
 	curl -s -X POST http://127.0.0.1:8000/dev/seed
+
+# 红队测试集（规则模式 + 假模型，不耗 API）
+.PHONY: redteam
+redteam:
+	cd apps/api && uv run pytest -q tests/redteam

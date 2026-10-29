@@ -1,0 +1,98 @@
+# 言行熔断器配置（技术文档 §5.7）
+# 阈值是比赛原型参数，不是法规数字，需要用误报率和漏报率校准。
+#
+# 处置分级（轻 → 重）：
+#   readonly  会话只读   只限触发它的会话；开新会话或人工解除后恢复
+#   freeze    暂停办理   整个用户，按 block 范围暂停；有 duration_s 就到期自动恢复
+#   handoff   转人工     整个用户，全部写操作暂停，只能在运营后台人工解除
+# 止损类工具（stop_loss=True，如锁卡、挂失）不受任何熔断影响。
+#
+# 每条触发条件：
+#   event      计数的安全事件：auth_failed / injection / injection_high / money_propose / tool_violation
+#   count      窗口内第 count 次事件时触发（触发它的这次操作也会被拦下）
+#   window_s   滑动窗口；不写表示不限时间（会话级用）
+#   scope      session = 只在同一会话里计数、只封这个会话；不写 = 用户级
+#   per_tool   按工具分别计数
+#   reset_on   出现这种事件后重新计数（「连续」失败）
+#   block      拦截范围：* 全部写工具 / @moves_money 资金类 / @same 触发事件的那个工具
+#   reason     给用户看的原因类别，可用 {count} {minutes}
+# 人工解除后从解除时刻重新计数。新触发条件只在末尾追加。
+version: ws4-2026-10-30
+
+appeal: 如有疑问，可在 App「我的 → 在线客服」申诉，或拨打客服热线 95xxx（演示环境），核实后即可解除。
+
+# 熔断提示里的业务名称（按工具的 domain）
+labels:
+  transfer: 转账
+  card: 卡片业务
+  bill: 账单业务
+  wealth: 理财业务
+  subscription: 代扣业务
+  demo: 演示业务
+
+injection:
+  # 计入熔断的 L1 标记。prompt_probe（打听提示词）、state_claim（声称已验证）、单独的 invisible_chars 只上浮风险，不计数
+  counted_flags: [ignore_instructions, role_override, forged_system, encoded_injection, bypass_auth, authority_claim]
+  # 高置信：一次就把会话降为只读
+  high_confidence_flags: [forged_system, encoded_injection]
+  invisible_with_flag_is_high: true  # 用零宽字符拆开关键词（不可见字符 + 任一计数标记）也算高置信
+
+triggers:
+  - id: auth_fail_same_tool
+    event: auth_failed
+    per_tool: true
+    reset_on: auth_passed
+    count: 3
+    window_s: 1800
+    level: freeze
+    block: "@same"
+    duration_s: 1800
+    reason: 同一业务连续 {count} 次验证失败
+
+  - id: auth_fail_user
+    event: auth_failed
+    count: 5
+    window_s: 600
+    level: handoff
+    block: "*"
+    reason: "{minutes} 分钟内验证失败 {count} 次"
+
+  - id: injection_high
+    event: injection_high
+    scope: session
+    count: 1
+    level: readonly
+    block: "*"
+    reason: 检测到伪造的系统指令或隐藏的指令
+
+  - id: injection_user
+    event: injection
+    count: 3
+    window_s: 3600
+    level: handoff
+    block: "*"
+    reason: "{minutes} 分钟内多次出现疑似绕过验证的指令"
+
+  - id: money_velocity
+    event: money_propose
+    count: 5
+    window_s: 300
+    level: freeze
+    block: "@moves_money"
+    duration_s: 1800
+    reason: "{minutes} 分钟内发起资金转出达到 {count} 笔"
+
+  - id: tool_violation
+    event: tool_violation
+    scope: session
+    count: 2
+    level: readonly
+    block: "*"
+    reason: 本次会话多次出现越权的工具调用
+
+# 按工具的断路器：窗口内调用数 ≥ min_calls 且错误率 > error_rate 就断开，cooldown_s 后放一次探测请求
+circuit:
+  window_s: 60
+  min_calls: 4
+  error_rate: 0.5
+  cooldown_s: 30
