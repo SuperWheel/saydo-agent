@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.agent.llm import LLMError
+from app.tools import REGISTRY
 
 from .conftest import say, text, tool
 
@@ -15,7 +16,9 @@ def test_llm_proposes_transfer(llm_client, fake):
     assert r["reply"]["source"] == "llm" and r["reply"]["ai_generated"]
     assert r["cards"][0]["type"] == "confirm" and r["cards"][0]["level"] == "YELLOW"
     tool_names = {t["function"]["name"] for t in f.calls[0]["tools"]}
-    assert tool_names == {"account_balance", "contact_search", "transfer_propose"}  # 模型看不到写工具
+    write_tools = {s.llm_name for s in REGISTRY.values() if s.side_effect}
+    assert {"account_balance", "contact_search", "transfer_propose"} <= tool_names
+    assert not tool_names & write_tools  # 模型看不到写工具
 
 
 def test_hallucinated_number_falls_back_to_template(llm_client, fake):

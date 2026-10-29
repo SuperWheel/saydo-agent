@@ -61,7 +61,7 @@ def resolve_payee(db: Session, user_id: int, hint: str) -> list[Contact]:
 
 @dataclass
 class RuleIntent:
-    intent: str  # balance / transfer / unknown
+    intent: str  # balance / transfer / bill_* / unknown
     slots: dict = field(default_factory=dict)
 
 
@@ -81,8 +81,21 @@ def rule_intent(text: str) -> RuleIntent:
     for pat in _TRANSFER:
         if m := pat.search(text):
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
+    if bill := next((name for name, pat in _BILL if pat.search(text)), None):  # 账单类问句排在「给我妈转了多少」之前
+        return RuleIntent(bill)
     if m := _TRANSFER_NO_AMOUNT.search(text):
         return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": "", "memo": memo})
     if _BALANCE.search(text):
         return RuleIntent("balance")
     return RuleIntent("unknown")
+
+
+# 账单分析（WS2）：只认问句，参数由 tools/bill.py 的 rule_turn 从原话里组织
+_BILL = [
+    ("bill_report", re.compile(r"报告|月报|年报|账单总结|收支(情况|总结)|总结一下.{0,6}(账单|消费|收支)")),
+    ("bill_anomalies", re.compile(r"异常|可疑|盗刷|被刷|不是我(本人)?(花|消费|买)|重复扣|扣了两次|多扣")),
+    ("bill_categories", re.compile(r"分类|类别|占比|饼图|花(在|到)哪|都花(在)?哪|钱去哪|消费结构|各类|哪类")),
+    ("bill_query", re.compile(r"(花|消费|支出|转|付|收|赚|进账|入账)了?多少|(工资|收入|支出|消费)(是|有|发了)?多少"
+                              r"|(最近|上|最后|最大|最贵)的?一笔|流水|账单|明细"
+                              r"|(转账|交易|消费|支付)记录")),
+]

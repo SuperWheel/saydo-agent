@@ -20,6 +20,7 @@ from ..nlu import amounts_in, rule_intent
 from ..security import inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance, propose
+from ..tools.bill import rule_turn as bill_rule_turn
 from ..tools.gateway import GatewayError, run_read_tool
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
@@ -189,7 +190,7 @@ def _template_reply(cards: list[dict]) -> str:
             return c["question"]
         case "notice":
             return c["text"]
-    return "好的。"
+    return c.get("reply") or "好的。"  # 展示类卡片自带按模板渲染的一句话
 
 
 # ---------- 规则兜底路径 ----------
@@ -213,6 +214,8 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         if result.data.get("status") == "need_amount":
             return prefix + "要转多少钱？", "rule"
         return prefix + _apply(ctx, result), "rule"
+    if intent.intent.startswith("bill_"):
+        return prefix + _apply(ctx, bill_rule_turn(ctx, intent.intent, text)), "rule"
     return prefix + help_text(), "rule"
 
 
