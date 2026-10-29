@@ -9,6 +9,8 @@ const emit = defineEmits(['outcome', 'modify'])
 const busy = ref(false)
 const done = ref('')
 const left = ref(0)
+const cool = ref(0) // 冷静期剩余秒数（反诈）：倒计时结束前确认按钮不可用，后端也会拒绝提前确认
+const coolEnd = Date.now() + (props.card.cooling_off_s || 0) * 1000
 let timer
 
 const isRed = computed(() => props.card.level === 'RED')
@@ -17,6 +19,7 @@ const countdown = computed(() => `${Math.floor(left.value / 60)}:${String(left.v
 
 function tick() {
   left.value = Math.max(0, Math.round((new Date(props.card.expires_at) - Date.now()) / 1000))
+  cool.value = Math.max(0, Math.ceil((coolEnd - Date.now()) / 1000))
 }
 onMounted(() => { tick(); timer = setInterval(tick, 1000) })
 onUnmounted(() => clearInterval(timer))
@@ -47,6 +50,7 @@ async function act(kind) {
         {{ isRed ? '🔴' : '🟡' }} {{ card.level_label }}
       </van-tag>
     </div>
+    <div v-if="card.warning" class="warning"><van-icon name="warning" /> {{ card.warning }}</div>
     <div v-if="card.amount" class="amount">
       <span class="money">¥{{ card.amount }}</span>
       <div class="capital">{{ card.amount_capital }}</div>
@@ -63,7 +67,9 @@ async function act(kind) {
       <div class="btns">
         <van-button size="small" :disabled="busy" @click="act('cancel')">取消</van-button>
         <van-button size="small" :disabled="busy" @click="act('modify')">修改</van-button>
-        <van-button size="small" type="danger" :loading="busy" @click="act('confirm')">确认</van-button>
+        <van-button size="small" type="danger" :loading="busy" :disabled="cool > 0" @click="act('confirm')">
+          {{ cool > 0 ? `冷静期 ${cool}s` : '确认' }}
+        </van-button>
       </div>
       <div class="meta">{{ countdown }} 内有效 · 确认内容与执行内容一致（digest {{ card.digest.slice(0, 8) }}）</div>
     </template>
@@ -77,4 +83,5 @@ async function act(kind) {
 .reasons { background: var(--yellow-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 6px; line-height: 1.6; }
 .red .reasons { background: var(--red-soft); }
 .hint { color: var(--red); margin-top: 2px; }
+.warning { background: var(--red); color: #fff; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
 </style>

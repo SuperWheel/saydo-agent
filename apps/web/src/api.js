@@ -22,4 +22,5 @@ export const api = {
   auditRecent: () => get('/admin/audit?limit=60'),
   verifyAudit: () => post('/admin/audit/verify'),
   reset: () => post('/dev/seed'),
+  aaPay: (shareId) => post(`/dev/aa/shares/${shareId}/pay`),
 }
