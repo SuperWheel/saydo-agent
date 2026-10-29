@@ -32,6 +32,32 @@ rules:
     elevate_to: RED
     reason: "本轮对话含疑似绕过验证的指令"
 
+  # ---------- WS1 转账补全 ----------
+  - id: rolling_24h_outflow
+    tool_in: [transfer.create]
+    window_s: 86400
+    yellow_max_fen: 100000           # 与当日累计同一阈值；只在「当日累计没超、跨零点的 24 小时累计超了」时命中，避免两条原因重复
+    when: {rolling_24h_over: true}
+    elevate_to: RED
+    reason: "近 24 小时累计转出将超过 1000 元（跨零点累计，含待确认金额）"
+
+  - id: split_evasion
+    tool_in: [transfer.create]
+    window_s: 3600
+    min_prior: 2                     # 窗口内已有 2 笔及以上小额转给同一收款人（按账号），本笔是第 3 笔起
+    small_max_fen: 100000            # 单笔 ≤ 1000 元算小额
+    sum_over_fen: 100000             # 这几笔合计超过 1000 元
+    when: {split_suspected: true}
+    elevate_to: RED
+    reason: "疑似拆单：1 小时内多笔小额转给同一收款人，合计超过 1000 元"
+
+  - id: anti_fraud                   # 不限工具：哪个写工具的构造器标记了诈骗嫌疑都生效
+    when: {fraud_suspected: true}
+    combo_min_fen: 100000            # 「新收款人 + 大额 + 催促」组合里的大额：> 1000 元
+    cooling_off_s: 30                # 冷静期（演示参数）：期间确认接口拒绝确认
+    elevate_to: RED
+    reason: "对话中出现疑似诈骗话术，已启动冷静期，请先核实对方身份"
+
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000
   reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"

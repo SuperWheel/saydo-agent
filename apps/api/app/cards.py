@@ -62,6 +62,9 @@ def confirm_card(action) -> dict:
         card |= {"amount": fmt_yuan(d["amount_fen"]), "amount_capital": to_capital(d["amount_fen"])}
     if "cumulative_after_fen" in d:
         card["today_after"] = fmt_yuan(d["cumulative_after_fen"])
+    for k in ("warning", "not_before", "cooling_off_s"):  # 风险提示与冷静期（如反诈）
+        if k in d:
+            card[k] = d[k]
     return card
 
 

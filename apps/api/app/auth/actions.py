@@ -5,9 +5,10 @@
 """
 
 import hmac
+import math
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -144,12 +145,17 @@ def create_action(db: Session, *, user_id: int, session_id: str | None, trace_id
     display = {**display, "injection_flag": injection_flag}
     if spec.moves_money:
         display["cumulative_after_fen"] = decision.cumulative_after_fen
+    expires_at = now() + timedelta(seconds=get_settings().action_ttl_s)
+    if decision.cooling_off_s:  # 冷静期：最早可确认时间之前确认接口一律拒绝，确认卡有效期相应顺延
+        display |= {"not_before": (now() + timedelta(seconds=decision.cooling_off_s)).isoformat(),
+                    "cooling_off_s": decision.cooling_off_s}
+        expires_at += timedelta(seconds=decision.cooling_off_s)
     nonce = secrets.token_hex(8)
     action = PendingAction(
         id="A" + secrets.token_hex(8), user_id=user_id, session_id=session_id, trace_id=trace_id,
         tool=tool, args=args, nonce=nonce, digest=compute_digest(tool, args, user_id, nonce), display=display,
         level=decision.level.name, reasons=decision.reasons, reserved_fen=reserve, status="pending",
-        expires_at=now() + timedelta(seconds=get_settings().action_ttl_s),
+        expires_at=expires_at,
     )
     if reserve:
         _counter(db, user_id, now().date()).reserved_fen += reserve  # 生成确认卡时就原子预占额度
@@ -215,6 +221,10 @@ def confirm(db: Session, *, action_id: str, digest: str, user_id: int) -> Outcom
     if not hmac.compare_digest(digest, a.digest):
         audit.record(db, a.trace_id, "digest_mismatch", {"action_id": a.id}, a.session_id)
         raise ActionError(409, "确认内容与原动作不一致，已拒绝")
+    if (nb := a.display.get("not_before")) and now() < (not_before := datetime.fromisoformat(nb)):
+        left = math.ceil((not_before - now()).total_seconds())
+        audit.record(db, a.trace_id, "cooling_off_reject", {"action_id": a.id, "seconds_left": left}, a.session_id)
+        raise ActionError(409, f"冷静期还剩 {left} 秒，期间不能确认。请先核实对方身份")
     audit.record(db, a.trace_id, "action_confirmed", {"action_id": a.id, "level": a.level}, a.session_id)
     if (bad := _revalidate(db, a)) is not None:
         return bad

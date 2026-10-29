@@ -53,6 +53,7 @@ class Decision:
     block: bool = False
     block_reason: str | None = None
     cumulative_after_fen: int = 0
+    cooling_off_s: int = 0  # 冷静期：命中规则里最长的 cooling_off_s，期间不能确认
 
     @classmethod
     def blocked(cls, reason: str, after: int = 0) -> "Decision":
@@ -62,7 +63,7 @@ class Decision:
         return {
             "level": self.level.name, "reasons": self.reasons, "rule_hits": self.rule_hits,
             "required_factors": self.required_factors, "block": self.block, "block_reason": self.block_reason,
-            "cumulative_after_fen": self.cumulative_after_fen,
+            "cumulative_after_fen": self.cumulative_after_fen, "cooling_off_s": self.cooling_off_s,
         }
 
 
@@ -130,7 +131,7 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
         if after > hard["non_counter_daily_max_fen"]:
             return Decision.blocked(hard["reason"], after)
 
-    level, reasons, hits = ctx.base_level, [], []
+    level, reasons, hits, cooling = ctx.base_level, [], [], 0
     for rule in rules["rules"]:
         if not _applies(rule, ctx.tool):
             continue
@@ -140,9 +141,10 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
             level = max(level, Risk[rule["elevate_to"]])  # 只升不降
             reasons.append(reason)
             hits.append(rule["id"])
+            cooling = max(cooling, rule.get("cooling_off_s", 0))
     if not reasons and level == Risk.YELLOW:
         reasons.append(f"资金转出，今日累计 {fmt_yuan(after)} 元，需要你确认" if ctx.moves_money else "需要你确认后才会执行")
     return Decision(
         level=level, reasons=reasons, rule_hits=hits,
-        required_factors=list(rules["auth"].get(level.name, [])), cumulative_after_fen=after,
+        required_factors=list(rules["auth"].get(level.name, [])), cumulative_after_fen=after, cooling_off_s=cooling,
     )

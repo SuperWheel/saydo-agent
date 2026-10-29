@@ -167,3 +167,28 @@ class SystemFlag(Base):
     __tablename__ = "system_flags"
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON)
+
+
+class AABill(Base):
+    """AA 收款单（F-TR-06）。状态只做「已发送 / 已付清」，部分已付、拒绝、过期不做。"""
+
+    __tablename__ = "aa_bills"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(32))
+    total_fen: Mapped[int] = mapped_column(BigInteger)
+    remainder_rule: Mapped[str] = mapped_column(String(16))  # front：名单前几位各多 1 分 / initiator：发起人承担
+    status: Mapped[str] = mapped_column(String(16), default="sent")  # sent / paid
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class AAShare(Base):
+    __tablename__ = "aa_shares"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bill_id: Mapped[str] = mapped_column(ForeignKey("aa_bills.id"))
+    seq: Mapped[int] = mapped_column(Integer)  # 名单顺序，尾差按它分配
+    name: Mapped[str] = mapped_column(String(32))
+    is_initiator: Mapped[bool] = mapped_column(default=False)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), default="sent")  # self（发起人自己那份）/ sent / paid
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime)

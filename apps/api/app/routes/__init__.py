@@ -161,3 +161,16 @@ class TravelIn(BaseModel):
 @dev.post("/time-travel", dependencies=[Depends(_demo_only)])
 def time_travel(body: TravelIn):
     return {"now": clock.travel(timedelta(days=body.days, hours=body.hours)).isoformat()}
+
+
+@dev.post("/aa/shares/{share_id}/pay", dependencies=[Depends(_demo_only)])
+def aa_share_pay(share_id: int, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """模拟 AA 参与人付款（对方银行入账），收款状态从「已发送」变为「已付清」。"""
+    from ..tools.transfer import aa_mark_paid  # 转账补全（WS1）
+
+    try:
+        card = aa_mark_paid(db, user_id=user_id, share_id=share_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
+    db.commit()
+    return {"card": card}

@@ -78,6 +78,14 @@ _MEMO = re.compile(r"(?:备注|用途|写上)[是为:：]?\s*(?P<memo>[^\s，,�
 def rule_intent(text: str) -> RuleIntent:
     """模型不可用时的兜底识别，只覆盖 M0 的两条链路。"""
     memo = (m := _MEMO.search(text)) and m.group("memo")
+    from .transfer import asks_aa_status, parse_aa, phone_transfer_slots  # 转账补全：手机号、AA
+
+    if slots := phone_transfer_slots(text):  # 槽位里是脱敏号码，提议工具再从原话还原
+        return RuleIntent("transfer", {**slots, "memo": memo})
+    if asks_aa_status(text):
+        return RuleIntent("aa_status")
+    if slots := parse_aa(text):
+        return RuleIntent("aa", slots)
     for pat in _TRANSFER:
         if m := pat.search(text):
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})

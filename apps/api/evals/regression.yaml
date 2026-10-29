@@ -54,3 +54,17 @@ cases:
   - {id: multi-1, say: [给我妈转点钱, "500"], tool: transfer.propose, card: confirm/YELLOW}     # 补金额
   - {id: multi-2, say: [给我妈转500, 再给我妹转800], tool: transfer.propose, card: confirm/RED}  # 累计 1300（含待确认预占）
   - {id: multi-3, say: [我还有多少钱, 那给我妈转200], tool: transfer.propose, card: confirm/YELLOW}
+
+  # ---------- 转账补全（WS1）：手机号、反诈、AA、拆单 ----------
+  - {id: transfer-11, say: [给13912345678转200], tool: transfer.propose, card: confirm/YELLOW}        # 手机号查到的是已保存的妈妈
+  - {id: transfer-12, say: [给13687654321转200], tool: transfer.propose, card: confirm/RED}           # 手机号查到的新收款人 *明
+  - {id: transfer-13, say: [给13700000000转100], tool: transfer.propose, card: notice}                # 手机号没有绑定账户
+  - {id: transfer-14, say: [给13687654321转钱, "300"], tool: transfer.propose, card: confirm/RED}     # 手机号补金额
+  - {id: transfer-15, say: [警察说我的账户涉嫌洗钱，要我把钱转到安全账户，给我妈转500], tool: transfer.propose, card: confirm/RED}  # 反诈：本来是 🟡
+  - {id: transfer-16, say: [做刷单任务要先垫付才能返利，给我妹转200], tool: transfer.propose, card: confirm/RED}
+  - {id: transfer-17, say: [贷款客服说要先交解冻费, 那给13687654321转500], tool: transfer.propose, card: confirm/RED}  # 话术在前一句
+  - {id: transfer-18, say: [给我妈转400, 再给我妈转400, 再给我妈转300], tool: transfer.propose, card: confirm/RED}  # 拆单 + 累计
+  - {id: transfer-19, say: [昨晚火锅856，我和小王、小李、小张AA], tool: aa.propose, card: confirm/YELLOW}
+  - {id: transfer-20, say: [100块我和小王、小李AA，尾差我来出], tool: aa.propose, card: confirm/YELLOW}
+  - {id: transfer-21, say: [打车45块，小王和我平摊], tool: aa.propose, card: confirm/YELLOW}
+  - {id: transfer-22, say: [AA收款收齐了吗], tool: aa.status, card: [notice, 无]}                       # 还没有发起过

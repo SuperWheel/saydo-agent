@@ -19,8 +19,9 @@ from ..models import ChatMessage, ChatSession, User
 from ..nlu import amounts_in, rule_intent
 from ..security import inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
-from ..tools.bank import get_balance, propose
+from ..tools.bank import get_balance
 from ..tools.gateway import GatewayError, run_read_tool
+from ..tools.transfer import aa_status, propose, propose_aa
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
 from .prompts import NO_BYPASS, help_text, system_prompt
@@ -123,7 +124,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     db, llm = ctx.db, get_llm()
     user = db.get(User, ctx.user_id)
     messages = [{"role": "system", "content": system_prompt(user.name, now())}, *_history(db, ctx.session.id),
-                {"role": "user", "content": text}]
+                {"role": "user", "content": mask_pii(text)}]  # 手机号、卡号不出域：工具再从用户原话里还原
     tools = llm_tool_specs()
     datas: list[dict] = []
     final = ""
@@ -201,6 +202,9 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
     if pq and pq.get("kind") == "amount" and (found := amounts_in(text)) and len(found) == 1 and len(pq["contact_ids"]) == 1:
         result = propose(ctx, contact_id=pq["contact_ids"][0], amount_fen=found.pop(), memo=pq.get("memo"))
         return prefix + _apply(ctx, result), "rule"
+    if pq and pq.get("kind") == "amount" and pq.get("phone") and (found := amounts_in(text)) and len(found) == 1:
+        result = propose(ctx, payee_hint=pq["phone"], amount_fen=found.pop(), memo=pq.get("memo"))  # 按手机号转账补金额
+        return prefix + _apply(ctx, result), "rule"
 
     intent = rule_intent(text)
     audit.record(ctx.db, ctx.trace_id, "intent", {"engine": "rule", "intent": intent.intent, "slots": intent.slots},
@@ -213,6 +217,12 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         if result.data.get("status") == "need_amount":
             return prefix + "要转多少钱？", "rule"
         return prefix + _apply(ctx, result), "rule"
+    if intent.intent == "aa":
+        return prefix + _apply(ctx, propose_aa(ctx, **intent.slots)), "rule"
+    if intent.intent == "aa_status":
+        result = aa_status(ctx)
+        _apply(ctx, result)
+        return prefix + result.data["summary"], "rule"
     return prefix + help_text(), "rule"
 
 
