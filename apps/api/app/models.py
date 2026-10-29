@@ -192,3 +192,28 @@ class AAShare(Base):
     amount_fen: Mapped[int] = mapped_column(BigInteger)
     status: Mapped[str] = mapped_column(String(16), default="sent")  # self（发起人自己那份）/ sent / paid
     paid_at: Mapped[datetime | None] = mapped_column(DateTime)
+class Card(Base):
+    """银行卡（借记 / 信用 / 虚拟）。完整卡号只存在这里，给模型、前端和审计的一律只露尾号。"""
+
+    __tablename__ = "cards"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(16))  # debit / credit / virtual
+    name: Mapped[str] = mapped_column(String(32))
+    card_no: Mapped[str] = mapped_column(String(19))
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))  # 借记卡、虚拟卡的扣款账户
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active / locked（临时锁定）/ lost（已挂失）
+    # 交易限制：overseas / online / atm 三个开关，per_txn_fen / daily_fen 单笔 / 单日限额
+    limits: Mapped[dict] = mapped_column(JSON, default=dict)
+    credit_limit_fen: Mapped[int | None] = mapped_column(BigInteger)  # 信用卡：信用额度
+    available_fen: Mapped[int | None] = mapped_column(BigInteger)  # 信用卡：可用额度
+    merchant: Mapped[str | None] = mapped_column(String(32))  # 虚拟卡：限定商户，为空表示不限
+    one_time: Mapped[bool] = mapped_column(default=False)  # 虚拟卡：用一次后失效
+    expires_on: Mapped[date | None] = mapped_column(Date)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)  # 由哪个动作创建（虚拟卡）
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+    @property
+    def tail(self) -> str:
+        return self.card_no[-4:]

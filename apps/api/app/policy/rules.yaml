@@ -57,6 +57,32 @@ rules:
     cooling_off_s: 30                # 冷静期（演示参数）：期间确认接口拒绝确认
     elevate_to: RED
     reason: "对话中出现疑似诈骗话术，已启动冷静期，请先核实对方身份"
+  # ---------- 卡片管理（WS3）：收紧保护门槛低，放宽保护门槛高 ----------
+  # direction 由系统比对卡片当前设置和目标值算出（开关打开 / 限额调高 = loosen），不由模型填写
+  - id: card_loosen
+    tool_in: [card.limit_set]
+    when: {direction: loosen}
+    elevate_to: RED
+    reason: "放宽卡片交易限制（开启交易渠道或调高限额），需要本人强验证"
+
+  # 解锁、解挂、挂失的工具默认等级已是 🔴，这几条规则给出原因，并在审计里留下命中记录
+  - id: card_unlock
+    tool_in: [card.unlock]
+    when: {from_status: locked}
+    elevate_to: RED
+    reason: "解除临时锁定后卡片会恢复交易，需要本人强验证"
+
+  - id: card_unreport
+    tool_in: [card.unlock]
+    when: {from_status: lost}
+    elevate_to: RED
+    reason: "解除挂失后卡片会恢复交易，需要本人强验证"
+
+  - id: card_report_loss
+    tool_in: [card.report_loss]
+    when: {op: report_loss}
+    elevate_to: RED
+    reason: "正式挂失后原卡立即停用，需要本人强验证"
 
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000

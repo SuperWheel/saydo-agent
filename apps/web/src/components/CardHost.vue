@@ -5,6 +5,7 @@ import AACard from './cards/AACard.vue'
 import AnomalyCard from './cards/AnomalyCard.vue'
 import AuthCard from './cards/AuthCard.vue'
 import BalanceCard from './cards/BalanceCard.vue'
+import CardListCard from './cards/CardListCard.vue'
 import CategoryCard from './cards/CategoryCard.vue'
 import ClarifyCard from './cards/ClarifyCard.vue'
 import ConfirmCard from './cards/ConfirmCard.vue'
@@ -25,6 +26,7 @@ const CARDS = {
   bill_categories: CategoryCard,
   bill_anomalies: AnomalyCard,
   bill_report: ReportCard,
+  card_list: CardListCard,
 }
 
 defineProps({ card: { type: Object, required: true } })
