@@ -77,10 +77,11 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
         text_out, source = _selection_turn(ctx, selection), "template"
     elif get_settings().llm_ready:
         try:
-            text_out, source = _llm_turn(ctx, guard.text)
+            out = _llm_turn(ctx, guard.text)
         except LLMError as e:
             audit.record(db, trace_id, "llm_error", {"error": str(e)[:300]}, session.id)
-            text_out, source = (_template_reply(ctx.cards), "template") if ctx.cards else _rule_turn(ctx, guard)
+            out = (_template_reply(ctx.cards), "template") if ctx.cards else None
+        text_out, source = out or _rule_turn(ctx, guard)
     else:
         text_out, source = _rule_turn(ctx, guard)
 
@@ -117,7 +118,8 @@ def _run_tool_call(ctx: ToolContext, tc) -> ToolResult:
     return result
 
 
-def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str]:
+def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
+    """返回 None 表示这一轮模型不可信，交给规则引擎。"""
     db, llm = ctx.db, get_llm()
     user = db.get(User, ctx.user_id)
     messages = [{"role": "system", "content": system_prompt(user.name, now())}, *_history(db, ctx.session.id),
@@ -148,16 +150,20 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str]:
 
     if not final:
         return _template_reply(ctx.cards), "template"
-    facts = collect_facts(datas) | collect_facts(ctx.cards) | _context_facts()
-    g = check(final, facts, executed=False)  # M0 里对话轮次本身从不执行转账
+    # 用户本轮话里的金额也算有据（复述「转 3000 元」不是编造），其余数字只能来自工具结果
+    said = collect_facts([{"amount_fen": f} for f in amounts_in(text)])
+    facts = collect_facts(datas) | collect_facts(ctx.cards) | _context_facts() | said
+    g = check(final, facts, executed=False, has_card=bool(ctx.cards))  # M0 里对话轮次本身从不执行转账
     if g.ok:
         return final, "llm"
     audit.record(db, ctx.trace_id, "grounding_failed", {"text": final, "problem": g.describe()}, ctx.session.id)
+    if g.phantom_card:
+        return None  # 模型说出了卡片却没调用工具，重写文字也变不出卡片：这一轮由规则引擎确定性地出卡
     messages += [{"role": "assistant", "content": final},
                  {"role": "user", "content": f"[系统校验] 上一条回复有问题：{g.describe()}。请只使用工具结果里的数字重写，并且不要声称已经完成转账。"}]
     db.commit()
     retry = llm.chat(messages, tools=tools, tool_choice="none").content.strip()
-    g2 = check(retry, facts, executed=False)
+    g2 = check(retry, facts, executed=False, has_card=bool(ctx.cards))
     audit.record(db, ctx.trace_id, "grounding_retry", {"text": retry, "ok": g2.ok, "problem": g2.describe()}, ctx.session.id)
     if retry and g2.ok:
         return retry, "llm"

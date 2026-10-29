@@ -1,5 +1,5 @@
 """事实校验（Grounding Check）：模型回复里的每个数字都要能在本轮工具结果里找到；
-没有成功回执时，不能出现「已转账 / 转账成功」之类的断言。"""
+没有成功回执时，不能出现「已转账 / 转账成功」之类的断言；本轮没出卡片时，不能说「已生成确认卡」。"""
 
 import re
 from dataclasses import dataclass, field
@@ -7,6 +7,9 @@ from decimal import Decimal, InvalidOperation
 
 _NUM = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?")
 _CLAIM = re.compile(r"(已经?|成功)(为你|帮你|给你|向.{1,6})?(转账|转出|转了|到账|完成转账|支付|扣款|汇款|汇出)|转账(已)?成功|已到账")
+# 「已生成确认卡」「请在选择卡中确认」这类说法；单纯提到确认卡（如解释它是什么）不算
+_CARD_CLAIM = re.compile(r"(生成|发起|创建|准备)[^。！？\n]{0,8}(确认卡|选择卡)|(确认卡|选择卡)[^。！？\n]{0,3}(已|如下|在下方)"
+                         r"|请[^。！？\n]{0,8}(确认卡|选择卡)")
 
 
 def _norm(s: str) -> str | None:
@@ -38,6 +41,7 @@ class Grounding:
     ok: bool
     unsupported: list[str] = field(default_factory=list)
     false_claim: bool = False
+    phantom_card: bool = False  # 说出了卡片，但本轮没有生成任何卡片
 
     def describe(self) -> str:
         parts = []
@@ -45,10 +49,12 @@ class Grounding:
             parts.append(f"数字 {', '.join(self.unsupported)} 在工具结果里找不到")
         if self.false_claim:
             parts.append("声称已经完成转账，但实际还没有执行")
+        if self.phantom_card:
+            parts.append("说生成了确认卡或选择卡，但本轮没有调用工具，没有任何卡片")
         return "；".join(parts)
 
 
-def check(text: str, facts: set[str], *, executed: bool = False) -> Grounding:
+def check(text: str, facts: set[str], *, executed: bool = False, has_card: bool = True) -> Grounding:
     unsupported = []
     for m in _NUM.finditer(text):
         n = _norm(m.group())
@@ -60,4 +66,6 @@ def check(text: str, facts: set[str], *, executed: bool = False) -> Grounding:
             continue
         unsupported.append(m.group())
     false_claim = bool(_CLAIM.search(text)) and not executed
-    return Grounding(ok=not unsupported and not false_claim, unsupported=unsupported, false_claim=false_claim)
+    phantom_card = not has_card and bool(_CARD_CLAIM.search(text))
+    return Grounding(ok=not unsupported and not false_claim and not phantom_card, unsupported=unsupported,
+                     false_claim=false_claim, phantom_card=phantom_card)

@@ -45,6 +45,14 @@ def test_grounding():
     assert check("确认卡 2 分钟内有效", facts).ok
 
 
+def test_phantom_card_claim():
+    for text in ("已生成转账确认卡，请核对", "我重新为您生成转账确认卡", "请在选择卡中确认要转给哪一位"):
+        g = check(text, set(), has_card=False)
+        assert g.phantom_card and not g.ok, text
+        assert check(text, set(), has_card=True).ok  # 本轮真出了卡就没问题
+    assert check("确认卡是转账前给你核对信息用的", set(), has_card=False).ok  # 只是解释，不算声称
+
+
 def test_audit_chain_detects_tampering(client):
     with new_session() as db:
         audit.record(db, "t1", "unit", {"x": 1})

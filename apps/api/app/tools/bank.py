@@ -50,7 +50,7 @@ def get_balance(ctx: ToolContext) -> ToolResult:
 
 @bank_tool(
     name="contact.search", domain="transfer", base_risk=Risk.GREEN,
-    description="在用户已保存的收款人里查找，返回脱敏信息。",
+    description="在用户已保存的收款人里查找，返回脱敏信息。只用于查看收款人；要转账请直接调用 transfer_propose。",
     parameters={"type": "object", "properties": {
         "hint": {"type": "string", "description": "收款人称呼或姓名，照抄用户原话，如「我妈」「张伟」"},
     }, "required": ["hint"]},
@@ -61,7 +61,7 @@ def search_contacts(ctx: ToolContext, hint: str) -> ToolResult:
 
 @bank_tool(
     name="transfer.propose", domain="transfer", base_risk=Risk.GREEN,
-    description="为一笔转账生成确认卡交给用户。只生成待确认动作，不会转账；风险等级和是否需要验证由系统决定。",
+    description="为一笔转账生成确认卡交给用户；收款人同名时返回选择卡。只生成待确认动作，不会转账；风险等级和是否需要验证由系统决定。",
     parameters={"type": "object", "properties": {
         "payee_hint": {"type": "string", "description": "收款人称呼，照抄用户原话，如「我妈」「张伟」「房东」"},
         "amount_text": {"type": "string", "description": "金额，照抄用户原话，如「500」「两千五」「1.5w」，不要换算"},
