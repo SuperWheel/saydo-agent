@@ -67,8 +67,10 @@ class WecomBot:
                  heartbeat_s: float = HEARTBEAT_S, backoff_min_s: float = 1.0, backoff_max_s: float = BACKOFF_MAX_S):
         self.bot_id, self._secret, self.url = bot_id, secret, url
         self.user_id, self.allowed = user_id, allowed
-        # 默认直连：企业微信是国内服务；websockets 默认会用系统代理，开发机上的 SOCKS 代理还要额外装库才连得上
-        self._connect = connect or (lambda url: ws_connect(url, proxy=proxy))
+        # 默认直连：企业微信是国内服务；websockets 默认会用系统代理，开发机上的 SOCKS 代理还要额外装库才连得上。
+        # 关掉库自带的 WebSocket ping：企业微信服务端不回这种 ping，20 秒后库会以 keepalive 超时断开；保活靠协议里的 cmd=ping。
+        # 关掉 permessage-deflate 压缩：实测开着时会出现 incorrect masking / invalid opcode 的帧解析错误
+        self._connect = connect or (lambda url: ws_connect(url, proxy=proxy, ping_interval=None, compression=None))
         self._answer = answer or self.answer
         self.heartbeat_s, self.backoff_min_s, self.backoff_max_s = heartbeat_s, backoff_min_s, backoff_max_s
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -174,6 +176,8 @@ class WecomBot:
                     self._pending_pings.discard(rid)
                     if frame.get("errcode") not in (0, None):
                         log.warning("企业微信回执错误：errcode=%s errmsg=%s", frame.get("errcode"), frame.get("errmsg"))
+                    elif rid and rid not in self._pending_pings and not rid.startswith("ping"):
+                        log.info("企业微信回执：%s", rid)
         finally:
             heartbeat.cancel()
             for t in handlers:
@@ -194,6 +198,7 @@ class WecomBot:
     async def _on_message(self, ws, frame: dict) -> None:
         rid = (frame.get("headers") or {}).get("req_id")
         body = frame.get("body") or {}
+        log.info("收到企业微信消息：chattype=%s msgtype=%s", body.get("chattype"), body.get("msgtype"))
         if not rid or self._dup(body.get("msgid")):
             return
         if body.get("chattype") == "group":

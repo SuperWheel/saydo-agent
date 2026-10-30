@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .. import audit, clock, llm_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions
-from ..channels import wecom
+from ..channels import take_handoff, wecom
 from ..config import get_settings
 from ..core_mock.ledger import is_balanced, ledger_balance
 from ..core_mock.seed import seed
@@ -97,6 +97,15 @@ def verify(challenge_id: str, body: VerifyIn, db: Session = Depends(get_db), use
 def accounts(db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
     rows = db.scalars(select(Account).where(Account.user_id == user_id)).all()
     return [{"id": a.id, "name": a.name, "tail": a.card_tail, "balance": fmt_yuan(a.balance_fen)} for a in rows]
+
+
+@api.get("/handoff/{code}")
+def handoff(code: str, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """企业微信引导链接里的转交码 → 用户在企业微信里说的那句话，App 填进输入框（不自动发送）。"""
+    text = take_handoff(db, code[:16], user_id)
+    if text is None:
+        raise HTTPException(404, "链接已过期，请在这里重新说一下要办理什么")
+    return {"text": text}
 
 
 @api.get("/health")

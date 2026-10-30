@@ -110,3 +110,12 @@ def test_base64_secret_accepted(client, env_file, monkeypatch):
     use_server(monkeypatch, FakeWS())
     r = client.post("/admin/wecom-config", json={"bot_id": BOT, "secret": "Ab+cd/ef0123456789=="})
     assert r.status_code == 200 and "WECOM_BOT_SECRET=Ab+cd/ef0123456789==" in env_file.read_text(encoding="utf-8")
+
+
+def test_status_lists_lan_ips(client, env_file, monkeypatch):
+    from app import wecom_setup
+    assert wecom_setup._private_v4("192.168.1.8") and wecom_setup._private_v4("172.20.10.2")
+    assert not wecom_setup._private_v4("127.0.0.1") and not wecom_setup._private_v4("198.18.0.1")  # TUN 虚拟网卡
+    assert not wecom_setup._private_v4("8.8.8.8") and not wecom_setup._private_v4("")
+    monkeypatch.setattr(wecom_setup, "lan_ips", lambda: ["172.20.10.2"])
+    assert client.get("/admin/wecom-config").json()["lan_ips"] == ["172.20.10.2"]

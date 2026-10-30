@@ -114,6 +114,17 @@ class ImBinding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class ImHandoff(Base):
+    """IM 里被降权的办理请求：引导回 App 的链接只带这个随机码，App 打开后凭码取回原话填进输入框（不自动发送）。
+    原话不放进链接：URL 会留在浏览器历史和各级访问日志里。"""
+
+    __tablename__ = "im_handoffs"
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    text: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class PendingAction(Base):
     """待确认动作。确认卡、验证码、执行令牌都绑定它的 digest。"""
 

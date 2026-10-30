@@ -1,5 +1,6 @@
 """言行 SayDo Agent 后端入口。启动：uv run uvicorn app.main:app --reload"""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,7 +20,18 @@ from .tools import bill_analysis  # noqa: F401  注册自由分析（沙箱）�
 from .tools import knowledge  # noqa: F401  注册知识问答工具
 
 
+def _log_to_console() -> None:
+    """saydo.* 的 INFO 日志打到控制台（企业微信连上、收到消息等）。uvicorn 只配了它自己的 logger。"""
+    logger = logging.getLogger("saydo")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+
+
 def create_app() -> FastAPI:
+    _log_to_console()
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         engine = init_engine(get_settings().database_url)

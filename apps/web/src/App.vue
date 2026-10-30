@@ -43,7 +43,22 @@ onUnmounted(() => clearInterval(waitTimer))
 
 onMounted(async () => {
   try { llm.value = (await api.health()).llm } catch { llm.value = null }
+  await takeHandoff()
 })
+
+// 从企业微信的引导链接（?r=转交码）打开：把用户在企业微信里说的那句话填进输入框，核对后自己点发送
+async function takeHandoff() {
+  const code = new URLSearchParams(location.search).get('r')
+  if (!code) return
+  history.replaceState(null, '', location.pathname)  // 刷新页面不重复带入
+  try {
+    input.value = (await api.handoff(code)).text
+    showToast('已带入你在企业微信里的请求，核对后点发送')
+    inputRef.value?.focus()
+  } catch (e) {
+    showToast(e.message)
+  }
+}
 
 async function scrollDown() {
   await nextTick()

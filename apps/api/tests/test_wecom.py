@@ -5,7 +5,9 @@
 
 import asyncio
 import json
+import re
 import time
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
@@ -284,7 +286,8 @@ def test_other_read_only_queries_are_answered(client, text):
 def test_write_requests_are_downgraded_before_agent(client, text):
     r = turn(text)
     assert r.downgraded
-    assert r.text == f"这项操作需要在言行 App 内确认，请打开言行 App 办理：{H5}"
+    assert re.fullmatch(rf"这项操作需要在言行 App 内确认。点开链接，这句话会自动带进言行 App，核对后点发送：{H5}/\?r=[\w-]{{8}}", r.text)
+    assert text not in r.text  # 原话不进链接
     with new_session() as db:
         assert db.scalars(select(PendingAction)).all() == []
         ev = db.scalars(select(AuditLog).where(AuditLog.trace_id == r.trace_id)).one()
@@ -322,7 +325,7 @@ def test_follow_up_question_of_write_is_not_kept(client, monkeypatch):
 def test_h5_link_is_configurable(client, monkeypatch):
     monkeypatch.setenv("APP_H5_URL", "http://192.168.1.8:5173")
     get_settings.cache_clear()
-    assert turn("给赵磊转100").text.endswith("http://192.168.1.8:5173")
+    assert "http://192.168.1.8:5173/?r=" in turn("给赵磊转100").text
 
 
 def test_binding_allowlist_and_empty_text(client):
@@ -359,7 +362,39 @@ def test_connects_directly_unless_proxy_configured(monkeypatch):
     server = FakeServer(FakeWS(), FakeWS())
     monkeypatch.setattr(wecom, "ws_connect", server)
     run_bot(wecom.from_settings(Settings(wecom_bot_id="BOT", wecom_bot_secret="SEC")), lambda: server.made)
-    assert server.kwargs == {"proxy": None}
+    assert server.kwargs == {"proxy": None, "ping_interval": None, "compression": None}  # 库自带 ping 企业微信不回
     run_bot(wecom.from_settings(Settings(wecom_bot_id="BOT", wecom_bot_secret="SEC", wecom_proxy="http://127.0.0.1:7890")),
             lambda: len(server.made) == 2)
-    assert server.kwargs == {"proxy": "http://127.0.0.1:7890"}
+    assert server.kwargs["proxy"] == "http://127.0.0.1:7890"
+
+
+def _code(reply_text: str) -> str:
+    return reply_text.rsplit("?r=", 1)[1]
+
+
+def test_handoff_link_brings_request_into_app(client):
+    """企业微信里被降权的「给赵磊转100」：App 凭链接里的转交码取回原话，填进输入框（不自动发送、不生成确认卡）。"""
+    code = _code(turn("给赵磊转100").text)
+    r = client.get(f"/api/handoff/{code}")
+    assert r.status_code == 200 and r.json() == {"text": "给赵磊转100"}
+    assert client.get(f"/api/handoff/{code}").status_code == 200  # 有效期内可以再次打开
+    with new_session() as db:
+        assert db.scalars(select(PendingAction)).all() == []
+
+
+def test_handoff_rejects_unknown_other_user_and_expired(client, monkeypatch):
+    from app import clock
+    from app.models import ImHandoff, User
+    assert client.get("/api/handoff/nope").status_code == 404
+    code = _code(turn("给赵磊转100").text)
+    with new_session() as db:
+        other = User(name="别人", phone_masked="139****0000")
+        db.add(other)
+        db.flush()
+        db.get(ImHandoff, code).user_id = other.id
+        db.commit()
+    assert client.get(f"/api/handoff/{code}").status_code == 404  # 不是当前用户的
+    code = _code(turn("给赵磊转200").text)
+    clock.travel(timedelta(minutes=31))
+    r = client.get(f"/api/handoff/{code}")
+    assert r.status_code == 404 and "过期" in r.json()["detail"]

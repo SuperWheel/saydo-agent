@@ -3,8 +3,13 @@
 和模型配置页一样：Secret 只进 .env，不回传前端（页面只看到「已填写」），不写审计。
 """
 
+import contextlib
+import ipaddress
 import os
 import re
+import socket
+import subprocess
+import sys
 
 from . import config
 from .channels import wecom
@@ -33,6 +38,29 @@ def _masked(bot_id: str) -> str:
     return f"{bot_id[:4]}…{bot_id[-4:]}" if len(bot_id) > 10 else bot_id[:2] + "…"
 
 
+def _private_v4(ip: str) -> bool:
+    """局域网地址：10/8、172.16/12、192.168/16。排除代理软件 TUN 模式的 198.18/15 和 CGNAT 的 100.64/10。"""
+    try:
+        a = ipaddress.IPv4Address(ip)
+    except ValueError:
+        return False
+    return a.is_private and not a.is_loopback and a not in ipaddress.IPv4Network("198.18.0.0/15")
+
+
+def lan_ips() -> list[str]:
+    """本机的局域网 IPv4，给设置页的「填入本机局域网地址」用。手机连电脑热点、或和电脑在同一 Wi-Fi 时用这个地址访问。"""
+    found: list[str] = []
+    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("223.5.5.5", 53))  # UDP connect 不发包，只让系统选出口网卡
+        found.append(s.getsockname()[0])
+    if sys.platform == "darwin":  # 开着代理软件的 TUN 模式时出口是虚拟网卡，再直接问 Wi-Fi / 有线网卡
+        for nic in ("en0", "en1"):
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                out = subprocess.run(["ipconfig", "getifaddr", nic], capture_output=True, text=True, timeout=2)
+                found.append(out.stdout.strip())
+    return list(dict.fromkeys(ip for ip in found if _private_v4(ip)))
+
+
 def status() -> dict:
     s = get_settings()
     rt = wecom.runtime_status()
@@ -41,7 +69,7 @@ def status() -> dict:
     return {"configured": s.wecom_ready, "bot_id": _masked(bot_id) if bot_id else "",
             "has_secret": bool(s.wecom_bot_secret.strip()), "app_h5_url": s.app_h5_url,
             **rt, "state_text": STATE_TEXT.get(rt["state"], rt["state"]),
-            "env_file": str(config.ENV_FILE), "warnings": warnings}
+            "env_file": str(config.ENV_FILE), "lan_ips": lan_ips(), "warnings": warnings}
 
 
 def save(bot_id: str = "", secret: str = "", app_h5_url: str = "", disable: bool = False) -> None:

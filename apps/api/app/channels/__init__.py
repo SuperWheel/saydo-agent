@@ -22,7 +22,8 @@ from ..agent import planner
 from ..agent.loop import handle_turn
 from ..auth.actions import ACTIVE, cancel
 from ..config import get_settings
-from ..models import ChatSession, ImBinding, PendingAction, User
+from ..clock import now
+from ..models import ChatSession, ImBinding, ImHandoff, PendingAction, User
 from ..nlu import rule_intent
 from ..security import mask_pii
 
@@ -47,8 +48,25 @@ class ImReply:
     trace_id: str | None = None
 
 
-def app_guide() -> str:
-    return f"这项操作需要在言行 App 内确认，请打开言行 App 办理：{get_settings().app_h5_url}"
+HANDOFF_TTL_S = 30 * 60  # 引导链接的有效期
+
+
+def app_guide(db: Session | None = None, user_id: int | None = None, text: str = "") -> str:
+    """引导回 App 的话。给了原话就生成一个转交码：链接打开 App 时这句话自动填进输入框，用户核对后自己点发送。"""
+    url = get_settings().app_h5_url.rstrip("/")
+    if db is None or not text:
+        return f"这项操作需要在言行 App 内确认，请打开言行 App 办理：{url}"
+    code = secrets.token_urlsafe(6)
+    db.add(ImHandoff(code=code, user_id=user_id, text=text[:500]))
+    return f"这项操作需要在言行 App 内确认。点开链接，这句话会自动带进言行 App，核对后点发送：{url}/?r={code}"
+
+
+def take_handoff(db: Session, code: str, user_id: int) -> str | None:
+    """App 凭转交码取回原话；不是这个用户的、过期的都当不存在。有效期内可以重复打开（第一次没打开成功还能再点）。"""
+    h = db.get(ImHandoff, code)
+    if h is None or h.user_id != user_id or (now() - h.created_at).total_seconds() > HANDOFF_TTL_S:
+        return None
+    return h.text
 
 
 def wants_write(text: str) -> bool:
@@ -96,8 +114,9 @@ def im_turn(db: Session, *, channel: str, external_id: str, text: str, user_id: 
         trace_id = secrets.token_hex(8)
         audit.record(db, trace_id, "channel_downgraded", {"channel": channel, "stage": "intent",
                                                           "text": mask_pii(text)}, b.session_id)
+        guide = app_guide(db, b.user_id, text)
         db.commit()
-        return ImReply(app_guide(), downgraded=True, trace_id=trace_id)
+        return ImReply(guide, downgraded=True, trace_id=trace_id)
 
     result = handle_turn(db, user_id=b.user_id, session_id=b.session_id, text=text, channel=channel)
     b.session_id = result.session_id
@@ -114,8 +133,9 @@ def im_turn(db: Session, *, channel: str, external_id: str, text: str, user_id: 
         audit.record(db, result.trace_id, "channel_downgraded", {
             "channel": channel, "stage": "reply", "cards": other_cards, "cancelled": [a.id for a in actions],
         }, result.session_id)
+        guide = app_guide(db, b.user_id, text)
         db.commit()
-        return ImReply(app_guide(), downgraded=True, trace_id=result.trace_id)
+        return ImReply(guide, downgraded=True, trace_id=result.trace_id)
     db.commit()
     return ImReply(render(result.text, result.cards), trace_id=result.trace_id)
 
