@@ -138,6 +138,7 @@ def test_drop_cake_while_awaiting_confirm(client):
     cake = card(sync(client, sid))
     r = say(client, "蛋糕不要了", sid)
     assert plan_of(r)["status"] == "done" and statuses(plan_of(r))["下单蛋糕，从心愿罐付款"] == "removed"
+    assert plan_of(r)["void_action_ids"] == [cake["action_id"]]  # 前端据此把画面上那张蛋糕卡盖上遮罩
     assert confirm(client, cake).status_code == 409  # 已作废
     assert pot_balance() == 50_000 - 19_900
 

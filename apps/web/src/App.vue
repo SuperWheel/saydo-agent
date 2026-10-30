@@ -41,7 +41,17 @@ async function scrollDown() {
 
 function push(msg) {
   messages.value.push({ id: seq++, cards: [], ...msg })
+  voidStaleCards(msg.cards || [])
   scrollDown()
+}
+
+// 计划重新规划（「蛋糕不要了」）后，被移出计划那一步的确认卡在后端已作废，这里把画面上的旧卡也盖上遮罩
+function voidStaleCards(cards) {
+  const ids = new Set(cards.flatMap((c) => c.void_action_ids || []))
+  if (!ids.size) return
+  for (const m of messages.value) {
+    for (const c of m.cards) if (c.type === 'confirm' && ids.has(c.action_id)) c.voided = true
+  }
 }
 
 async function send(text, selection) {

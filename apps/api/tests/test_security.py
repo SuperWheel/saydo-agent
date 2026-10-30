@@ -46,6 +46,14 @@ def test_grounding():
     assert check("确认卡 2 分钟内有效", facts).ok
 
 
+
+def test_rounded_fact_is_grounded():
+    """把工具给的 2,899.48 说成「约 2,899 元」「2,899.5 元」是正常的四舍五入，不算编造；离得远的数照样拦。"""
+    facts = collect_facts([{"diff_fen": 289_948, "share": "84.66%"}])
+    assert check("比上月多花约 2,899 元，购物涨了 84.7%", facts).ok
+    assert check("多花 2,899.5 元，购物涨了 85%", facts).ok
+    assert check("多花 2,900 元", facts).unsupported == ["2,900"]  # 只认四舍五入到个位和一位小数
+
 def test_phantom_card_claim():
     for text in ("已生成转账确认卡，请核对", "我重新为您生成转账确认卡", "请在选择卡中确认要转给哪一位"):
         g = check(text, set(), has_card=False)

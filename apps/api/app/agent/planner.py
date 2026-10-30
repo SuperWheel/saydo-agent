@@ -428,6 +428,9 @@ def plan_card(plan: TaskPlan) -> dict:
             "event_date": f"{plan.event_date}" if plan.event_date else None,
             "due_at": due.isoformat() if due else None, "due_label": f"{due:%m-%d %H:%M}" if due else "",
             "steps": steps, "ops": ops, "source": plan.source,
+            # 移出计划、撤销的步骤：前端把对话里这些确认卡标成已作废（后端早已作废，这里只是让画面一致）
+            "void_action_ids": [s["action_id"] for s in plan.steps
+                                if s.get("action_id") and s["status"] in ("removed", "cancelled")],
             "hint": "确认计划不等于确认付款：每一笔存入、下单、转账都会单独出确认卡。"}
 
 

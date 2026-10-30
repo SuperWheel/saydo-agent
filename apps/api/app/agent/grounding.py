@@ -5,7 +5,7 @@
 
 import re
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from ..money import parse_amount
 
@@ -54,20 +54,32 @@ def _norm(s: str) -> str | None:
         return None
 
 
+def _add(out: set[str], s: str | None) -> None:
+    """记一个事实数字。带小数的同时记下取整和保留一位小数的写法：「多花 2,899 元」说的就是 2,899.48。"""
+    if s is None:
+        return
+    out.add(s)
+    d = Decimal(s)
+    if d != d.to_integral_value():
+        for q in (Decimal(1), Decimal("0.1")):
+            out.add(_norm(str(d.quantize(q, rounding=ROUND_HALF_UP))))
+
+
 def collect_facts(obj, out: set[str] | None = None) -> set[str]:
     out = set() if out is None else out
     if isinstance(obj, dict):
         for k, v in obj.items():
             if k.endswith("_fen") and isinstance(v, int) and not isinstance(v, bool):
-                out.add(_norm(str(Decimal(v) / 100)))
+                _add(out, _norm(str(Decimal(v) / 100)))
             collect_facts(v, out)
     elif isinstance(obj, (list, tuple, set)):
         for v in obj:
             collect_facts(v, out)
     elif isinstance(obj, str):
-        out.update(n for n in (_norm(m) for m in _NUM.findall(obj)) if n)
+        for m in _NUM.findall(obj):
+            _add(out, _norm(m))
     elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
-        out.add(_norm(str(obj)))
+        _add(out, _norm(str(obj)))
     return out
 
 
