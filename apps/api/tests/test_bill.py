@@ -291,6 +291,7 @@ class _Restater(FakeLLM):
 def test_model_restating_report_passes_grounding(llm_client, monkeypatch):
     f = _Restater(tool("bill_report", period="本月"), lambda d: f"本月消费 {d['spend_yuan']} 元，储蓄率 {d['savings_rate']}。")
     monkeypatch.setattr(loop, "get_llm", lambda: f)
+    monkeypatch.setattr(loop, "FAST_INTENTS", {"balance"})  # 验的是模型复述，不让工作流截走
     r = say(llm_client, "这个月的账单报告")
     assert r["reply"]["source"] == "llm" and r["cards"][0]["type"] == "bill_report"
 
@@ -299,6 +300,7 @@ def test_model_restating_report_passes_grounding(llm_client, monkeypatch):
 def test_model_inventing_report_numbers_falls_back_to_template(llm_client, monkeypatch, claim):
     f = _Restater(tool("bill_report", period="本月"), lambda d: claim)
     monkeypatch.setattr(loop, "get_llm", lambda: f)
+    monkeypatch.setattr(loop, "FAST_INTENTS", {"balance"})  # 验的是模型复述，不让工作流截走
     r = say(llm_client, "这个月的账单报告")
     assert r["reply"]["source"] == "template" and r["reply"]["text"] == r["cards"][0]["reply"]
 

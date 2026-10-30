@@ -229,6 +229,11 @@ _SUB_UPCOMING = re.compile(r"(快|要|将|即将|马上|最近|这几天|近期|
 _SUB_LEAVE = re.compile(r"占比|分类|报告|饼图|月报|异常")  # 这些是账单分析的问法
 
 
+def names_merchant(text: str) -> bool:
+    """话里点名了是哪个订阅商户（「取消爱奇艺」），而不是「刚才那个」。"""
+    return bool(_SUB_MERCHANT.search(text))
+
+
 def _sub_intent(text: str) -> RuleIntent | None:
     word, merchant = _SUB_WORD.search(text), _SUB_MERCHANT.search(text)
     if not (word or merchant) or _SUB_LEAVE.search(text):

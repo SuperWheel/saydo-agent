@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int | None = None
     llm_timeout_s: float | None = None
     llm_enabled: bool = True  # false 时只走规则兜底（CI、断网演示）
+    workflow_enabled: bool = True  # 固定流程走规则工作流、不调模型；false 时全部交给模型（对比评测用）
     # 密钥：LLM_API_KEY 填了就优先用；否则按供应商取对应的那一项
     llm_api_key: str = ""
     deepseek_api_key: str = ""

@@ -192,7 +192,7 @@ def test_tool_history_preserves_numbers_and_masks_string_leaves(llm_client, fake
 @pytest.mark.parametrize("broken", ['[{"amount_fen": ****0000}]', '{"role": "tool"}', 'null', '10000000'])
 def test_bad_tool_history_does_not_break_next_turn(llm_client, fake, broken):
     f = fake(tool("account_balance"), text("请查看余额。"), text("你好"))
-    r = say(llm_client, "查余额")
+    r = say(llm_client, "帮我瞅瞅账户")
     with new_session() as db:
         db.add(ChatMessage(session_id=r["session_id"], trace_id=r["trace_id"], role="tool", content=broken))
         db.commit()

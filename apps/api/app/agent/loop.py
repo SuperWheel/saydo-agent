@@ -16,10 +16,11 @@ from .. import audit
 from ..cards import notice_card
 from ..clock import now
 from ..config import get_settings
-from ..models import ChatMessage, ChatSession, PendingAction, User
-from ..nlu import amounts_in, rule_intent
+from ..models import ChatMessage, ChatSession, Contact, PendingAction, User
+from ..nlu import amounts_in, names_merchant, narrow_payees, parse_amount, resolve_payee, rule_intent
+from ..nlu.transfer import phones_in
 from ..security import breaker, inspect, mask_pii
-from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
+from ..tools import REGISTRY, ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance
 from ..tools.bill import rule_turn as bill_rule_turn
 from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
@@ -90,8 +91,9 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     # 定时转账等必须确定性处理的话。不是这些就返回 None，照常走模型或规则。说明见 agent/planner.py
     elif (planned := planner.route(ctx, guard, get_llm if get_settings().llm_ready else None)) is not None:
         text_out, source = planned
-    elif _fast_path(ctx, guard):  # 「我还有多少钱」这类只查余额的话：规则就能确定性作答，不用等模型
+    elif (workflow := _fast_path(ctx, guard)) is not None:  # 固定流程（查余额、给我妈转 500、锁卡……）：规则确定性作答，不用等模型
         text_out, source = _rule_turn(ctx, guard)
+        _record_workflow(ctx, *workflow)
     elif get_settings().llm_ready:
         try:
             out = _llm_turn(ctx, guard.text)
@@ -338,16 +340,85 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
                 ("wealth_", "wealth"), ("aa", "transfer"), ("contact", "transfer"))
 
 
-FAST_INTENTS = {"balance"}  # 只发一个查询工具、回复由卡片模板生成的意图
+# 确定性工作流：规则引擎能完整识别、参数齐全的固定流程，不经过模型。
+# 白名单按回归集实测定：规则模式下这些意图的用例和模型给出的卡片一致。
+# 不在名单里的照常走模型：明细查询（「周末打车比工作日多花多少」规则会答偏）、知识问答、自由分析、规划。
+# 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
+WORKFLOW_TOOLS = {
+    "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
+    "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
+    "card:list": "card.list", "card:lock": "card.lock_propose", "card:unlock": "card.unlock_propose",
+    "card:report_loss": "card.report_loss_propose", "card:limit": "card.limit_propose",
+    "card:virtual_apply": "card.virtual_propose",
+    "sub:list": "sub.list", "sub:upcoming": "sub.upcoming", "sub:cancel": "sub.cancel_propose",
+    "wealth:assess": "wealth.assessment", "wealth:holdings": "wealth.holdings", "wealth:compare": "wealth.compare",
+    "wealth:recommend": "wealth.recommend", "wealth:subscribe": "wealth.subscribe_propose",
+    "wealth:redeem": "wealth.redeem_propose",
+}
+FAST_INTENTS = set(WORKFLOW_TOOLS)
+_COREF = re.compile(r"[他她它]|那个|那张|这张|那笔|这笔|刚才|上面|同样|也")  # 多轮里指代上文的说法，交给模型理解
 
 
-def _fast_path(ctx: ToolContext, guard) -> bool:
-    """整句每一段都是同一个快速意图（「查下余额」「我还有多少钱」），且没有注入嫌疑、没有待回答的追问时直接走规则。
-    查余额走模型要两次调用（10 秒上下），走规则是毫秒级，结果完全一样。"""
-    if guard.suspicious or (ctx.session.state or {}).get("pending_question"):
-        return False
-    parts = [p.strip() for p in _CLAUSE.split(guard.text) if p.strip()]
-    return bool(parts) and all(rule_intent(p).intent in FAST_INTENTS for p in parts)
+def _intent_key(text: str) -> str:
+    ri = rule_intent(text)
+    return f"{ri.intent}:{ri.slots['op']}" if ri.slots.get("op") else ri.intent
+
+
+def _payee_answer(ctx: ToolContext, text: str) -> int | None:
+    """同名追问（两个张伟）时用户打字回答「同事那个」「尾号0921的」：按备注 / 尾号能唯一确定就返回那位收款人。"""
+    pq = (ctx.session.state or {}).get("pending_question") or {}
+    if pq.get("kind") != "payee" or "transfer" not in FAST_INTENTS:
+        return None
+    candidates = [c for c in (ctx.db.get(Contact, i) for i in pq["contact_ids"]) if c and c.user_id == ctx.user_id]
+    narrowed = narrow_payees(candidates, text)
+    return narrowed[0].id if len(candidates) > 1 and len(narrowed) == 1 else None
+
+
+def _fast_path(ctx: ToolContext, guard) -> tuple[str, dict] | None:
+    """这句话是一个固定流程，且规则引擎拿得到全部参数时直接走规则（确定性工作流），不调模型。返回模型路径上
+    对应的工具名和参数（写历史用），不走工作流时返回 None。
+    模型路径要一到两次调用（7–13 秒），规则是毫秒级；出的卡片、确认和验证流程完全一样，都过同一套安全外壳。
+
+    条件：没有注入嫌疑；有待回答的追问时只接「同事那个」这种能唯一确定收款人的回答；整句和每个分句都是同一个
+    白名单意图（问了两件事交给模型）；多轮里有指代（「她也转 500」「刚才那个取消掉」）交给模型；
+    转账要找得到收款人、说了金额；取消订阅要点名商户。"""
+    if not get_settings().workflow_enabled or guard.suspicious:
+        return None
+    text = guard.text
+    if (ctx.session.state or {}).get("pending_question"):
+        cid = _payee_answer(ctx, text)
+        return ("transfer.propose", {"contact_id": cid}) if cid is not None else None
+    key = _intent_key(text)
+    if key not in FAST_INTENTS or (len(ctx.user_texts) > 1 and _COREF.search(text)):
+        return None
+    parts = [p.strip() for p in _CLAUSE.split(text) if p.strip()]
+    allowed = {key, "unknown"} if key == "aa" else {key}  # AA 的金额、人名本来就分在几个分句里（「火锅 856，我和小王 AA」）
+    if not parts or any(_intent_key(p) not in allowed for p in parts):
+        return None
+    slots = rule_intent(text).slots
+    if key == "transfer" and not (parse_amount(slots.get("amount_text") or "") is not None and (
+            phones_in(text) or resolve_payee(ctx.db, ctx.user_id, slots["payee_hint"]))):
+        return None
+    if key == "sub:cancel" and not names_merchant(text):
+        return None
+    spec = REGISTRY[WORKFLOW_TOOLS[key]]
+    return spec.name, {k: v for k, v in slots.items() if k in spec.parameters.get("properties", {}) and v not in (None, "")}
+
+
+def _record_workflow(ctx: ToolContext, tool_name: str, args: dict) -> None:
+    """把工作流这一轮写成一组工具调用存进历史，格式和模型路径一样（`_history` 按轮次重放）。
+    不写的话下一轮模型只看到「请核对确认卡」这类文字：会重查一遍（「把它锁一下」又列一次卡），
+    或者照抄文字说「已生成确认卡」而不调工具。"""
+    if not ctx.cards:
+        return
+    call_id = f"wf_{ctx.trace_id}"
+    exchange = [{"role": "assistant", "content": "", "tool_calls": [{
+                    "id": call_id, "type": "function",
+                    "function": {"name": REGISTRY[tool_name].llm_name, "arguments": json.dumps(args, ensure_ascii=False)}}]},
+                {"role": "tool", "tool_call_id": call_id,
+                 "content": json.dumps({"status": "ok", "cards": ctx.cards}, ensure_ascii=False)}]
+    ctx.db.add(ChatMessage(session_id=ctx.session.id, role="tool", trace_id=ctx.trace_id,
+                           content=json.dumps(_masked_exchange(exchange), ensure_ascii=False)))
 
 
 def _order_cards(cards: list[dict], text: str) -> None:
@@ -398,6 +469,9 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
     text = guard.text
     prefix = NO_BYPASS if _BYPASS_FLAGS & set(guard.flags) else ""
     pq = (ctx.session.state or {}).get("pending_question")
+    if (contact_id := _payee_answer(ctx, text)) is not None:  # 打字回答同名追问
+        result = propose(ctx, contact_id=contact_id, amount_fen=pq["amount_fen"], memo=pq.get("memo"))
+        return prefix + _apply(ctx, result), "rule"
     if pq and pq.get("kind") == "amount" and (found := amounts_in(text)) and len(found) == 1 and len(pq["contact_ids"]) == 1:
         result = propose(ctx, contact_id=pq["contact_ids"][0], amount_fen=found.pop(), memo=pq.get("memo"))
         return prefix + _apply(ctx, result), "rule"

@@ -40,7 +40,7 @@ def main() -> int:
         cases = [c for c in cases if sys.argv[1] in c["id"]]
     print(f"模型：{s.llm_provider} / {s.llm_model}，{len(cases)} 条用例\n")
 
-    rows, total, long_replies = [], 0.0, 0
+    rows, total, long_replies, n_workflow = [], 0.0, 0, 0
     with TestClient(create_app()) as c:
         for case in cases:
             c.post("/dev/seed")
@@ -54,8 +54,11 @@ def main() -> int:
             tools = [e["payload"]["tool"] for e in events if e["event"] == "tool_call"]
             cards = ", ".join(f"{x['type']}/{x['level']}" if x["type"] == "confirm" else x["type"] for x in r["cards"]) or "无"
             want_tools, want_cards = _as_list(case["tool"]), _as_list(case["card"])
-            intent_ok = any((t == "none" and not tools) or t in tools for t in want_tools)
             task_ok = cards in want_cards
+            # 工作流（规则）轮次不调模型、不产生 tool_call 事件：卡片对了就说明走对了流程
+            workflow = r["reply"]["source"] == "rule"
+            intent_ok = any((t == "none" and not tools) or t in tools for t in want_tools) or (workflow and task_ok)
+            n_workflow += workflow
             notes = [e["payload"]["problem"] for e in events if e["event"] == "grounding_failed"]
             notes += [f"模型报错 {e['payload']['error'][:80]}" for e in events if e["event"] == "llm_error"]
             rows.append((case["id"], intent_ok, task_ok))
@@ -69,7 +72,7 @@ def main() -> int:
                 print(f"     ⚠️ {'；'.join(notes)}")
             if not (intent_ok and task_ok):
                 print(f"     回复：{r['reply']['text']}")
-            elif len(r["reply"]["text"]) > MAX_REPLY:
+            elif r["reply"]["source"] == "llm" and len(r["reply"]["text"]) > MAX_REPLY:  # 模板回复不受提示词字数要求约束
                 long_replies += 1
                 print(f"     📏 回复 {len(r['reply']['text'])} 字：{r['reply']['text']}")
 
@@ -78,7 +81,7 @@ def main() -> int:
     task = sum(r[2] for r in rows) / n
     print(f"\n意图准确率 {intent:.0%}（{sum(r[1] for r in rows)}/{n}，目标 ≥ {TARGET:.0%}）  "
           f"任务成功率 {task:.0%}（{sum(r[2] for r in rows)}/{n}）  平均每条 {total / n:.1f} 秒  "
-          f"回复超 {MAX_REPLY} 字 {long_replies} 条")
+          f"模型回复超 {MAX_REPLY} 字 {long_replies} 条  走工作流（不调模型）{n_workflow} 条")
     return 0 if intent >= TARGET else 1
 
 

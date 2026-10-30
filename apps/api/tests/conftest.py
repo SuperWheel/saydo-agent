@@ -95,5 +95,8 @@ def fake(monkeypatch):
     def install(*script):
         f = FakeLLM(script)
         monkeypatch.setattr(loop, "get_llm", lambda: f)
+        # 这些测试验的是模型路径（工具参数校验、事实校验、虚构卡片），固定流程的工作流只留查余额，
+        # 否则「给我妈转 500」这类话会被工作流截走、根本不调模型。工作流本身见 test_workflow.py
+        monkeypatch.setattr(loop, "FAST_INTENTS", {"balance"})
         return f
     return install
