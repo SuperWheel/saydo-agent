@@ -1,6 +1,8 @@
 """跨场景联动（WS7）端到端：生日用例的计划 DAG、心愿罐、时间快进触发临期询价下单、「蛋糕不要了」重新规划、
 「撤销锁定」释放心愿罐、整体回退（补偿）、转人工。规则模式，不依赖模型。"""
 
+from datetime import datetime
+
 from app.db import new_session
 from app.models import Account, MerchantOrder, PendingAction, TaskPlan, WishPot
 
@@ -87,7 +89,8 @@ def test_birthday_full_flow(client):
 
     s = sync(client, sid)
     plan = s["cards"][0]
-    assert plan["status"] == "waiting" and "11-0" in s["text"] and pot_balance() == 50_000
+    due = datetime.fromisoformat(plan["due_at"])  # 「下周五」随测试当天变，临期日期按计划里算出来的核对
+    assert plan["status"] == "waiting" and f"{due:%m-%d}" in s["text"] and pot_balance() == 50_000
     assert sync(client, sid)["cards"] == []  # 没有新进展时不重复推送
 
     evs = fast_forward(client, plan["due_at"])  # 演示：快进到生日前 2 天 10:00

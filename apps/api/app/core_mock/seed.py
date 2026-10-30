@@ -45,6 +45,12 @@ SUBSCRIPTIONS = [  # 商户、MCC、金额（分）、每月扣费日
 ]
 
 
+def _nth_charge_before(today: datetime, dom: int, n: int) -> datetime:
+    """今天之前（不含今天）倒数第 n 次「每月 dom 日」扣费的那一天。"""
+    m = today.year * 12 + today.month - 1 - (0 if today.day > dom else 1) - (n - 1)
+    return today.replace(year=m // 12, month=m % 12 + 1, day=dom)
+
+
 def _at(day: datetime, hour: int, minute: int) -> datetime:
     return datetime.combine(day.date(), time(hour, minute))
 
@@ -54,7 +60,12 @@ def seed(db: Session) -> None:
         return
     rnd = random.Random(20261029)
     today = now()
-    start = today - timedelta(days=90)
+    # 至少 90 天；从上上个月 1 日开始，月末时「上个月的账单报告」的环比（和上上个月比）也有完整的一期；
+    # 每个订阅在今天之前都有满三次扣费，识别置信度不随演示日期变（比如 11-02 时爱奇艺要从 8-03 算起）。
+    # 不再往前多放：期初余额按目标余额倒推，历史越长「余额不为负」的下限越容易压过目标值，演示余额就对不上了
+    m = today.year * 12 + today.month - 1 - 2
+    start = min(today - timedelta(days=90), today.replace(year=m // 12, month=m % 12 + 1, day=1),
+                *(_nth_charge_before(today, dom, 3) for *_, dom in SUBSCRIPTIONS))
 
     db.add(User(id=1, name="李明", phone_masked="138****6688"))
     db.flush()
@@ -82,10 +93,8 @@ def seed(db: Session) -> None:
         events.append(dict(at=at, direction="in", amount_fen=fen, counterparty=who, category=category, memo=memo,
                            contra_code="CLEARING:INTERBANK"))
 
-    for offset in range(1, 91):  # 截止到昨天，今天的累计额度从 0 开始
-        day = start + timedelta(days=offset - 1)
-        if day.date() >= today.date():
-            break
+    for offset in range((today.date() - start.date()).days):  # 截止到昨天，今天的累计额度从 0 开始
+        day = start + timedelta(days=offset)
         for merchant, mcc, cat, (lo, hi), p in DAILY_MERCHANTS:
             if rnd.random() < p:
                 spend(_at(day, rnd.randint(7, 21), rnd.randint(0, 59)), merchant, mcc, cat, rnd.randint(lo * 100, hi * 100))

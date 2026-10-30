@@ -91,10 +91,15 @@ def test_query_transfers_to_contact(client):
 
 # ---------- F-BA-03 分类统计 ----------
 
+def window(text: str):
+    """和工具同样的区间（截止时刻放宽 1 秒）。核对数字用「近30天」：任何日期都有完整数据，月初的「本月」可能还没有流水。"""
+    return parse_period(text, at=now() + timedelta(seconds=1), default=text)
+
+
 def test_category_stats_add_up(client):
-    card = say(client, "这个月钱都花哪了")["cards"][0]
+    card = say(client, "最近30天钱都花哪了")["cards"][0]
     assert card["type"] == "bill_categories"
-    p = parse_period("本月", at=now(), default="本月")
+    p = window("近30天")
     total = sum(t.amount_fen for t in _spends(p.start, p.end))
     assert card["total"] == fmt_yuan(total)
     assert sum(float(r["share"].rstrip("%")) for r in card["rows"]) == pytest.approx(100.0)
@@ -143,10 +148,10 @@ def test_anomaly_recall_is_stable_across_seed_dates(tmp_path, offset_days):
 # ---------- F-BA-05 月度报告 ----------
 
 def test_report_numbers_come_from_ledger(client):
-    r = say(client, "这个月的账单报告")
+    r = say(client, "最近30天的账单报告")
     card = r["cards"][0]
     assert card["type"] == "bill_report"
-    p = parse_period("本月", at=now(), default="上个月")
+    p = window("近30天")
     with new_session() as db:
         rows = list(db.scalars(select(Transaction).where(Transaction.channel != "system", Transaction.created_at >= p.start,
                                                          Transaction.created_at < p.end)))
@@ -155,7 +160,7 @@ def test_report_numbers_come_from_ledger(client):
     subs = [t for t in rows if t.channel == "auto"]
     kpis = {k["label"]: k["value"] for k in card["kpis"]}
     assert kpis["收入"] == fmt_yuan(income) and kpis["消费"] == fmt_yuan(spend)
-    assert kpis["储蓄率"] == engine.ratio_pct(income - spend, income)
+    assert kpis["储蓄率"] == (engine.ratio_pct(max(0, income - spend), income) if income else "不适用")
     assert card["subscription"] == {"total": fmt_yuan(sum(t.amount_fen for t in subs)), "count": len(subs)}
     assert {a["name"] for a in card["anomalies"]} == {GE, "瑞幸咖啡"}
     # 报告里每一句话的数字都能在卡片的计算结果里找到
@@ -393,3 +398,17 @@ def test_spending_phrases(utterance, kind):
     from app.tools.bill import _rule_query_args
     assert rule_intent(utterance).intent == "bill_query"
     assert _rule_query_args(utterance).get("kind") == kind
+
+
+def test_month_start_has_no_data_yet_but_answers(client, monkeypatch):
+    """月初（如 11 月 1 日）「本月」还没有流水：如实说没有记录，不报错、不编数字；「上个月」照常有完整数据。"""
+    first = (now().replace(day=1) + timedelta(days=32)).replace(day=1)
+    monkeypatch.setenv("DEMO_DATE", f"{first:%Y-%m-%d}")
+    assert client.post("/dev/seed").status_code == 200  # 在那一天重新生成演示数据
+    assert now().date() == first.date()
+    for sentence, word in (("这个月钱都花哪了", "没有消费记录"), ("这个月的账单报告", "没有交易记录"),
+                           ("这个月有没有异常消费", "没有发现异常")):
+        r = say(client, sentence)
+        assert word in r["reply"]["text"] and "截至1日" in r["reply"]["text"], sentence
+    report = say(client, "上个月的账单报告")["cards"][0]
+    assert {k["label"]: k["value"] for k in report["kpis"]}["收入"] != "0.00" and report["spend_change"].endswith("%")

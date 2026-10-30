@@ -13,7 +13,7 @@ const GUIDE = [
   { img: '/wecom-guide/3-api-mode.webp', title: '选 API 模式和长连接，取凭证',
     text: '填头像和名称（如「言行助手」）；模式选「API 模式」；连接方式选「使用长连接」。复制 Bot ID，Secret 点「点击获取」后复制，最后点「保存」。' },
 ]
-const TRY = ['我还有多少钱', '这个月的账单报告', '锁卡和挂失有什么区别', '给我妈转500']
+const TRY = ['我还有多少钱', '上个月的账单报告', '锁卡和挂失有什么区别', '给我妈转500']
 
 const cfg = ref(null)
 const botId = ref('')

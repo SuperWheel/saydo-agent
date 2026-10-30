@@ -232,11 +232,14 @@ def test_markdown_stripped_from_model_reply(llm_client, fake):
 
 
 def test_trimmed_reply_ends_with_full_stop(llm_client, fake):
-    long = ("9月收入 18,000 元，消费 9,425.64 元，储蓄率 47.6%，比8月少花 508.87 元；"
-            "最大支出是居住 4,500 元，占 47.8%，购物减少了不少，交通增加较多，整体比较健康，没有异常交易。")
+    # 数字取当天报告卡上的（种子流水随日期变），模型复述的数字才能通过事实校验
+    fake(tool("bill_report"), text("好的。"))
+    k = {x["label"]: x["value"] for x in say(llm_client, "上个月的账单报告")["cards"][0]["kpis"]}
+    first = f"上个月收入 {k['收入']} 元，消费 {k['消费']} 元"
+    long = first + "；购物减少了不少，交通增加较多，整体比较健康，没有异常交易，订阅也都在正常扣费，可以继续保持。"
     fake(tool("bill_report"), text(long))
     r = say(llm_client, "上个月的账单报告")
-    assert r["reply"]["text"].endswith("508.87 元。")
+    assert r["reply"]["text"] == first + "。"
 
 
 def test_promise_fallback_is_compliant_not_help(llm_client, fake):
