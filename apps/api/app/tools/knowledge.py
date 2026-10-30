@@ -27,7 +27,7 @@ def lookup(query: str) -> ToolResult:
     query = (query or "").strip()[:MAX_QUERY]
     found = knowledge.search(query)
     if not found.hits:
-        return ToolResult({"status": "no_hit", "message": NO_HIT}, notice_card(NO_HIT))
+        return ToolResult({"status": "no_hit", "message": NO_HIT}, {**notice_card(NO_HIT), "kb_no_hit": True})
     items = [e.view() for e in found.entries]
     first = found.entries[0]
     reply = f"根据知识库「{first.title}」：{_first_sentence(first.body)}详见卡片和出处。"

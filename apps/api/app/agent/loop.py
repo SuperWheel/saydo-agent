@@ -236,6 +236,9 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
         messages[start:] = _masked_exchange(messages[start:])
         db.add(ChatMessage(session_id=ctx.session.id, role="tool", trace_id=ctx.trace_id,
                            content=json.dumps(messages[start:], ensure_ascii=False)))
+        if any(not c.get("kb_no_hit") for c in ctx.cards):
+            # 模型同时查了知识库和别的工具（「有没有保本稳赚的理财」）：已经有别的卡片作答，就不再出「知识库没查到」
+            ctx.cards[:] = [c for c in ctx.cards if not c.get("kb_no_hit")]
         if any(c["type"] in ENDS_TURN for c in ctx.cards):
             # 出了确认卡 / 澄清卡 / 提示卡：卡片本身就是答复，不再调一次模型写「请核对确认卡」。
             # 省一次调用（约一半耗时），也免得模型把待确认说成「已办理」

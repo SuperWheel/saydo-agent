@@ -115,7 +115,7 @@ def test_lookup_hit_gives_card_with_sources_and_model_note():
 
 def test_lookup_no_hit_is_notice():
     r = lookup("比特币现在多少钱")
-    assert r.data == {"status": "no_hit", "message": NO_HIT} and r.card == {"type": "notice", "level": "info", "text": NO_HIT}
+    assert r.data == {"status": "no_hit", "message": NO_HIT} and r.card == {"type": "notice", "level": "info", "text": NO_HIT, "kb_no_hit": True}
 
 
 def test_kb_tool_is_read_only_and_model_visible():
@@ -228,3 +228,12 @@ def test_llm_no_hit_ends_turn_without_model_text(llm_client, fake):
     r = say(llm_client, "比特币是什么")
     assert len(f.calls) == 1 and kinds(r) == ["notice"]
     assert r["reply"] == {"text": NO_HIT, "source": "template", "ai_generated": False}
+
+
+def test_llm_no_hit_dropped_when_other_tool_answers(llm_client, fake):
+    """模型同时查了知识库（没查到）和理财推荐：不再多出一张「没查到」的提示卡，也不因它提前结束这一轮。"""
+    both = tool("kb_search", query="保本稳赚的理财")
+    both.tool_calls += tool("wealth_recommend").tool_calls  # 同一步里调了两个工具
+    f = fake(both, text("推荐前需要先完成风险测评。"))
+    r = say(llm_client, "有没有保本稳赚的理财")
+    assert "notice" not in kinds(r) and len(f.calls) == 2
