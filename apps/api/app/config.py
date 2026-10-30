@@ -1,5 +1,6 @@
 """运行配置。所有可调参数都从环境变量或仓库根目录的 .env 读取，切换模型不改代码。"""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# 模型配置页（llm_setup.py）也写这个文件；SAYDO_ENV_FILE 可以指到别处（测试、多套配置）
+ENV_FILE = Path(os.environ.get("SAYDO_ENV_FILE") or REPO_ROOT / ".env")
 
 # 模型供应商预设。.env 里写 LLM_PROVIDER 和对应密钥就能跑；LLM_MODEL 等单项写了就覆盖预设
 PROVIDERS: dict[str, dict] = {
@@ -27,7 +30,7 @@ PROVIDERS: dict[str, dict] = {
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")  # .env 由 get_settings 按 ENV_FILE 传入
 
     llm_provider: str = "deepseek"
     # 下面几项留空就用供应商预设
@@ -46,6 +49,7 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite:///{REPO_ROOT / 'data' / 'dev.db'}"
     app_secret: str = "dev-only-secret-change-me"
+    admin_password: str = ""  # 运营后台口令；不设时后台只在演示模式下开放
     demo_mode: bool = True  # 演示环境：模拟短信内容直接回显到前端
     demo_user_id: int = 1
     action_ttl_s: int = 120  # 确认卡有效期
@@ -75,4 +79,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(_env_file=ENV_FILE)  # 改了 .env 之后 get_settings.cache_clear() 就会重新读

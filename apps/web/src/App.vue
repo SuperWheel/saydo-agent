@@ -1,9 +1,10 @@
 <script setup>
 import { nextTick, onMounted, ref } from 'vue'
 import { showToast } from 'vant'
-import { api } from './api'
+import { adminPassword, api } from './api'
 import AuditTimeline from './components/AuditTimeline.vue'
 import CardHost from './components/CardHost.vue'
+import ModelSettings from './components/ModelSettings.vue'
 import RiskPanel from './components/RiskPanel.vue'
 
 const QUICK = ['我还有多少钱', '给我妈转500，备注生活费', '再给我妹转800', '给张伟转200', '给赵磊转300',
@@ -23,6 +24,10 @@ const inputRef = ref(null)
 const auditOpen = ref(false)
 const auditTab = ref('replay')
 const auditTrace = ref(null)
+const settingsOpen = ref(false)
+const pwOpen = ref(false)
+const pwInput = ref('')
+let pwResolve = null
 let seq = 1
 
 onMounted(async () => {
@@ -80,8 +85,37 @@ function onModify() {
   nextTick(() => inputRef.value?.focus())
 }
 
+// 运营后台和模型设置都走 /admin：设了口令（ADMIN_PASSWORD）时先输口令，本标签页内记住
+async function unlockAdmin() {
+  try { await api.llmConfig(); return true } catch (e) { if (e.status !== 401) return true }
+  pwInput.value = ''
+  pwOpen.value = true
+  return new Promise((resolve) => { pwResolve = resolve })
+}
+
+async function submitPassword(action) {
+  if (action !== 'confirm') { pwResolve?.(false); return true }
+  adminPassword.set(pwInput.value)
+  try {
+    await api.llmConfig()
+  } catch (e) {
+    if (e.status === 401) { showToast('口令不对'); return false }
+  }
+  pwResolve?.(true)
+  return true
+}
+
+async function openSettings() {
+  if (await unlockAdmin()) settingsOpen.value = true
+}
+
+async function onSettingsChanged() {
+  try { llm.value = (await api.health()).llm } catch { /* 下次刷新再取 */ }
+}
+
 // 运营后台：按 trace 回放 / 熔断与风险。点消息下方的「回放」直接打开那一轮
-function openAudit(trace = null) {
+async function openAudit(trace = null) {
+  if (!(await unlockAdmin())) return
   auditTrace.value = trace
   auditTab.value = 'replay'
   auditOpen.value = true
@@ -105,10 +139,13 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
         <div class="name">言行 <small>AI 银行助手</small></div>
         <div class="sub">
           <van-tag type="danger" plain size="mini">演示环境 · 模拟数据</van-tag>
-          <span v-if="llm" class="model">{{ llm.ready ? `模型 ${llm.model}` : '未配置模型 · 规则模式' }}</span>
+          <span v-if="llm" class="model" @click="openSettings">{{ llm.ready ? `模型 ${llm.model}` : '未配置模型 · 去设置' }}</span>
         </div>
       </div>
-      <van-button size="mini" plain icon="records-o" @click="openAudit()">运营后台</van-button>
+      <div class="tools">
+        <van-button size="mini" plain icon="setting-o" @click="openSettings">模型设置</van-button>
+        <van-button size="mini" plain icon="records-o" @click="openAudit()">运营后台</van-button>
+      </div>
     </header>
 
     <main ref="scroller" class="chat">
@@ -150,6 +187,15 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
         </van-tabs>
       </div>
     </van-popup>
+
+    <van-popup v-model:show="settingsOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
+      <div class="audit-head settings-head"><b>模型设置</b></div>
+      <ModelSettings v-if="settingsOpen" @changed="onSettingsChanged" />
+    </van-popup>
+
+    <van-dialog v-model:show="pwOpen" title="运营后台口令" show-cancel-button :before-close="submitPassword" teleport="body">
+      <van-field v-model="pwInput" type="password" placeholder="请输入 ADMIN_PASSWORD" autocomplete="current-password" />
+    </van-dialog>
   </div>
 </template>
 
@@ -165,7 +211,8 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
 .name { font-size: 18px; font-weight: 700; color: var(--brand); }
 .name small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 4px; }
 .sub { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-.model { font-size: 11px; color: var(--muted); }
+.model { font-size: 11px; color: var(--muted); cursor: pointer; }
+.tools { display: flex; gap: 6px; }
 .chat { flex: 1; overflow-y: auto; padding: 12px 16px 16px; }
 .msg { margin-bottom: 14px; display: flex; flex-direction: column; }
 .msg.user { align-items: flex-end; }
@@ -192,4 +239,5 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
 .audit-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
 .audit :deep(.van-tabs__content) { padding-top: 10px; }
 .replay { color: var(--brand); cursor: pointer; }
+.settings-head { padding: 14px 16px 10px; }
 </style>

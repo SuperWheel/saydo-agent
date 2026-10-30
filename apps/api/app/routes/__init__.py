@@ -1,14 +1,15 @@
 """HTTP 接口。M0 没有登录，固定使用演示用户（DEMO_USER_ID）。"""
 
+import hmac
 from datetime import timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock
+from .. import audit, clock, llm_setup
 from ..agent.loop import handle_turn
 from ..auth import actions
 from ..config import get_settings
@@ -20,8 +21,20 @@ from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
 from ..security import breaker
 
+
+
+def require_admin(x_admin_password: str = Header(default="")) -> None:
+    """运营后台口令（ADMIN_PASSWORD）。没设口令时只在演示模式下开放，页面上会提示。"""
+    s = get_settings()
+    if s.admin_password:
+        if not hmac.compare_digest(x_admin_password.encode(), s.admin_password.encode()):
+            raise HTTPException(401, "需要运营后台口令")
+    elif not s.demo_mode:
+        raise HTTPException(403, "运营后台未设口令：请在 .env 里设置 ADMIN_PASSWORD")
+
+
 api = APIRouter(prefix="/api")
-admin = APIRouter(prefix="/admin")
+admin = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 dev = APIRouter(prefix="/dev")
 
 
@@ -90,10 +103,40 @@ def health():
     s = get_settings()
     return {"ok": True, "llm": {"ready": s.llm_ready, "provider": s.llm_provider, "model": s.llm_model,
                                 "base_url": s.llm_base_url},
-            "demo_mode": s.demo_mode}
+            "demo_mode": s.demo_mode, "admin_protected": bool(s.admin_password)}
 
 
 # ---------- 运营后台 ----------
+
+class LLMConfigIn(BaseModel):
+    provider: Literal["deepseek", "glm"]
+    api_key: str = Field(default="", max_length=200)  # 留空 = 沿用已有密钥，只切换供应商
+    enabled: bool | None = None
+    admin_password: str = Field(default="", max_length=64)
+
+
+@admin.get("/llm-config")
+def llm_config():
+    return llm_setup.status()
+
+
+@admin.post("/llm-config")
+def llm_config_save(body: LLMConfigIn, db: Session = Depends(get_db)):
+    try:
+        out = llm_setup.save(body.provider, body.api_key, body.enabled, body.admin_password)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    # 审计只记改了什么，不记密钥和口令本身
+    audit.record(db, "admin", "llm_config", {"provider": body.provider, "key_updated": bool(body.api_key.strip()),
+                                             "enabled": body.enabled, "admin_password_set": bool(body.admin_password)})
+    db.commit()
+    return out
+
+
+@admin.post("/llm-config/test")
+def llm_config_test():
+    return llm_setup.test_connection()
+
 
 @admin.get("/audit")
 def audit_list(trace_id: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
