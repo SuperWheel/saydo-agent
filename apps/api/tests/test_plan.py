@@ -7,7 +7,7 @@ from app.db import new_session
 from app.models import Account, MerchantOrder, PendingAction, TaskPlan, WishPot
 
 from .conftest import confirm, say
-from .helpers import BALANCE, balance, events, ledger_ok, pass_auth
+from .helpers import BALANCE, after_travel, balance, events, ledger_ok, pass_auth
 
 BIRTHDAY = "下周五我妈生日，帮我订束花和蛋糕，再存 500 进心愿罐"
 
@@ -111,7 +111,7 @@ def test_birthday_full_flow(client):
     with new_session() as db:
         assert [o.item for o in db.query(MerchantOrder).order_by(MerchantOrder.created_at)] == \
                ["康乃馨花束（19 枝）", "6 寸长寿桃蛋糕"]
-    assert balance(client) == "28,150.32"  # 活期只少了存进心愿罐的 500
+    assert balance(client) == after_travel("28,150.32")  # 活期只少了存进心愿罐的 500（另有快进补进来的日历流水）
     assert ledger_ok(client)
 
 
@@ -209,7 +209,7 @@ def test_cancel_whole_plan_rolls_back_in_reverse(client):
             break
         c = card(s)
     assert titles == ["取消订单", "取消订单", "释放心愿罐"]
-    assert balance(client) == BALANCE and ledger_ok(client)
+    assert balance(client) == after_travel(BALANCE) and ledger_ok(client)
 
 
 def test_handoff_pauses_writes(client):

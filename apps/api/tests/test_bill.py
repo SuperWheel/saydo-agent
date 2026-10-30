@@ -37,9 +37,10 @@ def _fresh_quarantine_cache():
 
 
 def _spends(start, end, merchant=None) -> list[Transaction]:
-    """独立对账用：直接查库，消费 = 支出且不是给收款人的转账。"""
+    """独立对账用：直接查库，消费 = 支出且不是给收款人的转账、不是转存定期。"""
     with new_session() as db:
         q = select(Transaction).where(Transaction.direction == "out", Transaction.contact_id.is_(None),
+                                      Transaction.category != "储蓄",
                                       Transaction.channel != "system", Transaction.created_at >= start,
                                       Transaction.created_at < end)
         if merchant:
@@ -156,7 +157,7 @@ def test_report_numbers_come_from_ledger(client):
         rows = list(db.scalars(select(Transaction).where(Transaction.channel != "system", Transaction.created_at >= p.start,
                                                          Transaction.created_at < p.end)))
     income = sum(t.amount_fen for t in rows if t.direction == "in")
-    spend = sum(t.amount_fen for t in rows if t.direction == "out" and t.contact_id is None)
+    spend = sum(t.amount_fen for t in rows if t.direction == "out" and t.contact_id is None and t.category != "储蓄")
     subs = [t for t in rows if t.channel == "auto"]
     kpis = {k["label"]: k["value"] for k in card["kpis"]}
     assert kpis["收入"] == fmt_yuan(income) and kpis["消费"] == fmt_yuan(spend)

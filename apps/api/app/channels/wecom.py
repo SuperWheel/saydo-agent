@@ -21,6 +21,7 @@ from collections.abc import Callable
 from websockets.asyncio.client import connect as ws_connect
 
 from ..config import Settings
+from ..core_mock.seed import catch_up
 from ..db import new_session
 from . import TEXT_ONLY, im_turn
 
@@ -215,6 +216,7 @@ class WecomBot:
         """一条单聊文本的回复。在线程里跑：agent 和数据库都是同步的。"""
         with new_session() as db:
             try:
+                catch_up(db)  # 跨过零点后先补齐日历流水，和 App 那边一致
                 return im_turn(db, channel=CHANNEL, external_id=external_id, text=text, user_id=self.user_id,
                                allowed=self.allowed).text
             except Exception:

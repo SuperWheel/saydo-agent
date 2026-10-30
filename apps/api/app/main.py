@@ -3,11 +3,11 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from .channels import wecom
 from .config import get_settings
-from .core_mock.seed import seed
+from .core_mock.seed import catch_up, seed
 from .db import Base, init_engine, new_session
 from .routes import admin, api, dev
 from .tools import bank  # noqa: F401  注册银行工具
@@ -38,11 +38,19 @@ def create_app() -> FastAPI:
         Base.metadata.create_all(engine)
         with new_session() as db:
             seed(db)
+            catch_up(db)
         await wecom.restart(get_settings())  # 企业微信渠道（可选）：没配 BotID / Secret 就不启动
         yield
         await wecom.shutdown()
 
     app = FastAPI(title="言行 SayDo Agent", version="0.1.0-m0", lifespan=lifespan)
+    @app.middleware("http")
+    async def _calendar(request: Request, call_next):
+        # 跨过零点（快进、隔天接着用）后，先把新过去的日历流水补进来；同一天里只读一个标记
+        with new_session() as db:
+            catch_up(db)
+        return await call_next(request)
+
     app.include_router(api)
     app.include_router(admin)
     app.include_router(dev)

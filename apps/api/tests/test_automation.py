@@ -9,7 +9,7 @@ from app.db import new_session
 from app.models import PendingAction, ScheduledTransfer, Transaction, WishPot
 
 from .conftest import confirm, say
-from .helpers import BALANCE, balance, events, ledger_ok
+from .helpers import BALANCE, after_travel, balance, events, ledger_ok
 
 
 def ok(client, card: dict) -> dict:
@@ -47,11 +47,11 @@ def test_monthly_transfer_created_and_runs(client):
     assert fast_forward(client, st.next_run_at - timedelta(hours=1)) == []  # 没到点不执行
     evs = fast_forward(client, st.next_run_at)
     assert len(evs) == 1 and "已按授权执行" in evs[0]["text"] and evs[0]["cards"][0]["type"] == "receipt"
-    assert balance(client) == "28,150.32" and ledger_ok(client)
+    assert balance(client) == after_travel("28,150.32") and ledger_ok(client)
     nxt = schedule()
     assert nxt.next_run_at.day == 15 and nxt.next_run_at.month != st.next_run_at.month
     assert fast_forward(client, st.next_run_at + timedelta(hours=1)) == []  # 重复扫描不会重复转账
-    assert balance(client) == "28,150.32"
+    assert balance(client) == after_travel("28,150.32")
     assert "execution" in events(client, evs[0]["trace_id"])  # 走的是网关执行，有审计
 
 
@@ -77,7 +77,7 @@ def test_schedule_escalates_when_riskier(client):
     evs = fast_forward(client, st.next_run_at)
     c = evs[0]["cards"][0]
     assert c["type"] == "confirm" and c["level"] == "RED" and "重新确认" in evs[0]["text"]
-    assert balance(client) == "27,850.32"  # 只有手动那笔 800
+    assert balance(client) == after_travel("27,850.32")  # 只有手动那笔 800（另有快进补进来的日历流水）
     assert "mandate_escalated" in events(client, evs[0]["trace_id"])
 
 
@@ -88,7 +88,7 @@ def test_schedule_blocked_by_kill_switch(client):
     client.post("/admin/kill-switch", json={"enabled": True, "reason": "演练"})
     evs = fast_forward(client, st.next_run_at)
     assert "没有执行" in evs[0]["text"] and evs[0]["cards"][0]["breaker"]["level"] == "system"
-    assert balance(client) == BALANCE
+    assert balance(client) == after_travel(BALANCE)
     assert schedule().runs[-1]["status"] == "blocked"
 
 
@@ -98,7 +98,7 @@ def test_schedule_insufficient_balance(client):
                                  recurrence="once", next_run_at=clock.now() + timedelta(days=1), level="RED", runs=[]))
         db.commit()
     evs = fast_forward(client, clock.now() + timedelta(days=1))
-    assert "余额不足" in evs[0]["text"] and balance(client) == BALANCE
+    assert "余额不足" in evs[0]["text"] and balance(client) == after_travel(BALANCE)
 
 
 def test_cancel_schedule(client):
@@ -126,7 +126,7 @@ def test_pot_lock_and_auto_release(client):
         until = db.query(WishPot).one().until
     evs = fast_forward(client, datetime.combine(until + timedelta(days=1), datetime.min.time()))
     assert "已到期" in evs[0]["text"] and evs[0]["cards"][0]["type"] == "receipt"
-    assert balance(client) == BALANCE and ledger_ok(client)
+    assert balance(client) == after_travel(BALANCE) and ledger_ok(client)
 
 
 def test_pot_lock_amount_must_be_said(client):

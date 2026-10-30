@@ -1,4 +1,4 @@
-"""统计区间解析：把「上个月」「9月」「最近7天」这类说法变成确定的起止时间，以及环比用的上一期。
+"""统计区间解析：把「上个月」「9月」「1月到3月」「一季度」「最近7天」这类说法变成确定的起止时间，以及环比用的上一期。
 
 一律按北京时间、左闭右开 [start, end)。没识别出来时用调用方给的默认区间，并标记 recognized=False。
 """
@@ -56,11 +56,29 @@ def _month(y: int, m: int, at: datetime) -> Period:
     return Period(start, at, f"{y}年{m}月（截至{at.day}日）", prev_start, prev_end, "上月同期")
 
 
+def _months(y: int, m1: int, m2: int, at: datetime, label: str, prev_label: str) -> Period:
+    """连续几个月（含首尾），和紧挨着的前一段同样长的月份比。还没过完时截至今天，和上一段同期比。"""
+    start, n = _month_start(y, m1), m2 - m1 + 1
+    end, prev_start = _add_months(start, n), _add_months(start, -n)
+    if end <= at:
+        return Period(start, end, label, prev_start, start, prev_label)
+    return Period(start, at, f"{label}（截至{at.month}月{at.day}日）", prev_start, min(prev_start + (at - start), start),
+                  f"{prev_label}同期")
+
+
+def _year_of(prefix: str | None, first_month: int, at: datetime) -> int:
+    """「去年」或者说的月份还没到（11 月问「12月」）就是去年。"""
+    return at.year - 1 if prefix == "去年" or (prefix is None and first_month > at.month) else at.year
+
+
 def _rolling(days: int, at: datetime, label: str) -> Period:
     start = at - timedelta(days=days)
     return Period(start, at, label, start - timedelta(days=days), start, f"前{days}天")
 
 
+_M = r"(\d{1,2}|十[一二]?|[一二三四五六七八九])"
+_MONTH_RANGE = re.compile(rf"(今年|去年)?{_M}月份?(?:到|至|~|～|-|—|－)+{_M}月")
+_QUARTER = re.compile(r"(今年|去年)?第?([一二三四1-4])季度")
 _YM = re.compile(r"(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*月?")
 _RECENT = re.compile(r"(?:最近|近|过去|前)\s*(\d{1,3}|[一两二三四五六七八九十半]{1,3})\s*(?:个)?\s*(天|日|周|星期|礼拜|月|年)")
 _MONTH = re.compile(r"(今年|去年)?\s*(\d{1,2}|十[一二]?|[一二三四五六七八九])\s*月份?(?!份额)")
@@ -104,11 +122,19 @@ def _parse(text: str, at: datetime) -> Period | None:
         return _month(d.year, d.month, at)
     if re.search(r"(本|这个?|当)月", t):
         return _month(at.year, at.month, at)
+    if m := _MONTH_RANGE.search(t):
+        m1, m2 = _int(m.group(2)), _int(m.group(3))
+        if m1 and m2 and 1 <= m1 < m2 <= 12:
+            y = _year_of(m.group(1), m1, at)
+            return _months(y, m1, m2, at, f"{y}年{m1}月—{m2}月", f"前{m2 - m1 + 1}个月")
+    if m := _QUARTER.search(t):
+        q = _int(m.group(2))
+        y = _year_of(m.group(1), q * 3 - 2, at)
+        return _months(y, q * 3 - 2, q * 3, at, f"{y}年第{q}季度", "上季度")
     if m := _MONTH.search(t):
         mo = _int(m.group(2))
         if mo and 1 <= mo <= 12:
-            y = at.year - 1 if m.group(1) == "去年" or (m.group(1) is None and mo > at.month) else at.year
-            return _month(y, mo, at)
+            return _month(_year_of(m.group(1), mo, at), mo, at)
     today = datetime.combine(at.date(), time())
     if re.search(r"上(个)?(周|星期|礼拜)", t):
         start = today - timedelta(days=today.weekday() + 7)

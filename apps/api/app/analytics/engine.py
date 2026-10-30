@@ -107,6 +107,9 @@ def load(db: Session, user_id: int, start: datetime, end: datetime, *,
         elif t.category == "理财":  # 理财申购（WS5）：本人资金换成理财份额，不算消费（技术文档 §7.4）
             out.append(Txn(**base, kind=KIND_TRANSFER, category="理财", cat_source="交易码", party="理财申购",
                            display=quarantine.display_name(t.counterparty), merchant_key=None))
+        elif t.category == "储蓄":  # 演示日历流水每月转存定期：钱还在本人名下，不算消费
+            out.append(Txn(**base, kind=KIND_TRANSFER, category="储蓄", cat_source="交易码", party="转存定期",
+                           display=quarantine.display_name(t.counterparty), merchant_key=None))
         elif t.contact_id is not None:
             c = contacts.get(t.contact_id)
             name = f"{c.masked_name}（{c.relation or c.note}）" if c and (c.relation or c.note) else (

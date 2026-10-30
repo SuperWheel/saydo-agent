@@ -15,7 +15,7 @@ from ..auth import actions
 from ..channels import take_handoff, wecom
 from ..config import get_settings
 from ..core_mock.ledger import is_balanced, ledger_balance
-from ..core_mock.seed import seed
+from ..core_mock.seed import catch_up, seed
 from ..db import Base, get_db, get_engine, new_session
 from ..flags import kill_switch_on, set_flag
 from ..models import Account, AuditLog, PendingAction
@@ -322,7 +322,10 @@ class TravelIn(BaseModel):
 
 @dev.post("/time-travel", dependencies=[Depends(_demo_only)])
 def time_travel(body: TravelIn):
-    return {"now": clock.travel(timedelta(days=body.days, hours=body.hours)).isoformat()}
+    at = clock.travel(timedelta(days=body.days, hours=body.hours))
+    with new_session() as s:
+        catch_up(s)  # 新过去的日子里的工资、消费、订阅扣费入账
+    return {"now": at.isoformat()}
 
 
 @dev.post("/aa/shares/{share_id}/pay", dependencies=[Depends(_demo_only)])
@@ -374,6 +377,7 @@ def fast_forward(body: FastForwardIn, db: Session = Depends(get_db), user_id: in
         except ValueError as e:
             raise HTTPException(400, "时间格式不对") from e
     at = clock.travel(delta)
+    catch_up(db)  # 先补新过去的日历流水（工资、订阅扣费），再跑到期任务
     events = planner.tick(db, user_id=user_id)
     db.commit()
     return {"now": at.isoformat(), "events": events}

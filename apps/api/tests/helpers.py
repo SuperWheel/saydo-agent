@@ -26,6 +26,20 @@ def balance(client) -> str:
     return client.get("/api/accounts").json()[0]["balance"]
 
 
+def after_travel(balance_text: str) -> str:
+    """快进以后的预期余额：快进前的余额，加上建库之后补进来的日历流水（工资、日常消费、订阅扣费）的净额。"""
+    from datetime import date
+
+    from app.clock import now
+    from app.core_mock.seed import CALENDAR_FLAG, _mom, _signed, calendar
+    from app.money import fmt_yuan
+
+    with new_session() as db:
+        seeded, mom = date.fromisoformat(get_flag(db, CALENDAR_FLAG)["seeded"]), _mom(db)
+        delta = sum(_signed(e) for e in calendar(now().date(), mom) if e["at"].date() >= seeded)
+    return fmt_yuan(round(float(balance_text.replace(",", "")) * 100) + delta)
+
+
 def ledger_ok(client) -> bool:
     chk = client.get("/admin/ledger/check").json()
     return chk["balanced"] and all(a["balance_fen"] == a["ledger_fen"] for a in chk["accounts"])
