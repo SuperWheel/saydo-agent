@@ -1,0 +1,77 @@
+# 知识问答（WS9，F-GN-14）评测集：`uv run python scripts/kb_eval.py`（只测检索，不耗 API），
+# 加 `--llm` 用 .env 里的真实模型走完整对话。问法刻意和知识库条目里的 q 不同。
+#
+#   ask     用户的话
+#   expect  应命中的知识库条目 id（列表表示其中任一条在前 3 条命中里都算对）；
+#           none 表示超出知识库范围，应拒答（检索无命中 / 模型不调知识库）；
+#           tool:<name> 表示应该走对应工具，不走知识库（「我余额多少」）
+#   or_card 只用于 --llm：出了这种卡也算对。用户自己订阅的商户问「在哪关」，走订阅取消（商户侧指引同样来自知识库）也合理
+#
+# 指标：命中率（Hit@3）≥ 90%；超范围拒答率 ≥ 90%；走工具的问题 100% 不走知识库。
+
+cases:
+  # ---------- 转账 ----------
+  - {id: kb-transfer-1, ask: 转到建设银行的卡一般多久能到, expect: faq-transfer-interbank}
+  - {id: kb-transfer-2, ask: 跨行转10万元要等多长时间, expect: faq-transfer-interbank}
+  - {id: kb-transfer-3, ask: 同一家银行之间转账是不是马上到, expect: faq-transfer-inner}
+  - {id: kb-transfer-4, ask: 手机上转账收不收手续费, expect: faq-transfer-fee}
+  - {id: kb-transfer-5, ask: 什么情况下转账需要人脸识别, expect: faq-transfer-verify}
+  - {id: kb-transfer-6, ask: 钱打错人了还能要回来吗, expect: faq-transfer-wrong}
+  - {id: kb-transfer-7, ask: 转账冷静期是怎么回事, expect: faq-transfer-cooling}
+  - {id: kb-transfer-8, ask: 短信验证码过多久就失效了, expect: faq-confirm-ttl}
+  - {id: kb-transfer-9, ask: 和同事吃饭AA收款要怎么操作, expect: faq-aa}
+  - {id: kb-transfer-10, ask: 能不能每月固定日子自动给家里转钱, expect: faq-scheduled-transfer}
+
+  # ---------- 银行卡 ----------
+  - {id: kb-card-1, ask: 银行卡被偷了第一步该做什么, expect: [faq-card-lost, faq-card-lock-vs-loss]}
+  - {id: kb-card-2, ask: 临时锁卡跟挂失有啥不一样, expect: faq-card-lock-vs-loss}
+  - {id: kb-card-3, ask: 信用卡挂失要钱吗, expect: faq-card-loss-fee}
+  - {id: kb-card-4, ask: 补办借记卡工本费多少钱, expect: faq-card-loss-fee}
+  - {id: kb-card-5, ask: 出国旅游刷卡需要开通什么功能, expect: faq-card-overseas}
+  - {id: kb-card-6, ask: 单日限额调高需要什么验证, expect: faq-card-limit-rule}
+  - {id: kb-card-7, ask: 虚拟卡和实体卡有什么不同, expect: faq-virtual-card}
+  - {id: kb-card-8, ask: 信用卡免息期最长多少天, expect: faq-credit-repay}
+  - {id: kb-card-9, ask: 信用卡晚还两天会上征信吗, expect: faq-credit-overdue}
+
+  # ---------- 理财通用规则 ----------
+  - {id: kb-wm-1, ask: 理财产品写着R3代表什么, expect: faq-wm-risk-level}
+  - {id: kb-wm-2, ask: 风险测评做完能管多长时间, expect: faq-wm-assessment}
+  - {id: kb-wm-3, ask: 稳健型客户能买R4的产品吗, expect: faq-wm-suitability}
+  - {id: kb-wm-4, ask: 理财卖出后钱几天到账, expect: faq-wm-redeem-arrival}
+  - {id: kb-wm-5, ask: 定期理财还没到期可以提前取出吗, expect: faq-wm-closed-period}
+  - {id: kb-wm-6, ask: 业绩比较基准3%是不是一定能拿到, expect: faq-wm-benchmark}
+  - {id: kb-wm-7, ask: 买理财有没有申购费, expect: [faq-wm-fees, prod-wm06-redeem, prod-wm07-redeem]}
+
+  # ---------- 产品说明（虚构产品）----------
+  - {id: kb-prod-1, ask: 稳盈30天能提前赎回吗, expect: [prod-wm02-redeem, prod-wm02]}
+  - {id: kb-prod-2, ask: 活钱宝赎回当天能到账吗, expect: prod-wm01-redeem}
+  - {id: kb-prod-3, ask: 年年盈起购金额是多少, expect: prod-wm03}
+  - {id: kb-prod-4, ask: 科技成长股票持有不满一个月赎回扣多少钱, expect: prod-wm07-redeem}
+  - {id: kb-prod-5, ask: 稳健增利赎回费怎么收, expect: prod-wm05-redeem}
+  - {id: kb-prod-6, ask: 安享90天风险等级是多少, expect: prod-wm04}
+  - {id: kb-prod-7, ask: 均衡配置混合是什么类型的产品, expect: prod-wm06}
+
+  # ---------- 订阅和商户取消指引 ----------
+  - {id: kb-sub-1, ask: 停了代扣以后爱奇艺会员还会续费吗, expect: [faq-sub-stop-vs-cancel, mc-iqiyi], or_card: sub_guide}
+  - {id: kb-sub-2, ask: 免密支付到底是什么, expect: faq-sub-withhold}
+  - {id: kb-sub-3, ask: 腾讯视频的连续包月在哪里关, expect: mc-tencent-video, or_card: sub_guide}
+  - {id: kb-sub-4, ask: 网易云黑胶会员自动续费怎么关闭, expect: mc-netease-music, or_card: sub_guide}
+  - {id: kb-sub-5, ask: B站大会员自动续费在哪关, expect: mc-bilibili}
+  - {id: kb-sub-6, ask: iPhone上的订阅扣费去哪里取消, expect: mc-app-store}
+  - {id: kb-sub-7, ask: 支付宝里的自动扣款服务怎么停, expect: mc-alipay}
+
+  # ---------- 其他规则 ----------
+  - {id: kb-misc-1, ask: 银行存款保险最多赔多少, expect: faq-deposit-insurance}
+  - {id: kb-misc-2, ask: 公安让我把钱转到安全账户是真的吗, expect: faq-anti-fraud}
+  - {id: kb-misc-3, ask: 心愿罐里的钱可以随时拿回来吗, expect: faq-wish-pot}
+
+  # ---------- 超出知识库范围：应拒答 ----------
+  - {id: kb-oos-1, ask: 今天北京天气怎么样, expect: none}
+  - {id: kb-oos-2, ask: 比特币现在多少钱一个, expect: none}
+  - {id: kb-oos-3, ask: 房贷利率现在是多少, expect: none}
+  - {id: kb-oos-4, ask: 帮我写一首关于秋天的诗, expect: none}
+  - {id: kb-oos-5, ask: 公积金贷款最多能贷多少, expect: none}
+  - {id: kb-oos-6, ask: 外汇牌价美元兑人民币多少, expect: none}
+
+  # ---------- 个人数据：应走工具，不走知识库 ----------
+  - {id: kb-route-1, ask: 我余额还有多少, expect: tool:account.balance}

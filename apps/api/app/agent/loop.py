@@ -24,6 +24,7 @@ from ..tools.bank import get_balance
 from ..tools.bill import rule_turn as bill_rule_turn
 from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
 from ..tools.card import rule_turn as card_rule_turn
+from ..tools.knowledge import rule_turn as kb_rule_turn
 from ..tools.subscription import rule_turn as sub_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
@@ -255,9 +256,10 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
 # 全部 34 个工具的说明约 5,400 token，一次调用里要多花 3–4 秒；按规则意图只发相关业务域，认不出来时照旧发全部
 
 ENDS_TURN = {"confirm", "clarify", "notice"}
-ALWAYS_TOOLS = ("account.balance", "handoff.request")  # 查余额、转人工任何时候都可能用到
+# 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
+ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
-                  "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill"}
+                  "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill", "faq": "knowledge"}
 _CLAUSE = re.compile(r"[，,。.？?！!；;\n]|再|另外|然后|顺便")
 
 
@@ -336,6 +338,8 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         return prefix + _apply(ctx, bill_rule_turn(ctx, intent.intent, text)), "rule"
     if (reply := card_rule_turn(ctx, intent, text)) is not None:  # 卡片意图，以及「锁哪张卡」这类追问的回答
         return prefix + reply, "rule"
+    if intent.intent == "faq":  # 知识问答（WS9）
+        return prefix + _apply(ctx, kb_rule_turn(ctx, text)), "rule"
     if intent.intent == "adhoc_analysis":
         return prefix + _apply(ctx, adhoc_rule_turn(ctx, text)), "rule"
     if (reply := wealth_rule_turn(ctx, intent, text)) is not None:  # 理财意图，以及「买多少」「赎回多少」追问的回答
