@@ -5,6 +5,7 @@ import { adminPassword, api } from './api'
 import AuditTimeline from './components/AuditTimeline.vue'
 import CardHost from './components/CardHost.vue'
 import ModelSettings from './components/ModelSettings.vue'
+import WecomSettings from './components/WecomSettings.vue'
 import RiskPanel from './components/RiskPanel.vue'
 
 const QUICK = ['我还有多少钱', '给我妈转500，备注生活费', '再给我妹转800', '给张伟转200', '给赵磊转300',
@@ -25,6 +26,7 @@ const auditOpen = ref(false)
 const auditTab = ref('replay')
 const auditTrace = ref(null)
 const settingsOpen = ref(false)
+const settingsTab = ref('model')
 const pwOpen = ref(false)
 const pwInput = ref('')
 const waited = ref(0) // 本轮已等待秒数：模型慢的时候让用户知道还在处理
@@ -168,7 +170,7 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
         </div>
       </div>
       <div class="tools">
-        <van-button size="mini" plain icon="setting-o" @click="openSettings">模型设置</van-button>
+        <van-button size="mini" plain icon="setting-o" @click="openSettings">设置</van-button>
         <van-button size="mini" plain icon="records-o" @click="openAudit()">运营后台</van-button>
       </div>
     </header>
@@ -214,8 +216,15 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
     </van-popup>
 
     <van-popup v-model:show="settingsOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
-      <div class="audit-head settings-head"><b>模型设置</b></div>
-      <ModelSettings v-if="settingsOpen" @changed="onSettingsChanged" />
+      <div class="audit-head settings-head"><b>设置</b></div>
+      <van-tabs v-model:active="settingsTab" shrink>
+        <van-tab title="模型" name="model">
+          <ModelSettings v-if="settingsOpen && settingsTab === 'model'" @changed="onSettingsChanged" />
+        </van-tab>
+        <van-tab title="企业微信" name="wecom">
+          <WecomSettings v-if="settingsOpen && settingsTab === 'wecom'" />
+        </van-tab>
+      </van-tabs>
     </van-popup>
 
     <van-dialog v-model:show="pwOpen" title="运营后台口令" show-cancel-button :before-close="submitPassword" teleport="body">

@@ -14,6 +14,7 @@ import contextlib
 import json
 import logging
 import secrets
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 
@@ -61,11 +62,13 @@ class WecomBot:
     """一个长连接。connect 和 answer 可注入，测试里换成假的服务端和假的 agent。"""
 
     def __init__(self, *, bot_id: str, secret: str, url: str, user_id: int, allowed: set[str] | frozenset = frozenset(),
-                 connect: Callable | None = None, answer: Callable[[str, str], str] | None = None,
+                 proxy: str | None = None, connect: Callable | None = None,
+                 answer: Callable[[str, str], str] | None = None,
                  heartbeat_s: float = HEARTBEAT_S, backoff_min_s: float = 1.0, backoff_max_s: float = BACKOFF_MAX_S):
         self.bot_id, self._secret, self.url = bot_id, secret, url
         self.user_id, self.allowed = user_id, allowed
-        self._connect = connect or ws_connect
+        # 默认直连：企业微信是国内服务；websockets 默认会用系统代理，开发机上的 SOCKS 代理还要额外装库才连得上
+        self._connect = connect or (lambda url: ws_connect(url, proxy=proxy))
         self._answer = answer or self.answer
         self.heartbeat_s, self.backoff_min_s, self.backoff_max_s = heartbeat_s, backoff_min_s, backoff_max_s
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -74,6 +77,10 @@ class WecomBot:
         self._send_lock = asyncio.Lock()
         self._pending_pings: set[str] = set()
         self.subscribed = 0  # 订阅成功的次数（首次连接 + 每次重连）
+        # 给配置页看的连接状态：connecting / connected / reconnecting / auth_failed / taken_over / stopped
+        self.state = "connecting"
+        self.last_error = ""
+        self.connected_at: float | None = None
 
     # ---------- 生命周期 ----------
 
@@ -83,6 +90,7 @@ class WecomBot:
 
     async def stop(self) -> None:
         self._stop.set()
+        self.state = "stopped"
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -98,11 +106,15 @@ class WecomBot:
             except asyncio.CancelledError:
                 raise
             except SubscribeError as e:
+                self.state, self.last_error = "auth_failed", str(e)
                 log.error("企业微信机器人订阅失败：%s。请检查 WECOM_BOT_ID / WECOM_BOT_SECRET", e)
             except Exception as e:  # 网络错误、连接被关闭、心跳超时
+                self.last_error = repr(e)[:200]
                 log.warning("企业微信长连接断开：%r，%.0f 秒后重连", e, delay)
             if self._stop.is_set():
                 break
+            if self.state != "auth_failed":
+                self.state = "reconnecting"
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
             delay = min(delay * 2, self.backoff_max_s)
@@ -124,6 +136,7 @@ class WecomBot:
         if frame.get("errcode") != 0:
             raise SubscribeError(f"errcode={frame.get('errcode')} errmsg={frame.get('errmsg')}")
         self.subscribed += 1
+        self.state, self.last_error, self.connected_at = "connected", "", time.time()
         log.info("企业微信机器人已连接（BotID %s…）", self.bot_id[:6])
 
     async def _heartbeat(self, ws) -> None:
@@ -154,6 +167,7 @@ class WecomBot:
                     if event == "disconnected_event":
                         log.error("企业微信机器人被新的连接接管，本进程的企业微信渠道停止")
                         self._stop.set()
+                        self.state = "taken_over"
                         return
                 else:  # 心跳、回复的回执
                     rid = (frame.get("headers") or {}).get("req_id")
@@ -213,4 +227,33 @@ def from_settings(settings: Settings, **kwargs) -> WecomBot | None:
     allowed = frozenset(u.strip() for u in settings.wecom_allowed_users.split(",") if u.strip())
     return WecomBot(bot_id=settings.wecom_bot_id.strip(), secret=settings.wecom_bot_secret.strip(),
                     url=settings.wecom_ws_url, user_id=settings.wecom_bind_user_id or settings.demo_user_id,
+                    proxy=settings.wecom_proxy.strip() or None,
                     allowed=allowed, **kwargs)
+
+
+# ---------- 进程里唯一的一个机器人：启动时按配置建，配置页保存后重建 ----------
+
+_bot: WecomBot | None = None
+
+
+async def restart(settings: Settings) -> WecomBot | None:
+    """停掉旧连接，按当前配置重新连接；没配凭证就只停不连。配置页保存后调用，不用重启后端。"""
+    global _bot
+    await shutdown()
+    _bot = from_settings(settings)
+    if _bot:
+        _bot.start()
+    return _bot
+
+
+async def shutdown() -> None:
+    global _bot
+    if _bot:
+        await _bot.stop()
+    _bot = None
+
+
+def runtime_status() -> dict:
+    if _bot is None:
+        return {"state": "off", "last_error": "", "connected_at": None}
+    return {"state": _bot.state, "last_error": _bot.last_error, "connected_at": _bot.connected_at}

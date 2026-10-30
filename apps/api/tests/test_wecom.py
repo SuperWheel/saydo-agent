@@ -77,8 +77,9 @@ class FakeServer:
         self.urls: list[str] = []
         self.made: list[FakeWS] = []
 
-    def __call__(self, url):
+    def __call__(self, url, **kw):
         self.urls.append(url)
+        self.kwargs = kw
         item = self.conns.pop(0) if self.conns else FakeWS()
         server = self
 
@@ -351,3 +352,14 @@ def test_render_limits_length_and_masks():
     assert render("你名下共有 2 张卡，状态和限额见卡片。", []) == "你名下共有 2 张卡。"  # IM 里没有卡片可看
     assert render("10月24日 一家未登记商户（名称见卡片） 2,999.00 元。详情见卡片。", []) == "10月24日 一家未登记商户 2,999.00 元。"
     assert {"confirm", "auth", "receipt", "plan", "clarify", "contact"}.isdisjoint(READ_CARDS)
+
+
+def test_connects_directly_unless_proxy_configured(monkeypatch):
+    """默认不走系统代理（开发机的 SOCKS 代理会让连接失败）；配了 WECOM_PROXY 才走代理。"""
+    server = FakeServer(FakeWS(), FakeWS())
+    monkeypatch.setattr(wecom, "ws_connect", server)
+    run_bot(wecom.from_settings(Settings(wecom_bot_id="BOT", wecom_bot_secret="SEC")), lambda: server.made)
+    assert server.kwargs == {"proxy": None}
+    run_bot(wecom.from_settings(Settings(wecom_bot_id="BOT", wecom_bot_secret="SEC", wecom_proxy="http://127.0.0.1:7890")),
+            lambda: len(server.made) == 2)
+    assert server.kwargs == {"proxy": "http://127.0.0.1:7890"}

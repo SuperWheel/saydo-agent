@@ -9,9 +9,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock, llm_setup
+from .. import audit, clock, llm_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions
+from ..channels import wecom
 from ..config import get_settings
 from ..core_mock.ledger import is_balanced, ledger_balance
 from ..core_mock.seed import seed
@@ -136,6 +137,34 @@ def llm_config_save(body: LLMConfigIn, db: Session = Depends(get_db)):
 @admin.post("/llm-config/test")
 def llm_config_test():
     return llm_setup.test_connection()
+
+
+class WecomConfigIn(BaseModel):
+    bot_id: str = Field(default="", max_length=128)  # 留空 = 沿用已填写的
+    secret: str = Field(default="", max_length=200)
+    app_h5_url: str = Field(default="", max_length=200)
+    disable: bool = False
+
+
+@admin.get("/wecom-config")
+def wecom_config():
+    return wecom_setup.status()
+
+
+@admin.post("/wecom-config")
+async def wecom_config_save(body: WecomConfigIn):
+    """保存后当场按新配置重连（长连接任务在事件循环里，所以这个接口是 async）。"""
+    try:
+        wecom_setup.save(body.bot_id, body.secret, body.app_h5_url, body.disable)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    await wecom.restart(get_settings())
+    with new_session() as db:  # 审计只记改了什么，不记 Secret
+        audit.record(db, "admin", "wecom_config", {"disable": body.disable, "bot_id_updated": bool(body.bot_id.strip()),
+                                                   "secret_updated": bool(body.secret.strip()),
+                                                   "app_h5_url": body.app_h5_url.strip()})
+        db.commit()
+    return wecom_setup.status()
 
 
 @admin.get("/audit")

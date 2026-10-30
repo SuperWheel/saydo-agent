@@ -26,12 +26,9 @@ def create_app() -> FastAPI:
         Base.metadata.create_all(engine)
         with new_session() as db:
             seed(db)
-        bot = wecom.from_settings(get_settings())  # 企业微信渠道（可选）：没配 BotID / Secret 就不启动
-        if bot:
-            bot.start()
+        await wecom.restart(get_settings())  # 企业微信渠道（可选）：没配 BotID / Secret 就不启动
         yield
-        if bot:
-            await bot.stop()
+        await wecom.shutdown()
 
     app = FastAPI(title="言行 SayDo Agent", version="0.1.0-m0", lifespan=lifespan)
     app.include_router(api)

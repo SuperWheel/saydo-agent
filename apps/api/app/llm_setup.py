@@ -88,7 +88,7 @@ def save(provider: str, api_key: str = "", enabled: bool | None = None, admin_pa
     return status()
 
 
-def update_env(path: Path, updates: dict[str, str]) -> None:
+def update_env(path: Path, updates: dict[str, str], mark: str = _MARK) -> None:
     """改写 .env 里的这些项：已有的行原地替换（注释掉的同名示例行不动），没有的追加在末尾；其余内容原样保留。"""
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     pending = dict(updates)
@@ -97,10 +97,10 @@ def update_env(path: Path, updates: dict[str, str]) -> None:
         if "=" in line and not line.lstrip().startswith("#") and name in pending:
             lines[i] = f"{name}={pending.pop(name)}"
     if pending:
-        if _MARK not in lines:
+        if mark not in lines:
             if lines and lines[-1].strip():
                 lines.append("")
-            lines.append(_MARK)
+            lines.append(mark)
         lines += [f"{k}={v}" for k, v in pending.items()]
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")

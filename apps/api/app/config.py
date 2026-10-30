@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     wecom_bot_id: str = ""
     wecom_bot_secret: str = ""
     wecom_ws_url: str = "wss://openws.work.weixin.qq.com"
+    wecom_proxy: str = ""  # 连企业微信走的代理（如 http://127.0.0.1:7890）；空 = 直连，不用系统代理
     wecom_bind_user_id: int | None = None  # 企业微信用户默认绑定到哪个演示用户；不填用 demo_user_id
     wecom_allowed_users: str = ""  # 逗号分隔的企业微信 userid 白名单；空 = 企业内成员都可以用
 

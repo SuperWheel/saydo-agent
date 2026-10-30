@@ -41,4 +41,6 @@ export const api = {
   llmConfig: () => get('/admin/llm-config'),
   saveLlmConfig: (body) => post('/admin/llm-config', body),
   testLlm: () => post('/admin/llm-config/test'),
+  wecomConfig: () => get('/admin/wecom-config'),
+  saveWecomConfig: (body) => post('/admin/wecom-config', body),
 }
