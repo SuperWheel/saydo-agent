@@ -91,6 +91,8 @@ def rule_intent(text: str) -> RuleIntent:
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
     if wealth := _wealth_intent(text):  # 理财（WS5）：「理财这个月赚了多少」不能被账单的「赚了多少」抢走
         return wealth
+    if sub := _sub_intent(text):  # 订阅（WS6）排在账单之前：「我每个月订阅花多少」不是查流水
+        return sub
     if bill := next((name for name, pat in _BILL if pat.search(text)), None):  # 账单类问句排在「给我妈转了多少」之前
         return RuleIntent(bill)
     if m := _TRANSFER_NO_AMOUNT.search(text):
@@ -197,4 +199,25 @@ def _wealth_intent(text: str) -> RuleIntent | None:
         return RuleIntent("wealth", {"op": "recommend"})
     if product and _WM_BUY.search(text):
         return RuleIntent("wealth", {"op": "subscribe"})
+
+
+# ---------- 订阅代扣（WS6）：总览、临期扣费、取消 / 停止代扣。商户参数由 tools/subscription.py 从原话里找 ----------
+_SUB_WORD = re.compile(r"订阅|会员|自动续费|续费|代扣|免密支付|自动扣费|自动扣款|包月")
+_SUB_MERCHANT = re.compile(r"爱奇艺|腾讯视频|网易云|QQ音乐|qq音乐|keep|Keep|KEEP|中国移动")
+_SUB_CANCEL = re.compile(r"取消|退订|停(掉|止|用|了)|关(掉|闭|了)|解约|不(想|要)再?(续|订|扣|用)|别再扣|不续")
+_SUB_UPCOMING = re.compile(r"(快|要|将|即将|马上|最近|这几天|近期|这周|下周|未来|接下来|明天).{0,8}(扣费|扣款|续费|扣钱)"
+                           r"|(续费|扣费|扣款)提醒|什么时候(扣|续)")
+_SUB_LEAVE = re.compile(r"占比|分类|报告|饼图|月报|异常")  # 这些是账单分析的问法
+
+
+def _sub_intent(text: str) -> RuleIntent | None:
+    word, merchant = _SUB_WORD.search(text), _SUB_MERCHANT.search(text)
+    if not (word or merchant) or _SUB_LEAVE.search(text):
+        return None
+    if _SUB_CANCEL.search(text):
+        return RuleIntent("sub", {"op": "cancel"})
+    if word and _SUB_UPCOMING.search(text):
+        return RuleIntent("sub", {"op": "upcoming"})
+    if word:  # 只说了商户名（「上个月爱奇艺扣了多少」）是查流水，交给账单
+        return RuleIntent("sub", {"op": "list"})
     return None
