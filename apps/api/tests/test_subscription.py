@@ -296,19 +296,20 @@ def test_unregistered_subscription_name_stays_on_card(llm_client, fake):
 
 # ---------- 模型路径：说成「已解约」会被事实校验拦下 ----------
 
-def test_llm_unsubscribe_claim_rewritten(llm_client, fake):
-    f = fake(tool("sub_cancel_propose", merchant="爱奇艺"), text("已帮你解约爱奇艺会员。"), text("爱奇艺会员已取消。"))
+def test_llm_unsubscribe_claim_never_spoken(llm_client, fake):
+    """出了停止代扣确认卡就不再让模型说话：「已解约」根本没有机会出现。"""
+    f = fake(tool("sub_cancel_propose", merchant="爱奇艺"), text("已帮你解约爱奇艺会员。"))
     r = say(llm_client, "帮我取消爱奇艺会员")
-    assert kinds(r) == ["sub_guide", "confirm"]
+    assert kinds(r) == ["sub_guide", "confirm"] and len(f.calls) == 1
     assert r["reply"]["source"] == "template" and not unsubscribe_claim(r["reply"]["text"])
+
+
+def test_llm_unsubscribe_claim_rewritten(llm_client, fake):
+    """查订阅（状态卡，模型照常说话）时说成「已取消订阅」，事实校验拦下重写。"""
+    f = fake(tool("sub_list"), text("你的爱奇艺会员已经取消了。"), text("你有 6 个订阅。"))
+    r = say(llm_client, "我有哪些订阅")
+    assert not unsubscribe_claim(r["reply"]["text"])
     assert "已解约或已取消订阅" in f.calls[-1]["messages"][-1]["content"]
-
-
-def test_llm_honest_reply_passes(llm_client, fake):
-    fake(tool("sub_cancel_propose", merchant="爱奇艺"),
-         text("请核对确认卡。停止本行代扣后商户订阅可能仍然有效，还要到爱奇艺 App 取消自动续费。"))
-    r = say(llm_client, "帮我取消爱奇艺会员")
-    assert r["reply"]["source"] == "llm"
 
 
 def test_llm_status_after_stop_cannot_say_unsubscribed(llm_client, fake):

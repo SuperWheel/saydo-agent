@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 import secrets
 from dataclasses import dataclass, field
 
@@ -188,7 +189,8 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     user = db.get(User, ctx.user_id)
     messages = [{"role": "system", "content": system_prompt(user.name, now())}, *_history(db, ctx.session.id),
                 {"role": "user", "content": mask_pii(text)}]  # 手机号、卡号不出域：工具再从用户原话里还原
-    tools = llm_tool_specs()
+    domains = _tool_domains(text, messages)
+    tools = llm_tool_specs(domains, extra=ALWAYS_TOOLS)
     datas: list[dict] = []
     final = ""
     for step in range(MAX_TOOL_STEPS + 1):
@@ -216,6 +218,12 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
         messages[start:] = _masked_exchange(messages[start:])
         db.add(ChatMessage(session_id=ctx.session.id, role="tool", trace_id=ctx.trace_id,
                            content=json.dumps(messages[start:], ensure_ascii=False)))
+        if any(c["type"] in ENDS_TURN for c in ctx.cards):
+            # 出了确认卡 / 澄清卡 / 提示卡：卡片本身就是答复，不再调一次模型写「请核对确认卡」。
+            # 省一次调用（约一半耗时），也免得模型把待确认说成「已办理」
+            audit.record(db, ctx.trace_id, "llm_skipped", {"reason": "card_ends_turn",
+                                                          "cards": [c["type"] for c in ctx.cards]}, ctx.session.id)
+            return _template_reply(ctx.cards), "template"
 
     if not final:
         return _template_reply(ctx.cards), "template"
@@ -241,6 +249,35 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     if retry and g2.ok:
         return retry, "llm"
     return _template_reply(ctx.cards), "template"  # 两次都不过：丢弃模型文字，只返回模板
+
+
+# ---------- 发给模型的工具：只发这句话涉及的业务域 ----------
+# 全部 34 个工具的说明约 5,400 token，一次调用里要多花 3–4 秒；按规则意图只发相关业务域，认不出来时照旧发全部
+
+ENDS_TURN = {"confirm", "clarify", "notice"}
+ALWAYS_TOOLS = ("account.balance", "handoff.request")  # 查余额、转人工任何时候都可能用到
+_INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
+                  "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill"}
+_CLAUSE = re.compile(r"[，,。.？?！!；;\n]|再|另外|然后|顺便")
+
+
+def _tool_domains(text: str, messages: list[dict]) -> set[str] | None:
+    """这句话涉及的业务域，加上历史里出现过的工具所在的域（「再给我妹转 800」这类接着说的话、
+    以及重放的历史工具调用都要有对应的工具定义）。整句或任何一段规则认不出来就返回 None：发全部工具。"""
+    domains: set[str] = set()
+    for part in (text, *_CLAUSE.split(text)):
+        if not (part := part.strip()):
+            continue
+        intent = rule_intent(part).intent
+        domain = "bill" if intent.startswith("bill_") else _INTENT_DOMAIN.get(intent)
+        if domain is None:
+            return None
+        domains.add(domain)
+    for m in messages:
+        for call in m.get("tool_calls") or []:
+            if spec := by_llm_name(call["function"]["name"]):
+                domains.add(spec.domain)
+    return domains
 
 
 def _context_facts() -> set[str]:

@@ -114,7 +114,8 @@ def test_fabrication_never_reaches_user(llm_client, fake, said, script, forbidde
     fake(*script)
     r = say(llm_client, said)
     assert forbidden not in r["reply"]["text"]
-    assert "grounding_failed" in events(llm_client, r["trace_id"])
+    # 要么事实校验拦下，要么出卡后根本没再让模型说话（回复由模板生成）
+    assert {"grounding_failed", "llm_skipped"} & set(events(llm_client, r["trace_id"]))
     assert_no_red_bypass(llm_client)
 
 

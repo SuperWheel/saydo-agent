@@ -86,10 +86,11 @@ def model_tools() -> list[ToolSpec]:
     return [s for s in REGISTRY.values() if s.llm_visible and not s.side_effect]
 
 
-def llm_tool_specs() -> list[dict]:
+def llm_tool_specs(domains: set[str] | None = None, extra: tuple[str, ...] = ()) -> list[dict]:
+    """发给模型的工具清单。domains 为 None 时发全部；否则只发这些业务域的工具，外加 extra 里点名的工具。"""
     return [
         {"type": "function", "function": {"name": s.llm_name, "description": s.description, "parameters": s.parameters}}
-        for s in model_tools()
+        for s in model_tools() if domains is None or s.domain in domains or s.name in extra
     ]
 
 

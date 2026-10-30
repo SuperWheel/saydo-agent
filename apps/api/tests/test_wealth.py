@@ -508,7 +508,7 @@ def test_model_subscribe_proposal(llm_client, fake):
          text("请阅读风险揭示并核对确认卡，确认后还需人脸和短信验证。"))
     r = say(llm_client, "帮我买1万安享90天")
     card = only(r)
-    assert card["type"] == "confirm" and card["level"] == "RED" and r["reply"]["source"] == "llm"
+    assert card["type"] == "confirm" and card["level"] == "RED" and r["reply"]["source"] == "template"
 
 
 def test_model_invented_amount_rejected(llm_client, fake):

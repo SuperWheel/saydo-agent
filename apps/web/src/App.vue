@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { showToast } from 'vant'
 import { adminPassword, api } from './api'
 import AuditTimeline from './components/AuditTimeline.vue'
@@ -27,8 +27,17 @@ const auditTrace = ref(null)
 const settingsOpen = ref(false)
 const pwOpen = ref(false)
 const pwInput = ref('')
+const waited = ref(0) // 本轮已等待秒数：模型慢的时候让用户知道还在处理
 let pwResolve = null
+let waitTimer
 let seq = 1
+
+const waitText = computed(() => {
+  if (waited.value < 3) return '正在理解你的意思…'
+  if (waited.value < 8) return `正在查询和核对数据… ${waited.value}s`
+  return `模型响应较慢，已等待 ${waited.value}s，请稍候…`
+})
+onUnmounted(() => clearInterval(waitTimer))
 
 onMounted(async () => {
   try { llm.value = (await api.health()).llm } catch { llm.value = null }
@@ -60,6 +69,8 @@ async function send(text, selection) {
   if (t) push({ role: 'user', text: t })
   input.value = ''
   sending.value = true
+  waited.value = 0
+  waitTimer = setInterval(() => { waited.value += 1 }, 1000)
   try {
     const r = await api.chat({ session_id: sessionId.value, text: t, selection })
     sessionId.value = r.session_id
@@ -68,6 +79,7 @@ async function send(text, selection) {
     push({ role: 'assistant', text: `出错了：${e.message}`, source: 'template' })
   } finally {
     sending.value = false
+    clearInterval(waitTimer)
   }
 }
 
@@ -167,7 +179,7 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
         <CardHost v-for="(c, i) in m.cards" :key="i" :card="c"
                   @outcome="onOutcome" @modify="onModify" @select="onSelect" />
       </div>
-      <div v-if="sending" class="msg assistant"><div class="bubble typing"><van-loading size="16" /> 正在处理…</div></div>
+      <div v-if="sending" class="msg assistant"><div class="bubble typing"><van-loading size="16" /> {{ waitText }}</div></div>
     </main>
 
     <footer class="bottom">

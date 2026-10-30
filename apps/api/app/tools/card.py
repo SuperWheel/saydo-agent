@@ -138,6 +138,8 @@ def _pick(ctx: ToolContext, op: str, card_hint: str | None, *, card_ids: list[in
     cards = _user_cards(ctx.db, ctx.user_id)
     if card_ids is not None:
         cards = [c for c in cards if c.id in card_ids]
+    elif card_hint and not any(hint_in(t) for t in ctx.user_texts):
+        card_hint = None  # 用户没说是哪张卡，模型自己填的不算：展示卡片列表让用户选
     found = resolve_cards(cards, card_hint)
     if not found:
         msg = f"没有找到「{mask_pii(card_hint or '')}」对应的卡。"
@@ -222,7 +224,7 @@ def _propose_status(ctx: ToolContext, op: str, card_hint: str | None, card_ids: 
     if op == "lock":
         display = action_display(title="锁卡确认", verb="锁卡", summary=f"临时锁定{label}", rows=[
             ["卡片", label], ["生效", "确认后立即生效"], ["锁定期间", "刷卡、取现、线上支付都会被拒绝"],
-            ["恢复", "可随时解锁（需人脸 + 短信验证）"]])
+            ["恢复", "可随时解锁（需人脸 + 短信验证）"], ["确定丢了", "可以说「挂失」办理正式挂失"]])
         tip = "锁卡确认后立即生效，找到卡后可以随时解锁。如果用户确定卡丢了找不回来，可以提醒还能办理正式挂失。"
     elif op == "unlock":
         verb = "解除挂失" if c.status == "lost" else "解锁"

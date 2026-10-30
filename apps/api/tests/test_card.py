@@ -296,7 +296,7 @@ def test_rule_mode_fills_in_card_from_earlier_turn(client):
 
 def test_lost_card_on_model_path(llm_client, fake):
     f = fake(tool("card_lock_propose"), text("别着急，建议先锁卡。要锁哪张卡？"),
-             tool("card_lock_propose", card_hint="借记卡"), text("请核对锁卡确认卡。"))
+             tool("card_lock_propose", card_hint="借记卡"))
     r = say(llm_client, "我卡好像丢了")
     assert r["reply"]["source"] == "llm" and [x["type"] for x in r["cards"]] == ["card_list"]
     seen = json.loads(f.calls[1]["messages"][-1]["content"])  # 模型拿到的工具结果
@@ -304,10 +304,18 @@ def test_lost_card_on_model_path(llm_client, fake):
     assert [x["tail"] for x in seen["candidates"]] == ["6688", "3721"]
     c = only_card(say(llm_client, "借记卡", r["session_id"]))
     assert (c["type"], c["level"]) == ("confirm", "YELLOW")
-    tip = json.loads(f.calls[3]["messages"][-1]["content"])["tip"]
-    assert "随时解锁" in tip and "挂失" in tip  # 引导模型提醒用户还能挂失
+    assert len(f.calls) == 3  # 出了确认卡就不再调模型写回复
+    rows = dict(c["rows"])
+    assert "随时解锁" in rows["恢复"] and "挂失" in rows["确定丢了"]  # 卡片上直接提醒还能挂失
     blob = json.dumps([m for call in f.calls for m in call["messages"]], ensure_ascii=False)
     assert DEBIT_NO not in blob and CREDIT_NO not in blob
+
+
+def test_model_cannot_pick_card_for_user(llm_client, fake):
+    """用户没说哪张卡，模型自己填了 card_hint：不认，照样展示卡片列表追问。"""
+    fake(tool("card_limit_propose", setting="per_txn", amount_text="2000", card_hint="信用卡"), text("要调哪张卡？"))
+    r = say(llm_client, "单笔限额调到2000")
+    assert [x["type"] for x in r["cards"]] == ["card_list"]
 
 
 def test_card_tools_visible_to_model_but_not_write_tools(llm_client, fake):
@@ -386,9 +394,10 @@ def test_virtual_card_needs_active_debit_card(client):
     ({"amount_text": "500", "merchant": "京东"}, "merchant_not_from_user"),  # 用户说的是淘宝
 ])
 def test_virtual_card_params_must_come_from_user(llm_client, fake, args, status):
-    f = fake(tool("card_virtual_propose", **args), text("请再确认一下。"))
+    fake(tool("card_virtual_propose", **args), text("请再确认一下。"))
     r = say(llm_client, "申请一张500元的淘宝虚拟卡")
-    assert json.loads(f.calls[1]["messages"][-1]["content"])["status"] == status
+    calls = [e for e in llm_client.get("/admin/audit").json() if e["event"] == "tool_call"]
+    assert calls[-1]["payload"]["status"] == status
     assert [x["type"] for x in r["cards"]] == ["notice"] and llm_client.get("/admin/actions").json() == []
 
 
