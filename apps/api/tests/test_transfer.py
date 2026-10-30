@@ -11,7 +11,7 @@ import pytest
 from app import clock
 from app.db import new_session
 from app.models import PendingAction
-from app.nlu import fraud
+from app.nlu import fraud, resolve_payee
 from app.policy import PolicyContext, Risk, evaluate
 from app.tools.transfer import plan_aa, split_aa
 
@@ -334,3 +334,34 @@ def test_new_rules_table(facts, level):
     ctx = PolicyContext(tool="transfer.create", base_level=Risk.YELLOW, moves_money=True, amount_fen=100,
                         balance_fen=10_000_000, facts=facts)
     assert evaluate(ctx).level == level
+
+
+# ---------- 同名收款人：打字回答选择卡 ----------
+
+@pytest.mark.parametrize(("said", "hint", "tail"), [
+    ("同事那个", "同事张伟", "0921"), ("大学同学那个", "张伟（大学同学）", "3307"), ("尾号0921的", "尾号0921", "0921"),
+    ("尾号3307的", "张伟尾号3307的", "3307"),
+    ("同事那个", "张伟", "0921"), ("尾号3307的", "张伟", "3307"),  # 模型只传「张伟」：按用户这句原话再筛
+])
+def test_same_name_typed_answer(llm_client, fake, said, hint, tail):
+    # 同名选择卡后用户打字回答，不点按钮：真实模型有时把备注 / 尾号拼进 payee_hint，有时只传「张伟」
+    fake(tool("transfer_propose", payee_hint="张伟", amount_text="200"),
+         tool("transfer_propose", payee_hint=hint, amount_text="200"))
+    r = say(llm_client, "给张伟转200")
+    assert r["cards"][0]["type"] == "clarify"
+    card = say(llm_client, said, r["session_id"])["cards"][0]
+    assert card["type"] == "confirm" and card["fields"]["tail"] == tail
+
+
+def test_same_name_answer_without_detail_asks_again(llm_client, fake):
+    fake(tool("transfer_propose", payee_hint="张伟", amount_text="200"),
+         tool("transfer_propose", payee_hint="张伟", amount_text="200"))
+    r = say(llm_client, "给张伟转200")
+    assert say(llm_client, "就那个张伟", r["session_id"])["cards"][0]["type"] == "clarify"  # 没说是哪个：不替用户选
+
+
+def test_same_name_without_detail_still_asks(client):
+    with new_session() as db:
+        assert len(resolve_payee(db, 1, "张伟")) == 2
+        assert len(resolve_payee(db, 1, "张伟尾号9999")) == 2  # 尾号对不上：照旧追问，不替用户选
+        assert resolve_payee(db, 1, "尾号9999") == []

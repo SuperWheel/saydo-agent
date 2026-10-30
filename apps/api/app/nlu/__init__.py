@@ -47,16 +47,33 @@ def resolve_payee(db: Session, user_id: int, hint: str) -> list[Contact]:
         return []
     contacts = list(db.scalars(select(Contact).where(Contact.user_id == user_id)))
     bare = h.removeprefix("我的").removeprefix("我")
+    tail = _tail_in(h)
     for match in (
         lambda c: c.name == h,
         lambda c: h in c.aliases or bare in c.aliases,
         lambda c: c.note in (h, bare),
         lambda c: len(h) >= 2 and (h in c.name or c.name in h),
+        lambda c: c.tail == tail,  # 同名追问后只答尾号：「尾号0921的」
     ):
         hits = [c for c in contacts if match(c)]
+        if len(hits) > 1:  # 同名追问后连备注 / 尾号一起答：「同事张伟」「张伟尾号0921」
+            hits = narrow_payees(hits, h)
         if hits:
             return sorted(hits, key=lambda c: (c.first_transfer_at is None, c.id))
     return []
+
+
+_TAIL = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+
+
+def _tail_in(text: str) -> str | None:
+    return (m := _TAIL.search(text)) and m.group(1)
+
+
+def narrow_payees(candidates: list[Contact], text: str) -> list[Contact]:
+    """同名候选里按话里提到的备注或尾号再筛一次；筛不出来就原样返回，由上层追问。"""
+    tail = _tail_in(text)
+    return [c for c in candidates if c.tail == tail or c.note and c.note in text] or candidates
 
 
 @dataclass

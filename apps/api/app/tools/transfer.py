@@ -19,7 +19,7 @@ from ..core_mock import phone_directory
 from ..core_mock.ledger import LedgerError, post
 from ..models import AABill, AAShare, Account, ChatMessage, Contact, PendingAction, Transaction
 from ..money import fmt_yuan, parse_amount
-from ..nlu import amount_from_user, fraud, resolve_payee
+from ..nlu import amount_from_user, fraud, narrow_payees, resolve_payee
 from ..nlu.transfer import ME_WORDS, is_phone_hint, mask_phone, resolve_phone, split_names
 from ..policy import PolicyContext, Risk, load_rules
 from ..security import mask_pii
@@ -107,6 +107,10 @@ def propose(ctx: ToolContext, *, payee_hint: str = "", amount_text: str = "", me
         candidates = [c] if c and c.user_id == ctx.user_id else []
     else:
         candidates = resolve_payee(db, ctx.user_id, payee_hint)
+    pq = (ctx.session.state or {}).get("pending_question") or {}
+    if len(candidates) > 1 and pq.get("kind") == "payee" and {c.id for c in candidates} == set(pq["contact_ids"]):
+        # 打字回答同名选择卡（「同事那个」「尾号0921的」）而模型只传了「张伟」：按用户这句原话再筛
+        candidates = narrow_payees(candidates, ctx.user_texts[0] if ctx.user_texts else "")
     if not candidates:
         return ToolResult({"status": "payee_not_found", "hint": payee_hint},
                           notice_card(f"没有在你的收款人里找到「{payee_hint}」。可以换个称呼，或者直接说对方的手机号。", "warning"))
