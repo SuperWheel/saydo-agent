@@ -80,6 +80,10 @@ make redteam     # 只跑红队测试集 tests/redteam/
 ```
 
 ```bash
+make e2e         # 浏览器端到端测试：演示主线 9 条用例，规则模式，不调用真实模型（首次运行见测试报告 §5.4）
+```
+
+```bash
 make smoke-llm   # 用 .env 里的真实模型跑几句对话，检查工具调用（消耗 API 额度）
 ```
 

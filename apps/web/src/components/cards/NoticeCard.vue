@@ -4,7 +4,7 @@ defineProps({ card: { type: Object, required: true } })
 </script>
 
 <template>
-  <div v-if="card.breaker" class="card notice breaker">
+  <div v-if="card.breaker" class="card notice breaker" data-testid="breaker-card">
     <div class="b-head">
       <van-icon name="shield-o" size="18" />
       <span>安全保护已开启</span>

@@ -33,3 +33,9 @@ seed:
 .PHONY: redteam
 redteam:
 	cd apps/api && uv run pytest -q tests/redteam
+
+# 端到端测试：演示主线，规则模式（不调模型），自己起 8765 / 5174 两个端口，不读 .env
+# 首次运行前装浏览器：cd apps/web && npx playwright install chromium
+.PHONY: e2e
+e2e:
+	cd apps/web && npm run e2e

@@ -37,7 +37,7 @@ async function verify(factor) {
 </script>
 
 <template>
-  <div class="card auth">
+  <div class="card auth" data-testid="auth-card">
     <div class="card-title">
       <span>强验证（模拟）</span>
       <van-tag type="danger" size="medium">🔴 两步验证</van-tag>

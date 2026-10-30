@@ -5,7 +5,7 @@ defineProps({ card: { type: Object, required: true } })
 </script>
 
 <template>
-  <div class="card">
+  <div class="card" data-testid="knowledge-card">
     <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary">📖 知识库</van-tag></div>
     <div v-for="(it, i) in card.items" :key="it.id" class="item" :class="{ first: i === 0 }">
       <div class="q">{{ it.title }}</div>

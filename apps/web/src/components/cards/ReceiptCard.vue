@@ -3,7 +3,7 @@ defineProps({ card: { type: Object, required: true } })
 </script>
 
 <template>
-  <div class="card receipt">
+  <div class="card receipt" data-testid="receipt-card">
     <div class="watermark">{{ card.watermark }}</div>
     <div class="status" :class="card.status">
       <van-icon :name="card.status === 'succeeded' ? 'checked' : 'warning'" size="28" />
