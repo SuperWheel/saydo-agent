@@ -41,7 +41,7 @@ async function fastForward() { // 演示：快进到临期时间，触发自动�
 </script>
 
 <template>
-  <div class="card plan">
+  <div class="card plan" data-testid="plan-card">
     <div class="card-title">
       <span>📋 {{ card.goal }}</span>
       <van-tag :type="STATUS_TAG[card.status]" size="medium">{{ card.status_label }}</van-tag>

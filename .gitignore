@@ -7,3 +7,5 @@ __pycache__/
 node_modules/
 apps/web/dist/
 .DS_Store
+apps/web/test-results/
+apps/web/playwright-report/

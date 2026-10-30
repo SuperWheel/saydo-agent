@@ -45,7 +45,7 @@ async function act(kind) {
 </script>
 
 <template>
-  <div class="card confirm" :class="{ red: isRed }">
+  <div class="card confirm" :class="{ red: isRed }" data-testid="confirm-card">
     <div class="card-title">
       <span>{{ card.title }}</span>
       <van-tag :type="isRed ? 'danger' : 'warning'" size="medium">

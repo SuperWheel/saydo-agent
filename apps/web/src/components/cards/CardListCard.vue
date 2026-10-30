@@ -6,7 +6,7 @@ const STATUS_TAG = { active: 'success', locked: 'warning', lost: 'danger' }
 </script>
 
 <template>
-  <div class="card">
+  <div class="card" data-testid="card-list-card">
     <div class="card-title"><span>我的银行卡</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
     <div v-if="card.hint" class="hint">{{ card.hint }}</div>
     <div v-for="c in card.cards" :key="c.kind + c.tail" class="bank-card">
