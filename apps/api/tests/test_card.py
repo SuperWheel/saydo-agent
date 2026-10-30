@@ -318,6 +318,24 @@ def test_model_cannot_pick_card_for_user(llm_client, fake):
     assert [x["type"] for x in r["cards"]] == ["card_list"]
 
 
+@pytest.mark.parametrize("utterance,tail", [("把6688锁了", "6688"), ("锁卡3721", "3721"), ("锁定后四位3721的卡", "3721")])
+def test_lock_by_tail_only(client, utterance, tail):
+    c = only_card(say(client, utterance))
+    assert c["type"] == "confirm" and dict(c["rows"])["卡片"].endswith(f"（尾号{tail}）")
+
+
+def test_lock_unknown_tail_says_not_found(client):
+    r = say(client, "把1234锁了")
+    assert "没有找到" in json.dumps(r["cards"], ensure_ascii=False)
+
+
+def test_model_tail_hint_counts_when_user_said_tail(llm_client, fake):
+    """用户只说了「6688」，模型填 card_hint="6688"：用户说过这个尾号，算数，直接出确认卡。"""
+    fake(tool("card_lock_propose", card_hint="6688"), text("好的"))
+    c = only_card(say(llm_client, "帮我瞅瞅6688那张，先锁上"))
+    assert c["type"] == "confirm" and "6688" in dict(c["rows"])["卡片"]
+
+
 def test_card_tools_visible_to_model_but_not_write_tools(llm_client, fake):
     f = fake(text("你好"))
     say(llm_client, "你好")
@@ -442,6 +460,15 @@ def test_card_numbers_never_leave_the_backend(client):
     ("申请一张只在淘宝用的一次性虚拟卡，限额两百",  # 「一张」「一次性」不是金额
      {"op": "virtual_apply", "amount_text": "两百", "merchant": "淘宝", "one_time": True}),
     ("信用卡额度还有多少", {"op": "list", "card_hint": "信用卡"}),
+    # 只说尾号、不说卡种
+    ("把6688锁了", {"op": "lock", "card_hint": "尾号6688"}),
+    ("锁卡 3721", {"op": "lock", "card_hint": "尾号3721"}),
+    ("冻结6688那张", {"op": "lock", "card_hint": "尾号6688"}),
+    ("锁一下卡号末四位6688的", {"op": "lock", "card_hint": "卡号末四位6688"}),
+    ("尾号是3721的卡挂失", {"op": "report_loss", "card_hint": "尾号是3721"}),
+    ("解锁6688", {"op": "unlock", "card_hint": "尾号6688"}),
+    ("2026年锁的卡帮我解锁", {"op": "unlock", "card_hint": ""}),  # 年份不是尾号
+    ("单日限额改成5000", {"op": "limit", "setting": "daily", "amount_text": "5000", "card_hint": ""}),  # 金额不是尾号
 ])
 def test_card_rule_intent(utterance, slots):
     i = rule_intent(utterance)

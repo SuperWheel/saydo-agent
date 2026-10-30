@@ -133,7 +133,10 @@ _BILL = [
                               r"|(转账|交易|消费|支付)记录")),
 ]
 # ---------- 卡片（WS3）：锁卡、解锁、挂失、「卡丢了」、交易限制、虚拟卡、查卡 ----------
-_CARD_HINT = re.compile(r"尾号\s*\d{4}|\d{4}(?=\s*(?:的|那张)?(?:卡|借记卡|储蓄卡|信用卡|虚拟卡))|借记卡|储蓄卡|工资卡|信用卡|虚拟卡")
+_CARD_HINT = re.compile(r"(?:尾号|尾数|(?:卡号)?(?:末|后)\s*[四4]\s*位)\s*(?:是|为)?\s*\d{4}"
+                        r"|\d{4}(?=\s*(?:的|那张)?(?:卡|借记卡|储蓄卡|信用卡|虚拟卡))|借记卡|储蓄卡|工资卡|信用卡|虚拟卡")
+# 锁卡、解锁、挂失、查卡的话里没有金额，单独的 4 位数就是尾号：「把6688锁了」「锁卡6688」「冻结6688那张」
+_BARE_TAIL = re.compile(r"(?<![\d.])\d{4}(?![\d.]|\s*(?:元|块|万|千|百|年|月|号|日|点|分|天|次|笔|%))")
 _CARD_UNLOCK = re.compile(r"解锁|解除.{0,6}(锁定|锁卡|冻结|挂失)|解挂|取消.{0,4}(锁卡|锁定|挂失)|恢复使用")
 _CARD_REPORT = re.compile(r"挂失")
 _CARD_LOST = re.compile(r"卡.{0,8}(丢了|丢失|掉了|不见了|找不到|被偷|被盗|被人捡)|(丢|掉)了.{0,4}卡|盗刷")
@@ -148,6 +151,7 @@ _CARD_SETTINGS = [
 ]
 _SWITCH_OFF = re.compile(r"关闭|关掉|关了|关上|停用|禁止|禁用|不允许|不让|屏蔽|停掉")
 _SWITCH_ON = re.compile(r"开通|开启|打开|允许|启用|开放|放开|恢复")
+_CARD_SETTINGS_ANY = re.compile(r"限额|额度|限制|境外|海外|线上|网上|无卡|ATM|取现|虚拟卡|单笔|单日|每天|每日")
 _CARD_LIST = re.compile(r"我的卡|几张卡|哪些卡|查.{0,3}卡|卡.{0,4}(状态|情况|限额|额度)|限额|额度")
 _MERCHANT = re.compile(r"(?:只在|仅在|仅限|只限|专门在|只能在)(?P<m>[^\s，,。！!？?的]{1,10}?)(?:上|里)?(?:用|使用|消费|购物|买|的|$)")
 _COUNTER = re.compile(r"\s*(?:张|个|次|笔|天|日)")
@@ -168,8 +172,15 @@ def card_amount_text(text: str) -> str | None:
     return None
 
 
+def bare_tails(text: str) -> list[str]:
+    """话里单独出现的 4 位数，只在锁卡、解锁、挂失、查卡这类不带金额的话里当尾号用。"""
+    return _BARE_TAIL.findall(text)
+
+
 def _card_intent(text: str) -> RuleIntent | None:
     hint = card_hint(text)
+    if not re.search(r"\d{4}", hint) and not _CARD_SETTINGS_ANY.search(text):
+        hint += "".join(f"尾号{t}" for t in bare_tails(text))
     for op, pat in (("unlock", _CARD_UNLOCK), ("report_loss", _CARD_REPORT)):
         if pat.search(text):
             return RuleIntent("card", {"op": op, "card_hint": hint})

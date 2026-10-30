@@ -138,8 +138,8 @@ def _pick(ctx: ToolContext, op: str, card_hint: str | None, *, card_ids: list[in
     cards = _user_cards(ctx.db, ctx.user_id)
     if card_ids is not None:
         cards = [c for c in cards if c.id in card_ids]
-    elif card_hint and not any(hint_in(t) for t in ctx.user_texts):
-        card_hint = None  # 用户没说是哪张卡，模型自己填的不算：展示卡片列表让用户选
+    elif card_hint and not any(hint_in(t) or any(x in t for x in _TAIL.findall(card_hint)) for t in ctx.user_texts):
+        card_hint = None  # 用户没说是哪张卡，模型自己填的不算：展示卡片列表让用户选（用户说了「6688」这样的尾号就算说了）
     found = resolve_cards(cards, card_hint)
     if not found:
         msg = f"没有找到「{mask_pii(card_hint or '')}」对应的卡。"
