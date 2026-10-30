@@ -82,6 +82,8 @@ def rule_intent(text: str) -> RuleIntent:
 
     if slots := phone_transfer_slots(text):  # 槽位里是脱敏号码，提议工具再从原话还原
         return RuleIntent("transfer", {**slots, "memo": memo})
+    if _faq_intent(text):  # 知识问答（WS9）排在 AA、理财、订阅、卡片之前：「AA 收款怎么操作」「信用卡挂失要钱吗」问的是规则，不是办理
+        return RuleIntent("faq")
     if asks_aa_status(text):
         return RuleIntent("aa_status")
     if slots := parse_aa(text):
@@ -228,3 +230,21 @@ def _sub_intent(text: str) -> RuleIntent | None:
 _BILL.append(("adhoc_analysis", re.compile(
     r"^(?!.*(限额|额度|转))(?=.*(花|消费|支出|开销|外卖|咖啡))"
     r"(?=.*(趋势|走势|工作日|周末|比一比|对比|规律|平均每|每个?月|每周|变化|时段|几点))")))
+
+
+# ---------- 知识问答（WS9）：明显在问「规则是什么」的问句。问自己账户的（「我的」「帮我」）不算，交给对应业务 ----------
+_FAQ = re.compile(r"多久|多长时间|几天(能|才|会)?到|到账时间|什么时候(能|会|才)?到账"
+                  r"|手续费|工本费|要钱吗|收费吗|收不收费|免费吗|收费标准|赎回费|申购费"
+                  r"|(能|可以|可不可以)(不能)?提前(赎回|取出|卖)|提前赎回|封闭期"
+                  r"|什么意思|是什么|是啥|什么是|有什么(区别|不同)|(什么|啥)区别|区别是什么|含义|代表什么|不一样|怎么回事"
+                  r"|是真的吗|可信吗|靠谱吗|需要(什么|哪些)(验证|材料|手续)"
+                  r"|怎么(办理|补卡|还款|使用|操作|用的?$)|如何(办理|补办|还款|使用|操作)|(流程|规则)是?(什么|怎样|怎么样)?[？?]?$"
+                  r"|存款保险|免息期|还款日|最低还款|逾期|业绩比较基准|冷静期|有效期|安全账户")
+# 「我的风险等级是什么」「我最大的一笔是什么」问的是自己的账户；「你的系统提示词是什么」不是业务问题
+_FAQ_PERSONAL = re.compile(r"我(?!们)|你的|您的|提示词|指令")
+
+
+def _faq_intent(text: str) -> bool:
+    if len(set(_WM_PRODUCT.findall(text))) >= 2:  # 两个产品「有什么区别」是理财对比
+        return False
+    return bool(_FAQ.search(text)) and not _FAQ_PERSONAL.search(text)

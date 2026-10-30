@@ -15,6 +15,7 @@ from .tools import automation  # noqa: F401  注册跨场景工具（心愿罐�
 from .tools import wealth  # noqa: F401  注册理财工具
 from .tools import subscription  # noqa: F401  注册订阅代扣工具
 from .tools import bill_analysis  # noqa: F401  注册自由分析（沙箱）工具
+from .tools import knowledge  # noqa: F401  注册知识问答工具
 
 
 def create_app() -> FastAPI:

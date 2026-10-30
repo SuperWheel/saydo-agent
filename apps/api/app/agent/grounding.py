@@ -11,7 +11,9 @@ from ..money import parse_amount
 
 _NUM = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?")
 # 中文数字写的金额和百分比（「约三千元」「百分之三十」），防止绕过阿拉伯数字的校验
-_CN_NUM = re.compile(r"[零〇一二两三四五六七八九十百千万亿]+(?=元|块钱)|(?<=百分之)[零〇一二两三四五六七八九十点]+")
+# 紧跟在阿拉伯数字后面的「万」是那个数的单位（「5 万元」），不单独当中文数字，见 _WAN
+_CN_NUM = re.compile(r"(?<![\d.])(?<!\d )[零〇一二两三四五六七八九十百千万亿]+(?=元|块钱)|(?<=百分之)[零〇一二两三四五六七八九十点]+")
+_WAN = re.compile(r" ?万")  # 「5 万元」按 50000 比对：知识库条文写「5 万元」，工具结果写 5000000 分，都记成 50000
 _CLAIM = re.compile(r"(已经?|成功)(为你|帮你|给你|向.{1,6})?(转账|转出|转了|到账|完成转账|支付|扣款|汇款|汇出)|转账(已)?成功|已到账")
 # 转账以外的办理（锁卡、挂失、改限额、虚拟卡、AA 收款）说成已经办好。「借记卡已锁定」「小王已付清」这类状态描述
 # 不带「帮你 / 为你」，不算；「成功后」「完成后」是在讲流程，也不算
@@ -65,6 +67,14 @@ def _add(out: set[str], s: str | None) -> None:
             out.add(_norm(str(d.quantize(q, rounding=ROUND_HALF_UP))))
 
 
+def _value(text: str, m: re.Match) -> str | None:
+    """文字里一个数字的值；后面跟着「万」的乘上 10000。"""
+    n = _norm(m.group())
+    if n is not None and _WAN.match(text, m.end()):
+        return _norm(str(Decimal(n) * 10_000))
+    return n
+
+
 def collect_facts(obj, out: set[str] | None = None) -> set[str]:
     out = set() if out is None else out
     if isinstance(obj, dict):
@@ -76,8 +86,8 @@ def collect_facts(obj, out: set[str] | None = None) -> set[str]:
         for v in obj:
             collect_facts(v, out)
     elif isinstance(obj, str):
-        for m in _NUM.findall(obj):
-            _add(out, _norm(m))
+        for m in _NUM.finditer(obj):
+            _add(out, _value(obj, m))
     elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
         _add(out, _norm(str(obj)))
     return out
@@ -125,7 +135,7 @@ def check(text: str, facts: set[str], *, executed: bool = False, has_card: bool 
     """status_only：本轮只出了查询类卡片（查卡、AA 进度等），没有待确认的动作，「已锁定」「已发送」可能是在讲状态。"""
     unsupported = []
     for m in _NUM.finditer(text):
-        n = _norm(m.group())
+        n = _value(text, m)
         if n is None or n in facts:
             continue
         following = text[m.end():m.end() + 1]
