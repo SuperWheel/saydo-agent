@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 CASES = ROOT / "evals" / "regression.yaml"
 TARGET = 0.9
+MAX_REPLY = 60  # 提示词要求回复不超过 60 字
 
 
 def _as_list(v) -> list[str]:
@@ -39,7 +40,7 @@ def main() -> int:
         cases = [c for c in cases if sys.argv[1] in c["id"]]
     print(f"模型：{s.llm_provider} / {s.llm_model}，{len(cases)} 条用例\n")
 
-    rows, total = [], 0.0
+    rows, total, long_replies = [], 0.0, 0
     with TestClient(create_app()) as c:
         for case in cases:
             c.post("/dev/seed")
@@ -68,12 +69,16 @@ def main() -> int:
                 print(f"     ⚠️ {'；'.join(notes)}")
             if not (intent_ok and task_ok):
                 print(f"     回复：{r['reply']['text']}")
+            elif len(r["reply"]["text"]) > MAX_REPLY:
+                long_replies += 1
+                print(f"     📏 回复 {len(r['reply']['text'])} 字：{r['reply']['text']}")
 
     n = len(rows)
     intent = sum(r[1] for r in rows) / n
     task = sum(r[2] for r in rows) / n
     print(f"\n意图准确率 {intent:.0%}（{sum(r[1] for r in rows)}/{n}，目标 ≥ {TARGET:.0%}）  "
-          f"任务成功率 {task:.0%}（{sum(r[2] for r in rows)}/{n}）  平均每条 {total / n:.1f} 秒")
+          f"任务成功率 {task:.0%}（{sum(r[2] for r in rows)}/{n}）  平均每条 {total / n:.1f} 秒  "
+          f"回复超 {MAX_REPLY} 字 {long_replies} 条")
     return 0 if intent >= TARGET else 1
 
 

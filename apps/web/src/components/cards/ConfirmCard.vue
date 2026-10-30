@@ -64,7 +64,7 @@ async function act(kind) {
       <div v-if="card.auth_hint" class="hint">{{ card.auth_hint }}</div>
     </div>
     <div v-if="done" class="done-mask">{{ done }}</div>
-    <div v-else-if="card.voided" class="done-mask">已移出计划，这张确认卡作废，没有发生资金变动</div>
+    <div v-else-if="card.voided" class="done-mask">{{ typeof card.voided === 'string' ? card.voided : '已移出计划，这张确认卡作废，没有发生资金变动' }}</div>
     <div v-else-if="expired" class="done-mask">确认卡已过期，{{ card.amount ? '未发生资金变动' : '没有做任何变更' }}</div>
     <template v-else>
       <div class="btns">

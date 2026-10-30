@@ -16,7 +16,7 @@ from .. import audit
 from ..cards import notice_card
 from ..clock import now
 from ..config import get_settings
-from ..models import ChatMessage, ChatSession, User
+from ..models import ChatMessage, ChatSession, PendingAction, User
 from ..nlu import amounts_in, rule_intent
 from ..security import breaker, inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
@@ -92,6 +92,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     elif get_settings().llm_ready:
         try:
             out = _llm_turn(ctx, guard.text)
+            _order_cards(ctx.cards, guard.text)
         except LLMError as e:
             audit.record(db, trace_id, "llm_error", {"error": str(e)[:300]}, session.id)
             out = (_template_reply(ctx.cards), "template") if ctx.cards else None
@@ -100,11 +101,27 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     else:
         text_out, source = _rule_turn(ctx, guard)
 
+    _void_blocked_cards(ctx)
     db.add(ChatMessage(session_id=session.id, role="assistant", content=text_out, trace_id=trace_id))
     audit.record(db, trace_id, "assistant_reply", {"source": source, "text": text_out,
                                                    "cards": [c["type"] for c in ctx.cards]}, session.id)
     db.commit()
     return TurnResult(session_id=session.id, trace_id=trace_id, text=text_out, source=source, cards=ctx.cards)
+
+
+def _void_blocked_cards(ctx: ToolContext) -> None:
+    """这一轮出了熔断提示：此前还没确认、现在会被熔断拦下的确认卡，在画面上一并作废。
+    后端本来就会在执行前重新校验并作废它们（`auth/actions._revalidate`），这里只是不让旧卡的按钮还亮着。"""
+    trip_card = next((c for c in ctx.cards if c.get("breaker")), None)
+    if trip_card is None:
+        return
+    pending = ctx.db.scalars(select(PendingAction).where(PendingAction.user_id == ctx.user_id,
+                                                        PendingAction.status == "pending")).all()
+    ids = [a.id for a in pending if breaker.check(ctx.db, user_id=a.user_id, tool=a.tool, session_id=a.session_id,
+                                                   args=a.args) is not None]
+    if ids:
+        trip_card["void_action_ids"] = ids
+        trip_card["void_reason"] = "安全保护已开启，这张确认卡作废，没有发生资金变动"
 
 
 # ---------- 模型路径 ----------
@@ -236,7 +253,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
             "status_only": bool(kinds) and not kinds & {"confirm", "clarify"}}
     g = check(final, facts, **opts)
     if g.ok:
-        return final, "llm"
+        return _brief(ctx, final), "llm"
     audit.record(db, ctx.trace_id, "grounding_failed", {"text": final, "problem": g.describe()}, ctx.session.id)
     if g.phantom_card:
         return None  # 模型说出了卡片却没调用工具，重写文字也变不出卡片：这一轮由规则引擎确定性地出卡
@@ -247,8 +264,27 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     g2 = check(retry, facts, **opts)
     audit.record(db, ctx.trace_id, "grounding_retry", {"text": retry, "ok": g2.ok, "problem": g2.describe()}, ctx.session.id)
     if retry and g2.ok:
-        return retry, "llm"
+        return _brief(ctx, retry), "llm"
     return _template_reply(ctx.cards), "template"  # 两次都不过：丢弃模型文字，只返回模板
+
+
+MAX_REPLY = 60  # 回复字数上限（提示词第 7 条）；卡片上有细节，文字只说结论
+_SENTENCE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;\n]*")
+
+
+def _brief(ctx: ToolContext, text: str) -> str:
+    """模型回复超过上限时按整句截短：保留开头几句（至少第一句），不在句子中间截断。
+    事实校验已经对全文做过，删句子只会少说，不会多说。"""
+    if len(text) <= MAX_REPLY:
+        return text
+    out = ""
+    for s in _SENTENCE.findall(text):
+        if out and len(out) + len(s) > MAX_REPLY:
+            break
+        out += s
+    out = out.strip()
+    audit.record(ctx.db, ctx.trace_id, "reply_trimmed", {"from": len(text), "to": len(out)}, ctx.session.id)
+    return out
 
 
 # ---------- 发给模型的工具：只发这句话涉及的业务域 ----------
@@ -280,6 +316,28 @@ def _tool_domains(text: str, messages: list[dict]) -> set[str] | None:
     return domains
 
 
+_CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("sub_", "subscription"),
+                ("wealth_", "wealth"), ("aa", "transfer"), ("contact", "transfer"))
+
+
+def _order_cards(cards: list[dict], text: str) -> None:
+    """一句话问了几件事（「我还有多少钱？这个月钱怎么花这么快？」）时，查询卡片按用户说的先后排，
+    不按模型调用工具的先后。有确认卡、澄清卡时不动：那一轮的卡片顺序就是办理顺序。"""
+    if len(cards) < 2 or any(c["type"] in ENDS_TURN for c in cards):
+        return
+    said: dict[str, int] = {}
+    for i, part in enumerate(_CLAUSE.split(text)):
+        intent = rule_intent(part.strip()).intent if part.strip() else "unknown"
+        domain = "bill" if intent.startswith("bill_") else _INTENT_DOMAIN.get(intent)
+        if domain:
+            said.setdefault(domain, i)
+
+    def rank(card: dict) -> int:
+        domain = next((d for prefix, d in _CARD_DOMAIN if card["type"].startswith(prefix)), None)
+        return said.get(domain, len(said) + 99)
+    cards.sort(key=rank)  # 稳定排序：同一业务域、没提到的业务域保持原来的先后
+
+
 def _context_facts() -> set[str]:
     t = now()
     return collect_facts([t.year, t.month, t.day, get_settings().action_ttl_s // 60, get_settings().otp_window_s // 60])
@@ -297,6 +355,8 @@ def _template_reply(cards: list[dict]) -> str:
             return f"请核对确认卡，无误后点击确认。{extra}"
         case "clarify":
             return c["question"]
+        case "notice" if c.get("breaker"):
+            return "安全保护已开启，原因、恢复方式和申诉渠道见下方提示卡。"  # 提示卡全文 100 多字，气泡里不重复
         case "notice":
             return c["text"]
     return c.get("reply") or "好的。"  # 展示类卡片自带按模板渲染的一句话

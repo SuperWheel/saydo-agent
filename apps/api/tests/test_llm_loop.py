@@ -201,3 +201,26 @@ def test_bad_tool_history_does_not_break_next_turn(llm_client, fake, broken):
     results = [m for m in f.calls[-1]["messages"] if m["role"] == "tool"]
     assert len(results) == 1  # 跳过坏记录，仍保留同轮有效工具交互
     assert isinstance(json.loads(results[0]["content"]), dict)
+
+
+def test_query_cards_follow_spoken_order(llm_client, fake):
+    """模型先查账单再查余额，卡片仍按用户说的先后：余额在前。"""
+    fake(tool("bill_query"), tool("account_balance"), text("你名下账户余额合计 28,650.32 元。"))
+    r = say(llm_client, "我还有多少钱？这个月花了多少？")
+    assert [c["type"] for c in r["cards"]][0] == "balance" and len(r["cards"]) == 2
+
+
+def test_long_reply_trimmed_at_sentence_boundary(llm_client, fake):
+    long = ("你名下账户余额合计 28,650.32 元。这些钱分布在借记卡和其他账户里，可以随时查看明细。"
+            "如果需要转账、理财或者分析账单，也可以直接告诉我，我会帮你一步步办理。")
+    fake(tool("account_balance"), text(long))
+    r = say(llm_client, "我还有多少钱")
+    assert r["reply"]["text"] == "你名下账户余额合计 28,650.32 元。这些钱分布在借记卡和其他账户里，可以随时查看明细。"
+    events = llm_client.get(f"/admin/audit?trace_id={r['trace_id']}").json()
+    assert any(e["event"] == "reply_trimmed" for e in events)
+
+
+def test_single_long_sentence_kept_whole(llm_client, fake):
+    one = "你名下账户余额合计 28,650.32 元，其中借记卡是主要账户，日常消费和转账都从这张卡走，近期没有大额异常支出"
+    fake(tool("account_balance"), text(one))
+    assert say(llm_client, "我还有多少钱")["reply"]["text"] == one  # 只有一句：宁可长一点，也不截半句

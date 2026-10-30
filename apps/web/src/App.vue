@@ -55,11 +55,14 @@ function push(msg) {
 }
 
 // 计划重新规划（「蛋糕不要了」）后，被移出计划那一步的确认卡在后端已作废，这里把画面上的旧卡也盖上遮罩
+// 熔断提示卡同理：被安全保护拦下的旧确认卡也盖上遮罩（void_reason 是遮罩文字）
 function voidStaleCards(cards) {
-  const ids = new Set(cards.flatMap((c) => c.void_action_ids || []))
-  if (!ids.size) return
-  for (const m of messages.value) {
-    for (const c of m.cards) if (c.type === 'confirm' && ids.has(c.action_id)) c.voided = true
+  for (const card of cards) {
+    const ids = new Set(card.void_action_ids || [])
+    if (!ids.size) continue
+    for (const m of messages.value) {
+      for (const c of m.cards) if (c.type === 'confirm' && ids.has(c.action_id)) c.voided = card.void_reason || true
+    }
   }
 }
 
