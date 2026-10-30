@@ -83,6 +83,38 @@ rules:
     when: {op: report_loss}
     elevate_to: RED
     reason: "正式挂失后原卡立即停用，需要本人强验证"
+  # ---------- 理财（WS5）：适当性（R ≤ C、测评有效）在策略上下文的 block_reason 里硬拦截，这里只管定级 ----------
+  # 事实由系统按当日净值和持仓算出（tools/wealth.py），不由模型填写
+  - id: wealth_assess_raise
+    tool_in: [wealth.assess_save]
+    when: {raises: true}
+    elevate_to: RED
+    reason: "测评等级高于上次，可购买的产品范围扩大，需要本人强验证"
+
+  - id: wealth_subscribe            # 申购工具默认等级已是 🔴，这条给出原因并在审计里留下命中记录
+    tool_in: [wealth.subscribe]
+    when: {op: subscribe}
+    elevate_to: RED
+    reason: "理财申购：已核对产品风险等级在你的风险承受能力之内；请阅读风险揭示，确认后需本人强验证"
+
+  - id: wealth_redeem_early_fee
+    tool_in: [wealth.redeem]
+    when: {early_fee: true}
+    elevate_to: RED
+    reason: "持有时间不足，提前赎回要收取赎回费"
+
+  - id: wealth_redeem_loss
+    tool_in: [wealth.redeem]
+    when: {at_loss: true}
+    elevate_to: RED
+    reason: "按当前净值赎回会产生亏损"
+
+  - id: wealth_redeem_large
+    tool_in: [wealth.redeem]
+    min_fen: 5000000                 # 单笔赎回金额 ≥ 5 万元
+    when: {large: true}
+    elevate_to: RED
+    reason: "单笔赎回金额达到 5 万元"
 
   # ---------- 跨场景联动（WS7）：心愿罐存入 / 释放、订单、定时转账都是 🟡 起步 ----------
   # order_fast_path 由系统算出：白名单商户 + 从心愿罐付款 + 今日累计转出（含本笔）≤ 1000 元

@@ -332,3 +332,58 @@ class ScheduledTransfer(Base):
     runs: Mapped[list] = mapped_column(JSON, default=list)  # 每期结果 [{at, status, note, action_id}]
     idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+# ---------- 理财（WS5）：产品、风险测评、持仓。产品全部虚构 ----------
+
+class WealthProduct(Base):
+    """模拟理财产品。净值按 nav_model 和成立日用公式算（core_mock/wealth.py），不存每日净值。"""
+
+    __tablename__ = "wealth_products"
+    code: Mapped[str] = mapped_column(String(8), primary_key=True)
+    name: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))  # 现金管理类 / 固定收益类 / 固收增强类 / 混合类 / 权益类
+    risk_level: Mapped[int] = mapped_column(Integer)  # 1–5 对应 R1–R5
+    term_days: Mapped[int] = mapped_column(Integer, default=0)  # 封闭期天数，0 = 开放式
+    settle_days: Mapped[int] = mapped_column(Integer, default=1)  # 赎回到账 T+n
+    min_purchase_fen: Mapped[int] = mapped_column(BigInteger)
+    benchmark_low_bp: Mapped[int | None] = mapped_column(Integer)  # 业绩比较基准（基点），开放式净值型为空
+    benchmark_high_bp: Mapped[int | None] = mapped_column(Integer)
+    sub_fee_bp: Mapped[int] = mapped_column(Integer, default=0)  # 申购费率（基点）
+    redeem_fee_bp: Mapped[int] = mapped_column(Integer, default=0)  # 赎回费率（基点），持有不足 redeem_fee_days 天时收
+    redeem_fee_days: Mapped[int] = mapped_column(Integer, default=0)
+    nav_model: Mapped[dict] = mapped_column(JSON)
+    inception_on: Mapped[date] = mapped_column(Date)
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    intro: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="on_sale")  # on_sale / closed
+
+
+class RiskProfile(Base):
+    """风险测评结果（F-WM-01）。只追加：每次测评一条，以最新一条为准；答案由用户在问卷卡上逐题点选。"""
+
+    __tablename__ = "risk_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    level: Mapped[int] = mapped_column(Integer)  # 1–5 对应 C1–C5
+    score: Mapped[int] = mapped_column(Integer)
+    answers: Mapped[dict] = mapped_column(JSON)
+    version: Mapped[str] = mapped_column(String(16))
+    assessed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+
+
+class WealthHolding(Base):
+    """理财持仓（按笔）。units_c 是份额 × 100；principal_fen 是剩余份额对应的成本（含申购费）。"""
+
+    __tablename__ = "wealth_holdings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    product_code: Mapped[str] = mapped_column(ForeignKey("wealth_products.code"))
+    units_c: Mapped[int] = mapped_column(BigInteger)
+    principal_fen: Mapped[int] = mapped_column(BigInteger)
+    purchased_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    matures_on: Mapped[date | None] = mapped_column(Date)  # 封闭式产品的到期日
+    status: Mapped[str] = mapped_column(String(16), default="holding")  # holding / redeemed
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)

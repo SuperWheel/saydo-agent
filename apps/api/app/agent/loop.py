@@ -24,6 +24,8 @@ from ..tools.bill import rule_turn as bill_rule_turn
 from ..tools.card import rule_turn as card_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
+from ..tools.wealth import rule_turn as wealth_rule_turn
+from ..tools.wealth import submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
@@ -294,6 +296,8 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         return prefix + _apply(ctx, bill_rule_turn(ctx, intent.intent, text)), "rule"
     if (reply := card_rule_turn(ctx, intent, text)) is not None:  # 卡片意图，以及「锁哪张卡」这类追问的回答
         return prefix + reply, "rule"
+    if (reply := wealth_rule_turn(ctx, intent, text)) is not None:  # 理财意图，以及「买多少」「赎回多少」追问的回答
+        return prefix + reply, "rule"
     return prefix + help_text(), "rule"
 
 
@@ -304,6 +308,8 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 
 
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
+    if selection.get("type") == "risk_answers":  # 理财（WS5）：问卷卡回传用户逐题点选的答案
+        return _apply(ctx, submit_quiz(ctx, selection))
     if selection.get("type") == "plan":  # 计划卡的按钮（WS7）
         return planner.selection_turn(ctx, selection)
     pq = (ctx.session.state or {}).get("pending_question") or {}
