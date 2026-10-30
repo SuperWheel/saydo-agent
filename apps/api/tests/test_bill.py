@@ -334,6 +334,7 @@ def test_period_parsing():
 def test_bill_tools_are_read_only_and_listed_in_help(client):
     from app.tools import REGISTRY
     bills = [s for s in REGISTRY.values() if s.domain == "bill"]
-    assert len(bills) == 4 and all(not s.side_effect and s.base_risk == 0 for s in bills)
+    assert {"bill.query", "bill.categories", "bill.anomalies", "bill.report"} <= {s.name for s in bills}
+    assert all(not s.side_effect and s.base_risk == 0 for s in bills)
     r = say(client, "你能做什么")
     assert "分析账单" in r["reply"]["text"]  # 帮助语按业务域概括

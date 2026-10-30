@@ -21,6 +21,7 @@ import WealthQuizCard from './cards/WealthQuizCard.vue'
 import WealthRecommendCard from './cards/WealthRecommendCard.vue'
 import SubGuideCard from './cards/SubGuideCard.vue'
 import SubscriptionCard from './cards/SubscriptionCard.vue'
+import AnalysisCard from './cards/AnalysisCard.vue'
 
 const CARDS = {
   confirm: ConfirmCard,
@@ -44,6 +45,7 @@ const CARDS = {
   sub_overview: SubscriptionCard,
   sub_upcoming: SubscriptionCard,
   sub_guide: SubGuideCard,
+  bill_analysis: AnalysisCard,
 }
 
 defineProps({ card: { type: Object, required: true } })
