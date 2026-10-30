@@ -82,7 +82,8 @@ def quote(category: str, *, for_whom: str = "", delivery_date: date, at: datetim
         return None
     pick = next((i for i in items if any(w in for_whom for w in i.for_whom)), None)
     pick = pick or next((i for i in items if not i.for_whom), items[0])
-    qid = f"Q{pick.sku}-{at:%Y%m%d%H%M}-{delivery_date:%Y%m%d}"
+    # 每段数字都不到 8 位：发给模型前的脱敏会把 8 位以上的数字串当卡号打码，单号就对不上了
+    qid = f"Q{pick.sku}-{at:%y%m%dT%H%M}-{delivery_date:%y%m%d}"
     return Quote(qid, SHOPS[pick.shop_id], pick, at, delivery_date)
 
 
@@ -90,8 +91,8 @@ def lookup_quote(quote_id: str) -> Quote | None:
     """按报价单号还原报价。格式不对、商品不存在都返回 None；是否过期由调用方按当前时间判断。"""
     try:
         sku, quoted, delivery = quote_id.removeprefix("Q").split("-")
-        quoted_at = datetime.strptime(quoted, "%Y%m%d%H%M")
-        delivery_date = datetime.strptime(delivery, "%Y%m%d").date()
+        quoted_at = datetime.strptime(quoted, "%y%m%dT%H%M")
+        delivery_date = datetime.strptime(delivery, "%y%m%d").date()
     except ValueError:
         return None
     item = next((i for i in CATALOG if i.sku == sku), None)

@@ -249,7 +249,8 @@ def category_of(word: str) -> str | None:
 @bank_tool(
     name="merchant.quote", domain=DOMAIN, base_risk=Risk.GREEN,
     description="向合作花店或蛋糕店询价：按收礼人挑一件商品，返回价格、配送时段、退款条件和报价单号 quote_id"
-                "（2 小时内有效）。只读，不会下单。",
+                "（2 小时内有效）。只读，不会下单。用户已经说了要订 / 要买时，询价后同一轮接着调用 order_propose 出确认卡，"
+                "不要先问「要下单吗」：确认卡就是让用户确认的。",
     capability="给花店、蛋糕店询价",
     parameters={"type": "object", "properties": {
         "category": {"type": "string", "enum": ["flower", "cake"], "description": "flower 鲜花 / cake 蛋糕"},

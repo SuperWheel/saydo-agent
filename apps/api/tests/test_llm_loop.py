@@ -55,6 +55,13 @@ def test_phantom_card_falls_back_to_rules(llm_client, fake, claim):
     assert "grounding_failed" in events
 
 
+def test_phantom_order_card_falls_back_to_shop_rules(llm_client, fake):
+    """订花这类单步请求的规则在规划器里：模型只询了价就说出了确认卡，也要由规则出订单确认卡。"""
+    f = fake(tool("merchant_quote", category="flower", for_whom="我妈"), text("已为您生成订花确认卡，请核对。"))
+    r = say(llm_client, "帮我订一束花送我妈")
+    assert r["reply"]["source"] == "rule" and len(f.calls) == 2
+    assert [c["type"] for c in r["cards"]] == ["confirm"]
+
 def test_amount_not_from_user_is_rejected(llm_client, fake):
     fake(tool("transfer_propose", payee_hint="我妈", amount_text="5000"), text("好的"))
     r = say(llm_client, "给我妈转500")

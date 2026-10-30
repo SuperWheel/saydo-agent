@@ -94,7 +94,8 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
         except LLMError as e:
             audit.record(db, trace_id, "llm_error", {"error": str(e)[:300]}, session.id)
             out = (_template_reply(ctx.cards), "template") if ctx.cards else None
-        text_out, source = out or _rule_turn(ctx, guard)
+        # 模型这轮作废（报错、虚构卡片）时退回规则：订花、心愿罐这类单步请求的规则在规划器里
+        text_out, source = out or planner.route(ctx, guard, None) or _rule_turn(ctx, guard)
     else:
         text_out, source = _rule_turn(ctx, guard)
 

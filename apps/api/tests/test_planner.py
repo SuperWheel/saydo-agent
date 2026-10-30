@@ -69,7 +69,7 @@ def test_rejects_amount_not_from_user():
 
 def test_rejects_literal_ids():
     """报价单号、心愿罐编号只能引用前序步骤的结果，模型不能自己填。"""
-    raw = with_step(2, args={"quote_id": "QF102-202611041000-20261106", "pot_id": "{{s1.pot_id}}"})
+    raw = with_step(2, args={"quote_id": "QF102-261104T1000-261106", "pot_id": "{{s1.pot_id}}"})
     assert any("只能引用前序步骤" in r for r in reasons(raw))
 
 

@@ -187,3 +187,14 @@ def test_undo_lock_before_confirm_cancels_card(client):
     r = say(client, "撤销锁定", r["session_id"])
     assert r["cards"][0]["type"] == "notice" and "没有发生资金变动" in r["reply"]["text"]
     assert confirm(client, c).status_code == 409 and balance(client) == BALANCE
+
+
+def test_quote_id_survives_masking():
+    """报价单号要原样经过发给模型前的脱敏，否则模型照抄回来的单号查不到报价。"""
+    from app.core_mock import shops
+    from app.security import mask_pii
+
+    q = shops.quote("flower", for_whom="我妈", delivery_date=datetime(2026, 11, 6).date(), at=datetime(2026, 11, 4, 10, 0))
+    assert mask_pii(q.quote_id) == q.quote_id
+    back = shops.lookup_quote(q.quote_id)
+    assert back is not None and back.item.sku == q.item.sku and back.quoted_at == datetime(2026, 11, 4, 10, 0)
