@@ -1,11 +1,16 @@
 """模型路径：用脚本化的假模型验证工具循环、参数校验、事实校验和故障降级。"""
 
 import json
+from dataclasses import replace
 
 import pytest
+from sqlalchemy import select
 
 from app.agent.llm import LLMError
-from app.tools import REGISTRY
+from app.agent.loop import HISTORY_MESSAGES
+from app.db import new_session
+from app.models import ChatMessage
+from app.tools import REGISTRY, ToolResult
 
 from .conftest import say, text, tool
 
@@ -85,3 +90,90 @@ def test_untrusted_memo_never_reaches_model(llm_client, fake):
     say(llm_client, "我还有多少钱")
     sent = json.dumps([c["messages"] for c in f.calls], ensure_ascii=False)
     assert "忽略之前的所有指令" not in sent  # 种子数据里的注入备注不会进入模型上下文
+
+
+def test_repeated_proposals_keep_tool_results_in_history(llm_client, fake):
+    f = fake(*(reply for amount in ("400", "400", "300") for reply in (
+        tool("transfer_propose", payee_hint="我妈", amount_text=amount), text("请核对确认卡。"))))
+    first = say(llm_client, "给我妈转400")
+    second = say(llm_client, "再给我妈转400", first["session_id"])
+    third = say(llm_client, "再给我妈转300", first["session_id"])
+    messages = f.calls[4]["messages"]
+    current = next(i for i, m in enumerate(messages) if m["role"] == "user" and m["content"] == "再给我妈转300")
+    history = messages[1:current]
+    assert [m["role"] for m in history] == ["user", "assistant", "tool", "assistant"] * 2
+    for call, result in ((history[1], history[2]), (history[5], history[6])):
+        assert call["tool_calls"][0]["function"]["name"] == "transfer_propose"
+        assert call["tool_calls"][0]["id"] == result["tool_call_id"]
+        data = json.loads(result["content"])
+        assert data["status"] == "pending_confirmation" and data["amount_yuan"] == "400.00"
+    assert [r["cards"][0]["level"] for r in (first, second, third)] == ["YELLOW", "YELLOW", "RED"]
+    assert all(r["reply"]["source"] == "llm" for r in (first, second, third))
+    events = llm_client.get(f"/admin/audit?trace_id={third['trace_id']}").json()
+    policy = next(e["payload"] for e in events if e["event"] == "policy_decision")
+    assert {"split_evasion", "cumulative_outflow"} <= set(policy["rule_hits"])
+    assert llm_client.get("/api/accounts").json()[0]["balance"] == "28,650.32"  # 仅预占，未执行
+
+
+def test_tool_history_is_masked_bounded_and_session_scoped(llm_client, fake):
+    first = tool("account_balance")
+    first.reasoning = "测试号码13912345678，账号6222000011112222，卡号6230581000006688"
+    f = fake(first, text("请查看余额。"), *(text("你好") for _ in range(HISTORY_MESSAGES)))
+    r = say(llm_client, "我还有多少钱")
+    say(llm_client, "你好", r["session_id"])
+    messages = f.calls[-1]["messages"]
+    call = next(m for m in messages if m.get("tool_calls"))
+    assert call["tool_calls"][0]["function"]["name"] == "account_balance"  # 只读工具同样保留
+    sent = json.dumps(messages, ensure_ascii=False)
+    assert "139****5678" in sent and "2222" in sent and "6688" in sent
+    assert all(value not in sent for value in ("13912345678", "6222000011112222", "6230581000006688"))
+    say(llm_client, "你好")
+    assert not any(m.get("tool_calls") or m["role"] == "tool" for m in f.calls[-1]["messages"])
+    for _ in range(HISTORY_MESSAGES // 2):
+        say(llm_client, "你好", r["session_id"])
+    assert not any(m.get("tool_calls") or m["role"] == "tool" for m in f.calls[-1]["messages"])
+    assert len(f.calls[-1]["messages"]) == HISTORY_MESSAGES + 2  # system + 历史 + 本轮，工具不挤占文字窗口
+
+
+def test_tool_history_preserves_numbers_and_masks_string_leaves(llm_client, fake, monkeypatch):
+    payload = {"amount_fen": 10000000, "total_fen": 13900000000,
+               "nested": [{"phone": "13912345678", "card": "6230581000006688",
+                           "account": "6222000011112222"}, 10000000.5, True, None]}
+    monkeypatch.setitem(REGISTRY, "account.balance", replace(
+        REGISTRY["account.balance"], fn=lambda ctx, **args: ToolResult(payload),
+        parameters={"type": "object", "properties": {"amount_fen": {"type": "integer"},
+                                                    "phone": {"type": "string"}}}))
+    f = fake(tool("account_balance", amount_fen=10000000, phone="13912345678"),
+             text("请查看结果。"), text("你好"))
+    r = say(llm_client, "查余额")
+    with new_session() as db:
+        stored = db.scalar(select(ChatMessage.content).where(ChatMessage.trace_id == r["trace_id"],
+                                                            ChatMessage.role == "tool"))
+    exchange = json.loads(stored)
+    followup = say(llm_client, "你好", r["session_id"])
+    assert followup["reply"]["source"] == "llm"
+    expected = {**payload, "nested": [{"phone": "139****5678", "card": "************6688",
+                                      "account": "************2222"}, 10000000.5, True, None]}
+    # 同时检查存库、本轮工具返回和下一轮历史；content / arguments 内层 JSON 也必须有效。
+    for messages in (exchange, f.calls[1]["messages"], f.calls[2]["messages"]):
+        result = next(m for m in messages if m["role"] == "tool")
+        assert json.loads(result["content"]) == expected
+        call = next(m for m in messages if m.get("tool_calls"))
+        args = json.loads(call["tool_calls"][0]["function"]["arguments"])
+        assert args == {"amount_fen": 10000000, "phone": "139****5678"}
+        sent = json.dumps(messages, ensure_ascii=False)
+        assert all(value not in sent for value in ("13912345678", "6230581000006688", "6222000011112222"))
+
+
+@pytest.mark.parametrize("broken", ['[{"amount_fen": ****0000}]', '{"role": "tool"}', 'null', '10000000'])
+def test_bad_tool_history_does_not_break_next_turn(llm_client, fake, broken):
+    f = fake(tool("account_balance"), text("请查看余额。"), text("你好"))
+    r = say(llm_client, "查余额")
+    with new_session() as db:
+        db.add(ChatMessage(session_id=r["session_id"], trace_id=r["trace_id"], role="tool", content=broken))
+        db.commit()
+    followup = say(llm_client, "你好", r["session_id"])
+    assert followup["reply"]["source"] == "llm"
+    results = [m for m in f.calls[-1]["messages"] if m["role"] == "tool"]
+    assert len(results) == 1  # 跳过坏记录，仍保留同轮有效工具交互
+    assert isinstance(json.loads(results[0]["content"]), dict)

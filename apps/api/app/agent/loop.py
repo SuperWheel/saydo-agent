@@ -98,10 +98,57 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
 
 # ---------- 模型路径 ----------
 
+def _mask_strings(value):
+    """只脱敏字符串叶子，保留金额等数字的值和 JSON 类型。"""
+    if isinstance(value, dict):
+        return {k: _mask_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_strings(v) for v in value]
+    return mask_pii(value) if isinstance(value, str) else value
+
+
+def _mask_json_text(raw: str) -> str:
+    try:
+        return json.dumps(_mask_strings(json.loads(raw)), ensure_ascii=False)
+    except (ValueError, TypeError):
+        return mask_pii(raw)  # 模型可能给出非法参数 JSON，保留原有工具错误处理
+
+
+def _masked_exchange(messages: list[dict]) -> list[dict]:
+    masked = _mask_strings(messages)
+    for original, message in zip(messages, masked):
+        # 协议里的这两个字段也是 JSON 文本，须解析后脱敏，不能当普通字符串处理。
+        if original["role"] == "tool":
+            message["content"] = _mask_json_text(original["content"])
+        for call, masked_call in zip(original.get("tool_calls", []), message.get("tool_calls", [])):
+            masked_call["function"]["arguments"] = _mask_json_text(call["function"]["arguments"])
+    return masked
+
+
 def _history(db: Session, session_id: str) -> list[dict]:
-    rows = db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id)
+    rows = db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id,
+                                               ChatMessage.role.in_(("user", "assistant")))
                       .order_by(ChatMessage.id.desc()).limit(HISTORY_MESSAGES + 1)).all()
-    return [{"role": m.role, "content": mask_pii(m.content)} for m in reversed(rows[1:])]  # rows[0] 是本轮用户消息
+    rows = list(reversed(rows[1:]))  # rows[0] 是本轮用户消息
+    # 按完整轮次补回真实工具交互，否则历史只剩「已生成卡片」的文字，模型容易照抄而不调用工具。
+    exchanges: dict[str, list[dict]] = {}
+    traces = [m.trace_id for m in rows if m.role == "assistant" and m.trace_id]
+    for m in db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id,
+                                                ChatMessage.role == "tool", ChatMessage.trace_id.in_(traces))
+                        .order_by(ChatMessage.id)):
+        try:
+            exchange = json.loads(m.content)
+        except (ValueError, TypeError):
+            continue  # 旧版本可能留下损坏的 JSON，不让一条坏记录阻断整个会话
+        if not isinstance(exchange, list):
+            continue
+        exchanges.setdefault(m.trace_id, []).extend(exchange)
+    messages = []
+    for m in rows:
+        if m.role == "assistant":
+            messages.extend(exchanges.get(m.trace_id, []))
+        messages.append({"role": m.role, "content": mask_pii(m.content)})
+    return messages
 
 
 def _run_tool_call(ctx: ToolContext, tc) -> ToolResult:
@@ -147,6 +194,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
                      "tool_calls": [tc.model_dump(exclude_none=True) for tc in reply.tool_calls]}
         if reply.reasoning:  # GLM 思考模式：交错思考 + 工具调用时必须把思考内容随工具结果一起带回
             assistant["reasoning_content"] = reply.reasoning
+        start = len(messages)
         messages.append(assistant)
         for tc in reply.tool_calls:
             result = _run_tool_call(ctx, tc)
@@ -154,6 +202,10 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
                 ctx.cards.append(result.card)
             datas.append(result.data)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result.data, ensure_ascii=False)})
+        # 一组调用及结果整体保存，不影响用户/助手文字的历史窗口；完整账号、卡号、手机号不出域。
+        messages[start:] = _masked_exchange(messages[start:])
+        db.add(ChatMessage(session_id=ctx.session.id, role="tool", trace_id=ctx.trace_id,
+                           content=json.dumps(messages[start:], ensure_ascii=False)))
 
     if not final:
         return _template_reply(ctx.cards), "template"
