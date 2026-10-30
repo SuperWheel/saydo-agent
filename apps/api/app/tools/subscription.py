@@ -11,7 +11,7 @@
 """
 
 import re
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

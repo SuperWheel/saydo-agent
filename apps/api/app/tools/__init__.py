@@ -15,8 +15,7 @@ from ..policy import Risk
 
 # 业务域在帮助语里的叫法，也是帮助语的先后顺序。新业务域在这里加一行；没加的用该域第一个工具的 capability，排在最后
 DOMAINS = {"account": "查余额", "transfer": "转账和 AA 收款", "bill": "分析账单", "card": "管理银行卡",
-           "automation": "管理心愿罐、订花订蛋糕和定时转账", "wealth": "理财测评、推荐和申购赎回",
-           "subscription": "管理订阅和自动扣费"}
+           "wealth": "推荐和买卖理财", "subscription": "管理订阅扣费", "automation": "订花订蛋糕、存心愿罐和定时转账"}
 
 
 @dataclass(frozen=True)
