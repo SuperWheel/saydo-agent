@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from .channels import wecom
 from .config import get_settings
 from .core_mock.seed import seed
 from .db import Base, init_engine, new_session
@@ -25,7 +26,12 @@ def create_app() -> FastAPI:
         Base.metadata.create_all(engine)
         with new_session() as db:
             seed(db)
+        bot = wecom.from_settings(get_settings())  # 企业微信渠道（可选）：没配 BotID / Secret 就不启动
+        if bot:
+            bot.start()
         yield
+        if bot:
+            await bot.stop()
 
     app = FastAPI(title="言行 SayDo Agent", version="0.1.0-m0", lifespan=lifespan)
     app.include_router(api)

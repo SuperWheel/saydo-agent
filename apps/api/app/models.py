@@ -101,6 +101,19 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class ImBinding(Base):
+    """IM 账号（如企业微信 userid）与银行用户的绑定，以及这个账号在 IM 里的会话。
+    演示环境按配置自动绑定；真实环境应由用户在 App 内经 OAuth 授权后写入（见 channels/__init__.py）。"""
+
+    __tablename__ = "im_bindings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[str] = mapped_column(String(16))  # wecom
+    external_id: Mapped[str] = mapped_column(String(128), index=True)  # 渠道里的用户标识
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    session_id: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class PendingAction(Base):
     """待确认动作。确认卡、验证码、执行令牌都绑定它的 digest。"""
 

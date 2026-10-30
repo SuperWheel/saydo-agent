@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     action_ttl_s: int = 120  # 确认卡有效期
     token_ttl_s: int = 60  # 执行令牌有效期
     otp_window_s: int = 300  # 短信验证码有效期
+    app_h5_url: str = "http://127.0.0.1:5173"  # IM 里需要确认的操作，引导用户到这个地址的言行 App 办理
+
+    # 企业微信智能机器人（长连接模式，channels/wecom.py）。BotID 和 Secret 都填了才启动
+    wecom_bot_id: str = ""
+    wecom_bot_secret: str = ""
+    wecom_ws_url: str = "wss://openws.work.weixin.qq.com"
+    wecom_bind_user_id: int | None = None  # 企业微信用户默认绑定到哪个演示用户；不填用 demo_user_id
+    wecom_allowed_users: str = ""  # 逗号分隔的企业微信 userid 白名单；空 = 企业内成员都可以用
 
     @model_validator(mode="after")
     def _apply_provider(self) -> "Settings":
@@ -75,6 +83,10 @@ class Settings(BaseSettings):
     @property
     def llm_ready(self) -> bool:
         return self.llm_enabled and bool(self.llm_api_key)
+
+    @property
+    def wecom_ready(self) -> bool:
+        return bool(self.wecom_bot_id.strip() and self.wecom_bot_secret.strip())
 
 
 @lru_cache
