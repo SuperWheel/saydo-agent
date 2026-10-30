@@ -13,6 +13,7 @@ import NoticeCard from './cards/NoticeCard.vue'
 import ReceiptCard from './cards/ReceiptCard.vue'
 import ReportCard from './cards/ReportCard.vue'
 import TxnListCard from './cards/TxnListCard.vue'
+import AnalysisCard from './cards/AnalysisCard.vue'
 
 const CARDS = {
   confirm: ConfirmCard,
@@ -27,6 +28,7 @@ const CARDS = {
   bill_anomalies: AnomalyCard,
   bill_report: ReportCard,
   card_list: CardListCard,
+  bill_analysis: AnalysisCard,
 }
 
 defineProps({ card: { type: Object, required: true } })

@@ -21,6 +21,7 @@ from ..security import breaker, inspect, mask_pii
 from ..tools import ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance
 from ..tools.bill import rule_turn as bill_rule_turn
+from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
 from ..tools.card import rule_turn as card_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
@@ -289,6 +290,8 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         return prefix + _apply(ctx, bill_rule_turn(ctx, intent.intent, text)), "rule"
     if (reply := card_rule_turn(ctx, intent, text)) is not None:  # 卡片意图，以及「锁哪张卡」这类追问的回答
         return prefix + reply, "rule"
+    if intent.intent == "adhoc_analysis":
+        return prefix + _apply(ctx, adhoc_rule_turn(ctx, text)), "rule"
     return prefix + help_text(), "rule"
 
 

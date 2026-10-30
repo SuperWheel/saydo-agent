@@ -168,3 +168,10 @@ def _card_intent(text: str) -> RuleIntent | None:
     if _CARD_LIST.search(text):
         return RuleIntent("card", {"op": "list", "card_hint": hint})
     return None
+
+
+# ---------- 自由分析（WS8）：固定账单工具答不了的开放问题。规则模式写不出分析代码，只回模板 ----------
+# 要同时有「花钱」和「比较 / 趋势」的说法；排在其他账单问句之后，不碰限额、转账
+_BILL.append(("adhoc_analysis", re.compile(
+    r"^(?!.*(限额|额度|转))(?=.*(花|消费|支出|开销|外卖|咖啡))"
+    r"(?=.*(趋势|走势|工作日|周末|比一比|对比|规律|平均每|每个?月|每周|变化|时段|几点))")))
