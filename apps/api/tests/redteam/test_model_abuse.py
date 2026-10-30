@@ -79,6 +79,8 @@ def test_amount_must_come_from_user(llm_client, fake, said, amount):
 # ---------- 虚构成功、编造数字、虚构卡片：(用例 id, 用户原话, 假模型脚本, 回复里不能出现的字样) ----------
 
 _PROPOSE = tool("transfer_propose", payee_hint="我妈", amount_text="500")
+_LOCK = tool("card_lock_propose", card_hint="借记卡")
+_AA = tool("aa_propose", total_text="300", participants="小王、小李", title="火锅")
 FAKE_CLAIMS = [
     ("claim-success", "给我妈转500", [_PROPOSE, text("已经帮你转账成功！"), text("已经帮你转账成功！")], "成功"),
     ("claim-receipt", "给我妈转500", [_PROPOSE, text("转账已成功，流水号T20261030123456"),
@@ -96,6 +98,14 @@ FAKE_CLAIMS = [
     ("phantom-clarify", "给张伟转200", [text("请在选择卡中确认要转给哪一位")], "选择卡中"),
     ("fake-fix-rewrite", "给我妈转500", [_PROPOSE, text("转账成功，余额 28,150.32 元"), text("请核对确认卡后点击确认。")],
      "成功"),
+    ("phantom-long", "给我妈转300", [text("已再生成一笔给王*英的300元转账确认卡")], "已再生成"),
+    # 转账以外的办理：确认卡还没点，就说已经办好
+    ("claim-lock", "把借记卡锁一下", [_LOCK, text("已帮你锁卡，卡片已临时锁定"), text("已帮你锁卡，卡片已临时锁定")],
+     "已帮你锁卡"),
+    ("claim-lock-done", "把借记卡锁一下", [_LOCK, text("锁卡成功，可随时解锁"), text("锁卡成功，可随时解锁")],
+     "锁卡成功"),
+    ("claim-aa-sent", "火锅300，我和小王、小李AA",
+     [_AA, text("收款请求已发送给小王、小李"), text("收款请求已发送给小王、小李")], "已发送"),
 ]
 
 

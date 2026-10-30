@@ -212,17 +212,21 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     # 用户本轮话里的金额也算有据（复述「转 3000 元」不是编造），其余数字只能来自工具结果
     said = collect_facts([{"amount_fen": f} for f in amounts_in(text)])
     facts = collect_facts(datas) | collect_facts(ctx.cards) | _context_facts() | said
-    g = check(final, facts, executed=False, has_card=bool(ctx.cards))  # M0 里对话轮次本身从不执行转账
+    # 对话轮次本身从不执行办理；本轮只有查询类卡片时，「已锁定」这类说法可能是在讲状态
+    kinds = {c["type"] for c in ctx.cards}
+    opts = {"executed": False, "has_card": bool(kinds),
+            "status_only": bool(kinds) and not kinds & {"confirm", "clarify"}}
+    g = check(final, facts, **opts)
     if g.ok:
         return final, "llm"
     audit.record(db, ctx.trace_id, "grounding_failed", {"text": final, "problem": g.describe()}, ctx.session.id)
     if g.phantom_card:
         return None  # 模型说出了卡片却没调用工具，重写文字也变不出卡片：这一轮由规则引擎确定性地出卡
     messages += [{"role": "assistant", "content": final},
-                 {"role": "user", "content": f"[系统校验] 上一条回复有问题：{g.describe()}。请只使用工具结果里的数字重写，并且不要声称已经完成转账。"}]
+                 {"role": "user", "content": f"[系统校验] 上一条回复有问题：{g.describe()}。请只使用工具结果里的数字重写，并且不要声称已经办理完成（转账、锁卡等都要用户确认后才执行）。"}]
     db.commit()
     retry = llm.chat(messages, tools=tools, tool_choice="none").content.strip()
-    g2 = check(retry, facts, executed=False, has_card=bool(ctx.cards))
+    g2 = check(retry, facts, **opts)
     audit.record(db, ctx.trace_id, "grounding_retry", {"text": retry, "ok": g2.ok, "problem": g2.describe()}, ctx.session.id)
     if retry and g2.ok:
         return retry, "llm"
