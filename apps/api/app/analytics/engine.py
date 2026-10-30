@@ -97,6 +97,9 @@ def load(db: Session, user_id: int, start: datetime, end: datetime, *,
             name = _mask_name(t.counterparty)
             out.append(Txn(**base, kind=KIND_INCOME, category=cat, cat_source="交易码", party=name,
                            display=quarantine.display_name(t.counterparty), merchant_key=None))
+        elif t.category == "理财":  # 理财申购（WS5）：本人资金换成理财份额，不算消费（技术文档 §7.4）
+            out.append(Txn(**base, kind=KIND_TRANSFER, category="理财", cat_source="交易码", party="理财申购",
+                           display=quarantine.display_name(t.counterparty), merchant_key=None))
         elif t.contact_id is not None:
             c = contacts.get(t.contact_id)
             name = f"{c.masked_name}（{c.relation or c.note}）" if c and (c.relation or c.note) else (

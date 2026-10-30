@@ -89,6 +89,8 @@ def rule_intent(text: str) -> RuleIntent:
     for pat in _TRANSFER:
         if m := pat.search(text):
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
+    if wealth := _wealth_intent(text):  # 理财（WS5）：「理财这个月赚了多少」不能被账单的「赚了多少」抢走
+        return wealth
     if bill := next((name for name, pat in _BILL if pat.search(text)), None):  # 账单类问句排在「给我妈转了多少」之前
         return RuleIntent(bill)
     if m := _TRANSFER_NO_AMOUNT.search(text):
@@ -167,4 +169,32 @@ def _card_intent(text: str) -> RuleIntent | None:
                                    "one_time": "一次性" in text})
     if _CARD_LIST.search(text):
         return RuleIntent("card", {"op": "list", "card_hint": hint})
+    return None
+
+
+# ---------- 理财（WS5）：测评、推荐、对比、持仓、申购、赎回。产品名、金额由 tools/wealth.py 的 rule_turn 从原话里取 ----------
+_WM_PRODUCT = re.compile(r"活钱宝|稳盈|年年盈|安享|稳健增利|增利|均衡配置|均衡混合|科技成长|WM0\d")
+_WM_ASSESS = re.compile(r"风险测评|风险评估|测评|风险承受|我的风险等级|评估.{0,4}风险")
+_WM_REDEEM = re.compile(r"赎回|卖(掉|出|了)|取出|提取|撤出")
+_WM_COMPARE = re.compile(r"对比|比较|比一比|哪个好|哪个更|哪个划算|有什么区别|区别|差别")
+_WM_HOLDINGS = re.compile(r"(?<!适合)我的理财|理财.{0,8}(赚|收益|亏|盈利|盈亏|市值)|持仓|(买|持有)的理财|理财账户|(理财|持有).{0,4}(还剩|有多少)")
+_WM_BUY = re.compile(r"申购|认购|购买|买入|(?<!推荐)买(?!什么|哪|啥)|投(?!诉)")
+_WM_RECOMMEND = re.compile(r"推荐.{0,6}(理财|产品)|理财.{0,6}推荐|买什么|买哪|买啥|有什么.{0,4}(理财|产品)|理财产品|闲钱"
+                           r"|有没有.{0,8}(理财|产品)|适合我的|怎么理财|理财.{0,4}(建议|方案)|(钱|资金).{0,6}(放哪|存哪|怎么放|怎么打理)")
+
+
+def _wealth_intent(text: str) -> RuleIntent | None:
+    product = _WM_PRODUCT.search(text)
+    if _WM_ASSESS.search(text):
+        return RuleIntent("wealth", {"op": "assess"})
+    if _WM_REDEEM.search(text) and (product or "理财" in text or "赎回" in text):
+        return RuleIntent("wealth", {"op": "redeem"})
+    if _WM_COMPARE.search(text) and len(set(_WM_PRODUCT.findall(text))) >= 2:
+        return RuleIntent("wealth", {"op": "compare"})
+    if _WM_HOLDINGS.search(text):
+        return RuleIntent("wealth", {"op": "holdings"})
+    if _WM_RECOMMEND.search(text):
+        return RuleIntent("wealth", {"op": "recommend"})
+    if product and _WM_BUY.search(text):
+        return RuleIntent("wealth", {"op": "subscribe"})
     return None

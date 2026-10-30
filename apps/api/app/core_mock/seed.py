@@ -137,6 +137,7 @@ def seed(db: Session) -> None:
         post(db, account=acct, at=at, **e)
     db.commit()
     _seed_cards(db, acct)
+    _seed_wealth(db)
 
 
 # ---------- 卡片（WS3）：借记卡尾号与账户一致，另有一张信用卡 ----------
@@ -157,4 +158,43 @@ def _seed_cards(db: Session, acct: Account) -> None:
     db.add_all(Card(user_id=1, kind=kind, name=name, card_no=no, limits=limits, credit_limit_fen=credit,
                     available_fen=available, account_id=acct.id if kind == "debit" else None)
                for kind, name, no, limits, credit, available in CARDS)
+    db.commit()
+
+
+# ---------- 理财（WS5）：7 款虚构产品覆盖 R1–R5；一条已过期的 C4 测评；3 笔持仓 ----------
+# 演示用：测评已过期，推荐 / 申购前先引导重新测评；持仓里的均衡配置混合（R4）买入不满 30 天且净值回落，赎回会上浮 🔴
+from ..core_mock import wealth as wm  # noqa: E402  共享文件只在末尾追加
+from ..models import RiskProfile, WealthHolding, WealthProduct  # noqa: E402
+
+WEALTH_HOLDINGS = [  # 产品、买入金额（分）、几天前买入
+    ("WM01", 6_000_000, 120),
+    ("WM04", 1_000_000, 40),
+    ("WM06", 500_000, 20),
+]
+
+
+def _seed_wealth(db: Session) -> None:
+    today = now()
+    inception = (today - timedelta(days=wm.INCEPTION_DAYS_AGO)).date()
+    products = {}
+    for (code, name, kind, risk, term, settle, min_fen, bench, sub_fee, red_fee, red_days, model, aliases,
+         intro) in wm.PRODUCTS:
+        products[code] = WealthProduct(
+            code=code, name=name, kind=kind, risk_level=risk, term_days=term, settle_days=settle,
+            min_purchase_fen=min_fen, benchmark_low_bp=bench and bench[0], benchmark_high_bp=bench and bench[1],
+            sub_fee_bp=sub_fee, redeem_fee_bp=red_fee, redeem_fee_days=red_days, nav_model=model,
+            inception_on=inception, aliases=list(aliases), intro=intro)
+    db.add_all(products.values())
+    db.flush()  # 持仓外键指向产品，先落产品
+    assessed = today - timedelta(days=400)
+    db.add(RiskProfile(user_id=1, level=4, score=79, version=wm.QUIZ_VERSION, assessed_at=assessed,
+                       expires_at=assessed + timedelta(days=wm.PROFILE_VALID_DAYS),
+                       answers={"q1": "b", "q2": "c", "q3": "d", "q4": "c", "q5": "d"}))
+    for code, amount, days_ago in WEALTH_HOLDINGS:
+        p, at = products[code], today - timedelta(days=days_ago)
+        fee = wm.bp_of(amount, p.sub_fee_bp)
+        db.add(WealthHolding(
+            user_id=1, product_code=code, principal_fen=amount, purchased_at=at,
+            units_c=wm.units_for(amount - fee, wm.nav_at(p.nav_model, inception, at.date())),
+            matures_on=(at + timedelta(days=p.term_days)).date() if p.term_days else None))
     db.commit()

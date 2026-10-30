@@ -1,5 +1,6 @@
 """事实校验（Grounding Check）：模型回复里的每个数字都要能在本轮工具结果里找到；
-没有成功回执时，不能出现「已转账 / 转账成功 / 已帮你锁卡」之类的断言；本轮没出卡片时，不能说「已生成确认卡」。"""
+没有成功回执时，不能出现「已转账 / 转账成功 / 已帮你锁卡」之类的断言；本轮没出卡片时，不能说「已生成确认卡」；
+任何回复都不能出现「保本」「稳赚」这类承诺本金或收益的说法。"""
 
 import re
 from dataclasses import dataclass, field
@@ -17,7 +18,11 @@ _ACTION_CLAIM = re.compile(
     r"(已经?|成功)(为你|帮你|给你)(把[^。！？\n]{0,12})?"
     r"(锁|冻结|挂失|解锁|解除|解挂|开通|打开|关闭|关掉|调整|调到|调高|调低|调为|调成|提高|降低|修改|申请|办理|开出|发送|发出)"
     r"|(锁卡|锁定|冻结|挂失|解锁|解挂|开通|关闭|调整|修改|申请|开卡|办理)(已经?)?(成功|完成)(?!后)"
-    r"|收款(请求|通知)已经?(发送|发出|发给)")
+    r"|收款(请求|通知)已经?(发送|发出|发给)"
+    # 理财（WS5）：「已为你申购」「赎回成功」「已买入了」「测评结果已保存」
+    r"|(已经?|成功)(为你|帮你|给你)(把[^。！？\n]{0,12})?(申购|认购|购买|买入|买了|赎回|卖出|保存)"
+    r"|(申购|认购|购买|买入|赎回|卖出)(已经?)?(成功|完成)(?!后)|已经?(申购|认购|买入|赎回|卖出)(了|成功)"
+    r"|(测评|评估)结果已经?(保存|生效)")
 # 「已生成确认卡」「请在选择卡中确认」这类说法，同一句之内都算（「已再生成一笔给王*英的300元转账确认卡」）；
 # 单纯提到确认卡（如解释它是什么）不算
 _CARD_CLAIM = re.compile(r"(生成|发起|创建|准备|出具|出示)[^。！？\n]{0,30}(确认卡|选择卡)"
@@ -49,12 +54,24 @@ def collect_facts(obj, out: set[str] | None = None) -> set[str]:
     return out
 
 
+# 理财话术合规（WS5）：不承诺本金或收益（《商业银行理财业务监督管理办法》第二十六条）。
+# 「不保本」「非保本」「不保证本金」是在提示风险，放行；其余说法不论语境一律拦，模板和产品资料里也不用这些词
+_PROMISE = re.compile(r"(?<![不非])保本|稳赚|稳赢|包赚|只赚不赔|无风险|零风险|没有任何风险|没有风险|(?<!不)保证(收益|本金)"
+                      r"|保收益|收益有保障|本金无忧|刚性兑付|刚兑|肯定赚|一定赚|绝对安全|有赚无赔")
+
+
+def promise_words(text: str) -> list[str]:
+    """文字里承诺本金或收益的说法，没有就是空列表。"""
+    return [m.group() for m in _PROMISE.finditer(text or "")]
+
+
 @dataclass
 class Grounding:
     ok: bool
     unsupported: list[str] = field(default_factory=list)
     false_claim: bool = False
     phantom_card: bool = False  # 说出了卡片，但本轮没有生成任何卡片
+    promises: list[str] = field(default_factory=list)  # 「保本」「稳赚」这类承诺收益的说法
 
     def describe(self) -> str:
         parts = []
@@ -64,6 +81,8 @@ class Grounding:
             parts.append("声称已经办理完成（转账、锁卡等），但实际还没有执行")
         if self.phantom_card:
             parts.append("说生成了确认卡或选择卡，但本轮没有调用工具，没有任何卡片")
+        if self.promises:
+            parts.append(f"出现了「{'」「'.join(dict.fromkeys(self.promises))}」这类承诺本金或收益的说法，理财话术不能承诺保本或收益")
         return "；".join(parts)
 
 
@@ -86,5 +105,6 @@ def check(text: str, facts: set[str], *, executed: bool = False, has_card: bool 
             unsupported.append(m.group())
     false_claim = not executed and bool(_CLAIM.search(text) or (not status_only and _ACTION_CLAIM.search(text)))
     phantom_card = not has_card and bool(_CARD_CLAIM.search(text))
-    return Grounding(ok=not unsupported and not false_claim and not phantom_card, unsupported=unsupported,
-                     false_claim=false_claim, phantom_card=phantom_card)
+    promises = promise_words(text)
+    return Grounding(ok=not unsupported and not false_claim and not phantom_card and not promises,
+                     unsupported=unsupported, false_claim=false_claim, phantom_card=phantom_card, promises=promises)

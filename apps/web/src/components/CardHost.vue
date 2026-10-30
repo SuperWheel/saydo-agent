@@ -13,6 +13,10 @@ import NoticeCard from './cards/NoticeCard.vue'
 import ReceiptCard from './cards/ReceiptCard.vue'
 import ReportCard from './cards/ReportCard.vue'
 import TxnListCard from './cards/TxnListCard.vue'
+import WealthCompareCard from './cards/WealthCompareCard.vue'
+import WealthHoldingsCard from './cards/WealthHoldingsCard.vue'
+import WealthQuizCard from './cards/WealthQuizCard.vue'
+import WealthRecommendCard from './cards/WealthRecommendCard.vue'
 
 const CARDS = {
   confirm: ConfirmCard,
@@ -27,6 +31,10 @@ const CARDS = {
   bill_anomalies: AnomalyCard,
   bill_report: ReportCard,
   card_list: CardListCard,
+  wealth_quiz: WealthQuizCard,
+  wealth_recommend: WealthRecommendCard,
+  wealth_compare: WealthCompareCard,
+  wealth_holdings: WealthHoldingsCard,
 }
 
 defineProps({ card: { type: Object, required: true } })
