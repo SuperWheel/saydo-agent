@@ -25,6 +25,7 @@ from ..money import fmt_yuan
 from .periods import Period
 
 KIND_SPEND, KIND_TRANSFER, KIND_INCOME = "消费", "转账", "收入"
+KIND_REFUND = "退款"  # 商户退回的消费款：冲减消费，不算收入
 BASELINE_DAYS = 90
 
 
@@ -92,7 +93,13 @@ def load(db: Session, user_id: int, start: datetime, end: datetime, *,
         flags = sorted(set(quarantine.scan(t.memo)) | set(quarantine.scan(t.merchant)))
         base = dict(id=t.id, txn_no=t.txn_no, at=t.created_at, direction=t.direction, amount_fen=t.amount_fen,
                     untrusted_flags=flags)
-        if t.direction == "in":
+        if t.direction == "in" and t.category == "退款":  # 订单取消退款：按原消费的类目冲减，商户归并键一致
+            reg = quarantine.registered(t.merchant)
+            rule = _spend_rule(t)
+            out.append(Txn(**base, kind=KIND_REFUND, category=rule[0] if rule else "其他", cat_source=rule[1] if rule else "待确认",
+                           party=reg or quarantine.UNREGISTERED, display=quarantine.display_name(t.merchant),
+                           merchant_key=(reg or quarantine.normalize(t.merchant)).lower() or None))
+        elif t.direction == "in":
             cat = "工资" if t.category == "工资" else "转入"
             name = _mask_name(t.counterparty)
             out.append(Txn(**base, kind=KIND_INCOME, category=cat, cat_source="交易码", party=name,
@@ -187,11 +194,12 @@ def comparable(db: Session, user_id: int, period: Period) -> bool:
 # ---------- 聚合 ----------
 
 def totals(txns: list[Txn]) -> dict:
-    s = {KIND_SPEND: 0, KIND_TRANSFER: 0, KIND_INCOME: 0}
+    s = {KIND_SPEND: 0, KIND_TRANSFER: 0, KIND_INCOME: 0, KIND_REFUND: 0}
     for t in txns:
         s[t.kind] += t.amount_fen
-    return {"income_fen": s[KIND_INCOME], "spend_fen": s[KIND_SPEND], "transfer_out_fen": s[KIND_TRANSFER],
-            "net_fen": s[KIND_INCOME] - s[KIND_SPEND] - s[KIND_TRANSFER],
+    spend = s[KIND_SPEND] - s[KIND_REFUND]  # 消费按扣掉退款后的净额
+    return {"income_fen": s[KIND_INCOME], "spend_fen": spend, "transfer_out_fen": s[KIND_TRANSFER],
+            "refund_fen": s[KIND_REFUND], "net_fen": s[KIND_INCOME] - spend - s[KIND_TRANSFER],
             "spend_count": sum(t.kind == KIND_SPEND for t in txns)}
 
 
@@ -201,7 +209,9 @@ def by_category(txns: list[Txn]) -> list[dict]:
         if t.kind == KIND_SPEND:
             agg[t.category][0] += t.amount_fen
             agg[t.category][1] += 1
-    rows = sorted(({"category": c, "amount_fen": a, "count": n} for c, (a, n) in agg.items()),
+        elif t.kind == KIND_REFUND:  # 退款冲减原类目；整类退光的不再出现在占比里
+            agg[t.category][0] -= t.amount_fen
+    rows = sorted(({"category": c, "amount_fen": a, "count": n} for c, (a, n) in agg.items() if a > 0),
                   key=lambda r: (-r["amount_fen"], r["category"]))
     for r, p in zip(rows, permilles([r["amount_fen"] for r in rows])):
         r["permille"] = p
@@ -223,12 +233,15 @@ def pie_slices(rows: list[dict], min_permille: int = 30) -> list[dict]:
 def top_merchants(txns: list[Txn], n: int = 5) -> list[dict]:
     agg: dict[str, dict] = {}
     for t in txns:
-        if t.kind != KIND_SPEND or not t.merchant_key:
+        if t.kind not in (KIND_SPEND, KIND_REFUND) or not t.merchant_key:
             continue
         a = agg.setdefault(t.merchant_key, {"party": t.party, "display": t.display, "amount_fen": 0, "count": 0})
-        a["amount_fen"] += t.amount_fen
-        a["count"] += 1
-    return sorted(agg.values(), key=lambda a: (-a["amount_fen"], a["display"]))[:n]
+        if t.kind == KIND_REFUND:
+            a["amount_fen"] -= t.amount_fen
+        else:
+            a["amount_fen"] += t.amount_fen
+            a["count"] += 1
+    return sorted((a for a in agg.values() if a["amount_fen"] > 0), key=lambda a: (-a["amount_fen"], a["display"]))[:n]
 
 
 # ---------- 异常识别（技术文档 §7.2）----------

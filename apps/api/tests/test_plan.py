@@ -290,3 +290,21 @@ def test_birthday_order_only(client):
     evs = fast_forward(client, plan_of(r)["due_at"])
     flower = card(evs[0])
     assert "玫瑰" in dict(flower["rows"])["商品"]
+
+
+def test_edit_cake_inside_plan_keeps_plan_going(client):
+    """生日计划里蛋糕的确认卡点「修改」换成长寿桃：计划改认新卡，确认后计划照常办完。"""
+    sid, plan = start_birthday(client)
+    ok(client, card(fast_forward(client, plan["due_at"])[0]))
+    cake = card(sync(client, sid))
+    d = cake["edit"]["dates"][0]
+    new = card(say(client, "", sid, selection={"type": "order_edit", "action_id": cake["action_id"], "sku": "C202", "date": d}))
+    assert dict(new["rows"])["商品"] == "6 寸长寿桃蛋糕" and dict(new["rows"])["付款方式"].startswith("心愿罐")
+    with new_session() as db:
+        steps = db.query(TaskPlan).one().steps
+        assert new["action_id"] in [s.get("action_id") for s in steps]
+        assert cake["action_id"] not in [s.get("action_id") for s in steps]
+    ok(client, new)
+    done = sync(client, sid)["cards"][0]
+    assert done["status"] == "done"
+    assert pot_balance() == 50_000 - 19_900 - 16_800

@@ -11,7 +11,7 @@ from datetime import timedelta
 from .. import audit
 from ..agent import quarantine
 from ..analytics import engine, recurring
-from ..analytics.engine import KIND_INCOME, KIND_SPEND, KIND_TRANSFER, Txn
+from ..analytics.engine import KIND_INCOME, KIND_REFUND, KIND_SPEND, KIND_TRANSFER, Txn
 from ..analytics.periods import Period, has_period, parse_period
 from ..cards import SOURCE_CORE
 from ..clock import now
@@ -28,7 +28,8 @@ _PERIOD = {"type": "string", "description": "时间范围，照抄用户原话�
 
 
 def _window(ctx: ToolContext, period: str | None, default: str) -> Period:
-    return parse_period(period, at=now(), default=default)
+    # 区间右开：截止时刻往后放 1 秒，刚刚这一秒入账的交易（下单、退款）也算进「最近」
+    return parse_period(period, at=now() + timedelta(seconds=1), default=default)
 
 
 def _load(ctx: ToolContext, start, end) -> list[Txn]:
@@ -64,7 +65,11 @@ def _period_note(p: Period) -> str:
 
 # ---------- F-BA-02 交易查询 ----------
 
-_KINDS = ("消费", "转账", "收入", "全部")
+_KINDS = ("消费", "支出", "转账", "收入", "全部")
+_KIND_MEMBERS = {  # 每种查询口径包含的交易：消费和支出都带上退款，金额按净额算
+    "消费": (KIND_SPEND, KIND_REFUND), "支出": (KIND_SPEND, KIND_REFUND, KIND_TRANSFER),
+    "转账": (KIND_TRANSFER,), "收入": (KIND_INCOME,),
+}
 
 
 @bank_tool(
@@ -76,7 +81,8 @@ _KINDS = ("消费", "转账", "收入", "全部")
         "period": _PERIOD,
         "keyword": {"type": "string", "description": "商户或收款人，照抄用户原话，如「美团」「星巴克」「我妈」"},
         "category": {"type": "string", "enum": list(SPEND_CATEGORIES), "description": "消费分类，用户提到时才填"},
-        "kind": {"type": "string", "enum": list(_KINDS), "description": "交易类型，默认「消费」；问转账填「转账」，问工资或进账填「收入」"},
+        "kind": {"type": "string", "enum": list(_KINDS), "description": "交易类型，默认「消费」（买东西，含退款冲减）；"
+                 "问「支出」「钱都去哪了」填「支出」（消费 + 转账 + 理财申购）；问转账填「转账」，问工资或进账填「收入」"},
         "min_amount": {"type": "string", "description": "金额下限，照抄用户原话，如「1000」「两千」"},
         "max_amount": {"type": "string", "description": "金额上限，照抄用户原话"},
         "order": {"type": "string", "enum": ["最近", "金额最大"], "description": "排序，默认最近的在前"},
@@ -99,7 +105,7 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
     if kind not in _KINDS or (contact_ids and kind == KIND_SPEND):  # 问的是收款人，就是查转账
         kind = KIND_TRANSFER if contact_ids else KIND_SPEND
     if kind != "全部":
-        txns = [t for t in txns if t.kind == kind]
+        txns = [t for t in txns if t.kind in _KIND_MEMBERS[kind]]
     if category in SPEND_CATEGORIES:
         txns = [t for t in txns if t.category == category]
         filters.append(f"分类：{category}")
@@ -134,10 +140,12 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
     if order == "金额最大":
         txns.sort(key=lambda t: (-t.amount_fen, -t.at.timestamp()))
     else:
-        txns.sort(key=lambda t: t.at, reverse=True)
-    total = sum(t.amount_fen for t in txns)
+        txns.sort(key=lambda t: (t.at, t.id), reverse=True)
+    refunds = sum(t.amount_fen for t in txns if t.kind == KIND_REFUND)
+    total = (sum(t.amount_fen for t in txns if t.direction == "out") - refunds if kind in ("消费", "支出")
+             else sum(t.amount_fen for t in txns))
     shown = txns[:n]
-    label = {"消费": "消费", "转账": "转账", "收入": "收入", "全部": "交易"}[kind]
+    label = {"消费": "消费", "支出": "支出", "转账": "转账", "收入": "收入", "全部": "交易"}[kind]
     conds = [f for f in filters if not f.startswith(("商户：", "收款人：", "关键词："))]
     cond = f"（{'；'.join(conds)}）" if conds else ""
 
@@ -149,6 +157,8 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
                  f"{_short(t)} {_where(t.party)}，{fmt_yuan(t.amount_fen)} 元。")
     else:
         reply = f"{p.label}{subject}共{label} {len(txns)} 笔{cond}，合计 {fmt_yuan(total)} 元。"
+        if refunds:
+            reply = reply.removesuffix("。") + f"（已扣除退款 {fmt_yuan(refunds)} 元）。"
     reply = _period_note(p) + reply
 
     data = {
@@ -405,6 +415,10 @@ def _rule_query_args(text: str) -> dict:
         args["category"] = cat
     if re.search(r"收入|进账|入账|工资|收到|赚了", text):
         args["kind"] = KIND_INCOME
+    elif "kind" not in args and re.search(r"支出|开销|花销|钱都去哪|出账", text):
+        args["kind"] = "支出"
+    elif "kind" not in args and re.search(r"交易|收支", text):
+        args["kind"] = "全部"
     elif "kind" not in args and re.search(r"转账|转出|转了", text):
         args["kind"] = KIND_TRANSFER
     for key, pats in (("min_amount", _MIN), ("max_amount", _MAX)):

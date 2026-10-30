@@ -30,6 +30,7 @@ from ..tools.subscription import rule_turn as sub_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
+from ..tools.automation import edit_order
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
@@ -520,6 +521,8 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
     if selection.get("type") == "risk_answers":  # 理财（WS5）：问卷卡回传用户逐题点选的答案
         return _apply(ctx, submit_quiz(ctx, selection))
+    if selection.get("type") == "order_edit":  # 订单确认卡上「修改」：换商品或送达日期，出新的确认卡
+        return _apply(ctx, edit_order(ctx, selection))
     if selection.get("type") == "wealth_buy":  # 理财产品详情卡上的「申购」：和说出来走同一个提议工具
         return buy_from_card(ctx, selection)
     if selection.get("type") == "plan":  # 计划卡的按钮（WS7）

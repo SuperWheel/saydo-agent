@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from .. import audit
 from ..auth import actions
@@ -312,9 +313,56 @@ def order_propose(ctx: ToolContext, quote_id: str, pot_id: str | None = None) ->
                              summary=f"在{q.shop.name}购买{q.item.name}，{fmt_yuan(price)}元",
                              fields={"shop": q.shop.name, "item": q.item.name, "category": q.shop.category,
                                      "pay_from": "pot" if pot else "debit"})
+    display["edit"] = _edit_options(q, at)
     return propose_action(ctx, tool="order.pay", args=args, display=display,
                           data={"shop": q.shop.name, "item": q.item.name, "price_yuan": fmt_yuan(price),
                                 "pay_from": pay_from})
+
+
+EDIT_DAYS = 14  # 「修改」里可选的送达日期：明天起两周内
+
+
+def _edit_options(q: shops.Quote, at: datetime) -> dict:
+    """确认卡「修改」能改的项：同一类目的商品、送达日期。改完重新报价、出新的确认卡，不在原卡上改。"""
+    first = at.date() + timedelta(days=1)
+    return {"kind": "order", "sku": q.item.sku, "date": f"{q.delivery_date}",
+            "items": [{"sku": i.sku, "name": i.name, "price": fmt_yuan(i.price_fen)} for i in shops.catalog(q.shop.category)],
+            "dates": [f"{first + timedelta(days=k)}" for k in range(EDIT_DAYS)]}
+
+
+def edit_order(ctx: ToolContext, selection: dict) -> ToolResult:
+    """确认卡上「修改」：换商品或送达日期，旧卡作废、出新的确认卡；旧卡属于计划时，计划改认新卡。
+    新卡走同一个下单提议工具，价格按商户目录重新报价，策略、确认和验证都照常。"""
+    db, at = ctx.db, now()
+    old = db.get(PendingAction, str(selection.get("action_id") or ""))
+    if old is None or old.user_id != ctx.user_id or old.tool != "order.pay" or old.status not in actions.ACTIVE:
+        msg = "这张确认卡已经失效，请重新说一下要订什么。"
+        return ToolResult({"status": "edit_invalid", "message": msg}, notice_card(msg, "warning"))
+    category = shops.lookup_quote(old.args["quote_id"]).shop.category
+    item = next((i for i in shops.catalog(category) if i.sku == selection.get("sku")), None)
+    d = _parse_iso_date(selection.get("date"))
+    if item is None or d is None or not at.date() < d <= at.date() + timedelta(days=EDIT_DAYS):
+        msg = "选的商品或日期不可用，请在「修改」里重新选。"
+        return ToolResult({"status": "edit_invalid", "message": msg}, notice_card(msg, "warning"))
+    q = shops.quote_item(item.sku, delivery_date=d, at=at)
+    # 先作废旧卡再出新卡：旧卡占着的当日累计额度要先释放，新卡的定级和「今日累计」才对。新卡没出来（比如超出限额）就整体回滚，旧卡照旧可用
+    sp = db.begin_nested()
+    actions.cancel(db, action_id=old.id, user_id=ctx.user_id)
+    result = order_propose(ctx, q.quote_id, pot_id=old.args.get("pot_id"))
+    if not (result.card and result.card["type"] == "confirm"):
+        sp.rollback()
+        audit.record(db, ctx.trace_id, "action_modify_failed", {"action_id": old.id, "status": result.data.get("status")},
+                     ctx.session.id)
+        return result
+    sp.commit()
+    audit.record(db, ctx.trace_id, "action_modified", {"from": old.id, "to": result.card["action_id"]}, ctx.session.id)
+    for plan in db.scalars(select(TaskPlan).where(TaskPlan.user_id == ctx.user_id, TaskPlan.status.in_(("draft", "running", "waiting")))):
+        for s in plan.steps:
+            if s.get("action_id") == old.id:
+                s["action_id"] = result.card["action_id"]
+                flag_modified(plan, "steps")
+    result.card |= {"void_action_ids": [old.id], "void_reason": "已修改，原确认卡作废，请看下面的新确认卡"}
+    return result
 
 
 def order_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:

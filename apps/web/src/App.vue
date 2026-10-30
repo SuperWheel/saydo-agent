@@ -123,7 +123,7 @@ function onSelect(option) {
 }
 
 function onModify() {
-  showToast('原确认卡已作废，请重新说一遍金额和收款人')
+  showToast('原确认卡已作废，请重新说一遍要办的事，比如改成多少钱、给谁')
   nextTick(() => inputRef.value?.focus())
 }
 

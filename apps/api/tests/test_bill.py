@@ -340,3 +340,56 @@ def test_bill_tools_are_read_only_and_listed_in_help(client):
     assert all(not s.side_effect and s.base_risk == 0 for s in bills)
     r = say(client, "你能做什么")
     assert "分析账单" in r["reply"]["text"]  # 帮助语按业务域概括
+
+
+# ---------- 退款冲减消费；「支出」含转账和理财 ----------
+
+def test_refund_offsets_spend_and_spending_includes_transfers_and_wealth(client):
+    from .conftest import confirm
+    from .helpers import pass_auth
+    before = say(client, "最近花了多少钱")["cards"][0]
+    r = say(client, "帮我订个蛋糕")
+    pass_auth(client, confirm(client, r["cards"][0]).json()["card"])
+    c = say(client, "把蛋糕订单取消", r["session_id"])["cards"][0]
+    assert confirm(client, c).json()["status"] == "succeeded"
+    with new_session() as db:  # 一笔理财申购（转出到理财，不是消费）
+        acct = db.scalars(select(Account).where(Account.kind == "debit")).first()
+        post(db, account=acct, direction="out", amount_fen=100_000, counterparty="理财申购·稳盈30天（虚构）",
+             contra_code="WEALTH:WM02", category="理财", channel="agent")
+        db.commit()
+
+    spend = say(client, "最近花了多少钱")
+    card = spend["cards"][0]
+    top = card["items"][:2]
+    assert [(i["kind"], i["amount"]) for i in top] == [("退款", "+238.00"), ("消费", "-238.00")]
+    assert card["total"] == before["total"] and "已扣除退款 238.00 元" in spend["reply"]["text"]  # 买了又退，净额不变
+
+    out = say(client, "我最近的支出")
+    card = out["cards"][0]
+    kinds = [i["kind"] for i in card["items"][:3]]
+    assert card["kind"] == "支出" and kinds == ["转账", "退款", "消费"]  # 理财申购最新，排第一
+    assert card["items"][0]["category"] == "理财" and card["items"][0]["amount"] == "-1,000.00"
+
+
+def test_refund_is_not_income_and_leaves_categories(client):
+    r = say(client, "帮我订个蛋糕")
+    from .conftest import confirm
+    from .helpers import pass_auth
+    pass_auth(client, confirm(client, r["cards"][0]).json()["card"])
+    with new_session() as db:
+        p = parse_period("近7天", at=now() + timedelta(seconds=1), default="近7天")
+        paid = engine.totals(engine.load(db, 1, p.start, p.end))
+    confirm(client, say(client, "把蛋糕订单取消", r["session_id"])["cards"][0])
+    with new_session() as db:
+        txns = engine.load(db, 1, p.start, now() + timedelta(seconds=1))
+        t = engine.totals(txns)
+        assert t["income_fen"] == paid["income_fen"] and t["refund_fen"] == 23_800
+        assert t["spend_fen"] == paid["spend_fen"] - 23_800
+        assert sum(r["amount_fen"] for r in engine.by_category(txns)) == t["spend_fen"]
+
+
+@pytest.mark.parametrize("utterance,kind", [("我最近的支出", "支出"), ("最近的交易", "全部"), ("最近的消费记录", None)])
+def test_spending_phrases(utterance, kind):
+    from app.tools.bill import _rule_query_args
+    assert rule_intent(utterance).intent == "bill_query"
+    assert _rule_query_args(utterance).get("kind") == kind

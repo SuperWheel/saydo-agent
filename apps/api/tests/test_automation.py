@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from app import clock
 from app.db import new_session
 from app.models import PendingAction, ScheduledTransfer, Transaction, WishPot
@@ -198,3 +200,71 @@ def test_quote_id_survives_masking():
     assert mask_pii(q.quote_id) == q.quote_id
     back = shops.lookup_quote(q.quote_id)
     assert back is not None and back.item.sku == q.item.sku and back.quoted_at == datetime(2026, 11, 4, 10, 0)
+
+
+# ---------- 订单确认卡上「修改」：换商品、换送达日期 ----------
+
+def edit(client, sid: str, c: dict, sku: str, days: int = 3) -> dict:
+    d = (clock.now().date() + timedelta(days=days)).isoformat()
+    return say(client, "", sid, selection={"type": "order_edit", "action_id": c["action_id"], "sku": sku, "date": d})
+
+
+def test_order_card_offers_edit_options(client):
+    c = say(client, "帮我订个蛋糕")["cards"][0]
+    e = c["edit"]
+    assert e["kind"] == "order" and e["sku"] == "C201" and len(e["dates"]) == 14
+    assert [i["sku"] for i in e["items"]] == ["C201", "C202", "C203"]  # 只列同一类目（蛋糕）
+
+
+def test_edit_order_changes_item_and_date(client):
+    r = say(client, "帮我订个蛋糕")
+    old = r["cards"][0]
+    r = edit(client, r["session_id"], old, "C202", days=3)
+    new = r["cards"][0]
+    rows = dict(new["rows"])
+    assert new["type"] == "confirm" and new["action_id"] != old["action_id"] and new["amount"] == "168.00"
+    assert rows["商品"] == "6 寸长寿桃蛋糕" and rows["配送"].startswith(f"{clock.now().date() + timedelta(days=3):%m-%d}")
+    assert new["void_action_ids"] == [old["action_id"]] and "已修改" in new["void_reason"]  # 前端据此给旧卡盖遮罩
+    assert new["today_after"] == "168.00"  # 旧卡占的当日累计已释放，不会算两遍
+    assert confirm(client, old).status_code == 409  # 旧卡已作废，点了也不会付款
+    assert "action_modified" in events(client)
+    out = confirm(client, new).json()
+    from .helpers import pass_auth
+    assert pass_auth(client, out["card"])["status"] == "succeeded"
+    assert balance(client) == fmt(BALANCE, -16_800) and ledger_ok(client)
+
+
+def fmt(balance_text: str, delta_fen: int) -> str:
+    from app.money import fmt_yuan
+    return fmt_yuan(round(float(balance_text.replace(",", "")) * 100) + delta_fen)
+
+
+@pytest.mark.parametrize("sku,days", [("F101", 3), ("C999", 3), ("C202", 0), ("C202", 15)])
+def test_edit_order_rejects_bad_choice_and_keeps_old_card(client, sku, days):
+    r = say(client, "帮我订个蛋糕")
+    old = r["cards"][0]
+    c = edit(client, r["session_id"], old, sku, days)["cards"][0]
+    assert c["type"] == "notice" and "重新选" in c["text"]
+    with new_session() as db:
+        assert db.get(PendingAction, old["action_id"]).status == "pending"
+
+
+def test_edit_order_only_for_own_active_order_card(client):
+    r = say(client, "给我妈转500")
+    transfer = r["cards"][0]
+    c = edit(client, r["session_id"], transfer, "C202")["cards"][0]
+    assert c["type"] == "notice" and "失效" in c["text"]
+
+
+def test_edit_order_rolls_back_when_new_card_fails(client, monkeypatch):
+    """新卡没出来（比如被策略拦下）：旧卡的作废一起回滚，原订单还能确认。"""
+    from app.cards import notice_card
+    from app.tools import ToolResult, automation
+    r = say(client, "帮我订个蛋糕")
+    old = r["cards"][0]
+    monkeypatch.setattr(automation, "order_propose",
+                        lambda ctx, quote_id, pot_id=None: ToolResult({"status": "blocked"}, notice_card("超出限额", "error")))
+    assert edit(client, r["session_id"], old, "C202")["cards"][0]["text"] == "超出限额"
+    with new_session() as db:
+        assert db.get(PendingAction, old["action_id"]).status == "pending"
+    assert "action_modify_failed" in events(client)

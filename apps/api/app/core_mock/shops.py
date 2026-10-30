@@ -87,6 +87,14 @@ def quote(category: str, *, for_whom: str = "", delivery_date: date, at: datetim
     return Quote(qid, SHOPS[pick.shop_id], pick, at, delivery_date)
 
 
+def quote_item(sku: str, *, delivery_date: date, at: datetime) -> Quote | None:
+    """指定商品重新报价（确认卡上「修改」换商品或送达日期时用）。价格仍按目录取。"""
+    item = next((i for i in CATALOG if i.sku == sku), None)
+    if item is None:
+        return None
+    return Quote(f"Q{item.sku}-{at:%y%m%dT%H%M}-{delivery_date:%y%m%d}", SHOPS[item.shop_id], item, at, delivery_date)
+
+
 def lookup_quote(quote_id: str) -> Quote | None:
     """按报价单号还原报价。格式不对、商品不存在都返回 None；是否过期由调用方按当前时间判断。"""
     try:
