@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from .. import audit
 from ..agent import quarantine
-from ..analytics import engine
+from ..analytics import engine, recurring
 from ..analytics.engine import KIND_INCOME, KIND_SPEND, KIND_TRANSFER, Txn
 from ..analytics.periods import Period, has_period, parse_period
 from ..cards import SOURCE_CORE
@@ -315,7 +315,9 @@ def report(ctx: ToolContext, period: str | None = None) -> ToolResult:
     spend_change = engine.change(spend, engine.totals(prev)["spend_fen"], ok)
     rows = _category_rows(cur, prev, ok)
     tops = engine.top_merchants(cur)
-    subs = [t for t in cur if t.kind == KIND_SPEND and t.category == "订阅"]
+    # 订阅口径（WS6）：用订阅识别的结果（同一商户、金额接近、间隔规律），不再把所有自动代扣都算订阅
+    sub_ids = recurring.load_detection(ctx.db, ctx.user_id, now()).txn_ids()
+    subs = [t for t in cur if t.kind == KIND_SPEND and t.id in sub_ids]
     sub_total = sum(t.amount_fen for t in subs)
     found = _anomalies(ctx, p, txns)
     insights = _insights(p, rows, spend_change, found, len(subs), sub_total)
@@ -379,7 +381,7 @@ def _insights(p: Period, rows: list[dict], spend_change: dict, found: list, n_su
     if found:
         out.append(f"有 {len(found)} 笔交易值得核实，见下方异常事件")
     if n_subs:
-        out.append(f"订阅类自动扣费 {n_subs} 笔，合计 {fmt_yuan(sub_total)} 元")
+        out.append(f"订阅扣费 {n_subs} 笔，合计 {fmt_yuan(sub_total)} 元")
     return out[:3]
 
 

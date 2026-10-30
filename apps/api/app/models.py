@@ -252,3 +252,18 @@ class BreakerTrip(Base):
     released_at: Mapped[datetime | None] = mapped_column(DateTime)
     released_by: Mapped[str | None] = mapped_column(String(32))
     release_note: Mapped[str | None] = mapped_column(String(200))
+
+
+class DebitAgreement(Base):
+    """本行代扣 / 免密支付协议（订阅 WS6）。停止后商户不能再从本行账户扣款，但商户侧的订阅（会员自动续费）不受影响。"""
+
+    __tablename__ = "debit_agreements"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    merchant: Mapped[str] = mapped_column(String(64))  # 登记商户规范名（core_mock/merchants.py），按它和流水对上
+    agreement_no: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))  # withhold（代扣 / 自动缴费）/ nopwd（免密支付）
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active / stopped
+    signed_at: Mapped[datetime] = mapped_column(DateTime)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime)

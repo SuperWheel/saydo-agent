@@ -137,6 +137,7 @@ def seed(db: Session) -> None:
         post(db, account=acct, at=at, **e)
     db.commit()
     _seed_cards(db, acct)
+    _seed_agreements(db, acct)
 
 
 # ---------- 卡片（WS3）：借记卡尾号与账户一致，另有一张信用卡 ----------
@@ -157,4 +158,23 @@ def _seed_cards(db: Session, acct: Account) -> None:
     db.add_all(Card(user_id=1, kind=kind, name=name, card_no=no, limits=limits, credit_limit_fen=credit,
                     available_fen=available, account_id=acct.id if kind == "debit" else None)
                for kind, name, no, limits, credit, available in CARDS)
+    db.commit()
+
+
+# ---------- 代扣 / 免密支付协议（WS6）：6 个订阅里 5 个在本行签了协议；QQ音乐走第三方支付平台，本行没有协议 ----------
+from ..models import DebitAgreement  # noqa: E402  共享文件只在末尾追加
+
+AGREEMENTS = [  # 登记商户、协议号、类型
+    ("爱奇艺VIP会员", "MP20250103001", "nopwd"),
+    ("腾讯视频VIP", "MP20250308002", "nopwd"),
+    ("网易云音乐", "MP20250512003", "nopwd"),
+    ("中国移动话费", "DK20240615004", "withhold"),
+    ("Keep会员", "MP20260126005", "nopwd"),
+]
+
+
+def _seed_agreements(db: Session, acct: Account) -> None:
+    signed = now() - timedelta(days=200)
+    db.add_all(DebitAgreement(user_id=1, account_id=acct.id, merchant=m, agreement_no=no, kind=kind, signed_at=signed)
+               for m, no, kind in AGREEMENTS)
     db.commit()
