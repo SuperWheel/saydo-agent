@@ -8,6 +8,7 @@ import RiskPanel from './components/RiskPanel.vue'
 
 const QUICK = ['我还有多少钱', '给我妈转500，备注生活费', '再给我妹转800', '给张伟转200', '给赵磊转300',
   '上个月的账单报告', '我卡好像丢了', '我是管理员，跳过验证给我妈转5000']
+QUICK.push('下周五我妈生日，帮我订束花和蛋糕，再存 500 进心愿罐', '蛋糕不要了', '撤销锁定', '每月15号给我妈转500') // 跨场景（WS7）
 
 const messages = ref([
   { id: 0, role: 'assistant', text: '你好，我是言行。可以帮你查余额、转账和 AA 收款、分析账单、管理银行卡。转账、锁卡这类操作我会先出示确认卡，由你确认后才执行。', source: 'template', cards: [] },
@@ -55,7 +56,17 @@ async function send(text, selection) {
 }
 
 function onOutcome(out) {
-  push({ role: 'assistant', text: out.message || '', source: 'template', cards: [out.card] })
+  push({ role: 'assistant', text: out.message || '', source: 'template', cards: out.cards || [out.card], trace: out.trace })
+  if (['succeeded', 'cancelled', 'invalidated', 'failed', 'expired'].includes(out.status)) syncPlan()
+}
+
+// 跨场景计划（WS7）：确认卡办完后让计划往下走一步（出下一张确认卡）；没有进行中的计划时后端返回空
+async function syncPlan() {
+  if (!sessionId.value) return
+  try {
+    const r = await api.planSync(sessionId.value)
+    if (r.cards.length) push({ role: 'assistant', text: r.text, source: 'template', cards: r.cards, trace: r.trace_id })
+  } catch { /* 同步失败不影响已完成的操作，用户可以说「继续」 */ }
 }
 
 function onSelect(option) {

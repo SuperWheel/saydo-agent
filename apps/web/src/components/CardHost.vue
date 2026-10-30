@@ -10,6 +10,8 @@ import CategoryCard from './cards/CategoryCard.vue'
 import ClarifyCard from './cards/ClarifyCard.vue'
 import ConfirmCard from './cards/ConfirmCard.vue'
 import NoticeCard from './cards/NoticeCard.vue'
+import AutomationCard from './cards/AutomationCard.vue'
+import PlanCard from './cards/PlanCard.vue'
 import ReceiptCard from './cards/ReceiptCard.vue'
 import ReportCard from './cards/ReportCard.vue'
 import TxnListCard from './cards/TxnListCard.vue'
@@ -27,6 +29,8 @@ const CARDS = {
   bill_anomalies: AnomalyCard,
   bill_report: ReportCard,
   card_list: CardListCard,
+  plan: PlanCard,
+  automation: AutomationCard,
 }
 
 defineProps({ card: { type: Object, required: true } })
