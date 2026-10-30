@@ -29,6 +29,7 @@ labels:
   wealth: 理财业务
   subscription: 代扣业务
   demo: 演示业务
+  automation: 心愿罐和代办
 
 injection:
   # 计入熔断的 L1 标记。prompt_probe（打听提示词）、state_claim（声称已验证）、单独的 invisible_chars 只上浮风险，不计数

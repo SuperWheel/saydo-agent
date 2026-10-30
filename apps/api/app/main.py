@@ -11,6 +11,7 @@ from .routes import admin, api, dev
 from .tools import bank  # noqa: F401  注册银行工具
 from .tools import bill  # noqa: F401  注册账单分析工具
 from .tools import card  # noqa: F401  注册卡片工具
+from .tools import automation  # noqa: F401  注册跨场景工具（心愿罐、订花订蛋糕、定时转账）
 
 
 def create_app() -> FastAPI:

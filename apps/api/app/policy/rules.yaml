@@ -84,6 +84,27 @@ rules:
     elevate_to: RED
     reason: "正式挂失后原卡立即停用，需要本人强验证"
 
+  # ---------- 跨场景联动（WS7）：心愿罐存入 / 释放、订单、定时转账都是 🟡 起步 ----------
+  # order_fast_path 由系统算出：白名单商户 + 从心愿罐付款 + 今日累计转出（含本笔）≤ 1000 元
+  - id: order_strong_auth
+    tool_in: [order.pay]
+    when: {order_fast_path: false}
+    elevate_to: RED
+    reason: "不是合作商户、不从心愿罐付款或今日累计转出超过 1000 元，需要本人强验证"
+
+  # 定时转账创建时按单次金额 + 收款人风险定级；之后每期执行前重新定级，超过授权时的等级就请用户重新确认
+  - id: schedule_large_amount
+    tool_in: [schedule.transfer_create]
+    when: {amount_over: true}
+    elevate_to: RED
+    reason: "定时转账单次金额超过 1000 元，创建授权需要本人强验证"
+
+  - id: schedule_new_payee
+    tool_in: [schedule.transfer_create]
+    when: {payee_new: true}
+    elevate_to: RED
+    reason: "向从未转过账的收款人设置定时转账，需要本人强验证"
+
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000
   reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"

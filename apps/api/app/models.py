@@ -252,3 +252,83 @@ class BreakerTrip(Base):
     released_at: Mapped[datetime | None] = mapped_column(DateTime)
     released_by: Mapped[str | None] = mapped_column(String(32))
     release_note: Mapped[str | None] = mapped_column(String(200))
+
+
+# ---------- 跨场景联动（WS7）：心愿罐、模拟商户订单、任务计划、定时转账 ----------
+
+class WishPot(Base):
+    """心愿罐（F-XS-02）：从活期划到专项子账户（accounts.kind = pot），到期前不参与日常支出。余额以子账户为准。"""
+
+    __tablename__ = "wish_pots"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    purpose: Mapped[str] = mapped_column(String(32))
+    until: Mapped[date | None] = mapped_column(Date)  # 到期日：过了这天剩余资金自动退回活期
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active / released
+    locked_fen: Mapped[int] = mapped_column(BigInteger, default=0)  # 累计存入
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)  # 由哪个动作创建
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class MerchantOrder(Base):
+    """在模拟商户（花店、蛋糕店）下的订单。商户侧的取消 / 退款也记在这里。"""
+
+    __tablename__ = "merchant_orders"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    shop_id: Mapped[str] = mapped_column(String(16))
+    sku: Mapped[str] = mapped_column(String(16))
+    item: Mapped[str] = mapped_column(String(32))
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    pot_id: Mapped[str | None] = mapped_column(String(32))  # 从哪个心愿罐付款；为空 = 活期
+    delivery: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="paid")  # paid / cancelled（已退款）
+    txn_no: Mapped[str | None] = mapped_column(String(32))
+    refund_txn_no: Mapped[str | None] = mapped_column(String(32))
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class TaskPlan(Base):
+    """多步任务计划（技术文档 §4.4）。steps 是校验过的 DAG，每步带状态、关联的待确认动作和输出。"""
+
+    __tablename__ = "task_plans"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    session_id: Mapped[str | None] = mapped_column(String(32))
+    goal: Mapped[str] = mapped_column(String(64))
+    source_text: Mapped[str] = mapped_column(Text)  # 用户原话：参数来源校验的依据
+    source: Mapped[str] = mapped_column(String(16))  # llm / rule
+    event_date: Mapped[date | None] = mapped_column(Date)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime)  # 临期步骤（at = due）的触发时间
+    # draft → running → waiting（等临期触发）→ done；以及 cancelled / handoff
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    note: Mapped[str | None] = mapped_column(String(200))  # 最近一次重新规划 / 回退的说明
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class ScheduledTransfer(Base):
+    """定时 / 周期转账（F-TR-05）。创建时按单次金额 + 收款人风险定级并确认，之后每期按这份授权执行，
+    执行前重新校验余额、限额和熔断；风险比授权时高就转为普通确认卡。收款人和金额固定，改了就是新指令。"""
+
+    __tablename__ = "scheduled_transfers"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    session_id: Mapped[str | None] = mapped_column(String(32))
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id"))
+    account_no: Mapped[str] = mapped_column(String(32))
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    memo: Mapped[str | None] = mapped_column(String(20))
+    recurrence: Mapped[str] = mapped_column(String(16))  # once / monthly
+    day_of_month: Mapped[int | None] = mapped_column(Integer)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime)
+    level: Mapped[str] = mapped_column(String(8))  # 创建时授权的等级：执行时风险超过它就要用户重新确认
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active / cancelled / completed
+    runs: Mapped[list] = mapped_column(JSON, default=list)  # 每期结果 [{at, status, note, action_id}]
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

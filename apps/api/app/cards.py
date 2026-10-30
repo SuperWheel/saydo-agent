@@ -56,6 +56,7 @@ def confirm_card(action) -> dict:
         "reasons": action.reasons,
         "auth_hint": "确认后需完成人脸识别 + 短信验证码（模拟）" if action.level == "RED" else "",
         "expires_at": action.expires_at.isoformat(),
+        "expires_in_s": max(0, int((action.expires_at - now()).total_seconds())),  # 演示时钟快进后，前端按剩余秒数倒计时
         "status": action.status,
     }
     if "amount_fen" in d:
