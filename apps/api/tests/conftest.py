@@ -3,7 +3,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app import clock
+from app import clock, netinfo
 from app.agent import loop
 from app.agent.llm import LLMReply
 from app.config import get_settings
@@ -21,6 +21,12 @@ def _make_client(tmp_path, monkeypatch, *, llm: bool):
     from app.main import create_app
 
     return TestClient(create_app())
+
+
+@pytest.fixture(autouse=True)
+def _no_lan(monkeypatch):
+    """引导链接里的 127.0.0.1 会换成本机局域网地址；测试里固定成没有局域网，结果不随开发机的网络变。"""
+    monkeypatch.setattr(netinfo, "lan_ips", lambda: [])
 
 
 @pytest.fixture

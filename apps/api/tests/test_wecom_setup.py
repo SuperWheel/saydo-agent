@@ -112,10 +112,13 @@ def test_base64_secret_accepted(client, env_file, monkeypatch):
     assert r.status_code == 200 and "WECOM_BOT_SECRET=Ab+cd/ef0123456789==" in env_file.read_text(encoding="utf-8")
 
 
-def test_status_lists_lan_ips(client, env_file, monkeypatch):
-    from app import wecom_setup
-    assert wecom_setup._private_v4("192.168.1.8") and wecom_setup._private_v4("172.20.10.2")
-    assert not wecom_setup._private_v4("127.0.0.1") and not wecom_setup._private_v4("198.18.0.1")  # TUN 虚拟网卡
-    assert not wecom_setup._private_v4("8.8.8.8") and not wecom_setup._private_v4("")
-    monkeypatch.setattr(wecom_setup, "lan_ips", lambda: ["172.20.10.2"])
-    assert client.get("/admin/wecom-config").json()["lan_ips"] == ["172.20.10.2"]
+def test_link_uses_lan_ip_when_h5_is_loopback(client, env_file, monkeypatch):
+    from app import netinfo
+    assert netinfo._private_v4("192.168.1.8") and netinfo._private_v4("172.20.10.2")
+    assert not netinfo._private_v4("127.0.0.1") and not netinfo._private_v4("198.18.0.1")  # TUN 虚拟网卡
+    assert not netinfo._private_v4("8.8.8.8") and not netinfo._private_v4("")
+    assert client.get("/admin/wecom-config").json()["link_url"] == "http://127.0.0.1:5173"  # 没连局域网就原样
+    monkeypatch.setattr(netinfo, "lan_ips", lambda: ["172.20.10.2"])
+    assert client.get("/admin/wecom-config").json()["link_url"] == "http://172.20.10.2:5173"
+    client.post("/admin/wecom-config", json={"bot_id": BOT, "secret": SECRET, "app_h5_url": "https://saydo.example.com"})
+    assert client.get("/admin/wecom-config").json()["link_url"] == "https://saydo.example.com"  # 填了别的地址就原样用

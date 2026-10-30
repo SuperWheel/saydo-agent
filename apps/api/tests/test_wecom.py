@@ -328,6 +328,12 @@ def test_h5_link_is_configurable(client, monkeypatch):
     assert "http://192.168.1.8:5173/?r=" in turn("给赵磊转100").text
 
 
+def test_loopback_link_follows_current_lan_ip(client, monkeypatch):
+    from app import netinfo
+    monkeypatch.setattr(netinfo, "lan_ips", lambda: ["172.20.10.2"])
+    assert "http://172.20.10.2:5173/?r=" in turn("给赵磊转100").text  # 127.0.0.1 手机打不开，换成电脑当前的局域网地址
+
+
 def test_binding_allowlist_and_empty_text(client):
     assert turn("我还有多少钱", external_id="stranger", allowed=frozenset({"zhangsan"})).text == NOT_BOUND
     assert turn("   ").text == TEXT_ONLY

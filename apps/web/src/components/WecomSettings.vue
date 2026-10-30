@@ -65,10 +65,6 @@ async function save(disable = false) {
   }
 }
 
-function useLan(ip) {
-  h5.value = `http://${ip}:${location.port || 5173}`
-}
-
 function preview(i) {
   showImagePreview({ images: GUIDE.map((g) => g.img), startPosition: i, closeable: true })
 }
@@ -108,12 +104,9 @@ function preview(i) {
       <van-field v-model="h5" label="App 地址" autocomplete="off" clearable placeholder="http://127.0.0.1:5173"
                  :label-width="70" />
     </van-cell-group>
-    <div v-if="cfg.lan_ips.length" class="lan">
-      <span class="lan-label">填入本机局域网地址：</span>
-      <span v-for="ip in cfg.lan_ips" :key="ip" class="chip pick" @click="useLan(ip)">{{ ip }}</span>
-    </div>
-    <div class="hint">「App 地址」是企业微信里引导回 App 办理的链接。默认的 127.0.0.1 只有电脑自己能打开；用手机时：手机开热点、电脑连上，
-      前端用 <code>make dev-lan</code> 启动，再点上面的地址（换网络后地址会变，要重新点）。</div>
+    <div class="link">企业微信里发出的链接：<b>{{ cfg.link_url }}</b></div>
+    <div class="hint">「App 地址」保持默认的 127.0.0.1 时，链接会自动换成电脑当前的局域网地址，换网络也跟着变。
+      手机要打得开：手机开热点、电脑连上这个热点，前端用 <code>make dev-lan</code> 启动。部署到服务器后再把这里改成正式地址。</div>
 
     <div class="actions">
       <van-button type="danger" round block :loading="saving" :disabled="!dirty" @click="save()">保存并连接</van-button>
@@ -146,9 +139,8 @@ function preview(i) {
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .chip { font-size: 12px; padding: 3px 9px; border-radius: 12px; background: #f4f5f7; color: #333; }
 .section { font-size: 13px; color: var(--muted); margin: 14px 16px 6px; }
-.lan { margin: 8px 16px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.lan-label { font-size: 12px; color: var(--muted); }
-.pick { cursor: pointer; color: #c8102e; background: #fdecee; }
+.link { margin: 8px 16px 0; font-size: 12px; color: var(--muted); word-break: break-all; }
+.link b { color: var(--text, #222); font-weight: 600; }
 .hint code { font-size: 11px; background: #f4f5f7; padding: 0 3px; border-radius: 3px; }
 .hint { margin: 6px 16px 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .actions { display: flex; flex-direction: column; gap: 8px; margin: 14px 16px 0; }

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit
+from .. import audit, netinfo
 from ..agent import planner
 from ..agent.loop import handle_turn
 from ..auth.actions import ACTIVE, cancel
@@ -53,7 +53,7 @@ HANDOFF_TTL_S = 30 * 60  # 引导链接的有效期
 
 def app_guide(db: Session | None = None, user_id: int | None = None, text: str = "") -> str:
     """引导回 App 的话。给了原话就生成一个转交码：链接打开 App 时这句话自动填进输入框，用户核对后自己点发送。"""
-    url = get_settings().app_h5_url.rstrip("/")
+    url = netinfo.phone_url(get_settings().app_h5_url.rstrip("/"))
     if db is None or not text:
         return f"这项操作需要在言行 App 内确认，请打开言行 App 办理：{url}"
     code = secrets.token_urlsafe(6)
