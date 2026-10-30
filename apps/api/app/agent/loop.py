@@ -24,6 +24,7 @@ from ..tools.bill import rule_turn as bill_rule_turn
 from ..tools.card import rule_turn as card_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
+from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
 from .prompts import NO_BYPASS, help_text, system_prompt
@@ -79,6 +80,10 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
 
     if selection:
         text_out, source = _selection_turn(ctx, selection), "template"
+    # 跨场景（WS7）唯一入口：计划的控制语（继续 / 「蛋糕不要了」/ 撤销锁定 / 转人工）、多步请求（进规划器）、
+    # 定时转账等必须确定性处理的话。不是这些就返回 None，照常走模型或规则。说明见 agent/planner.py
+    elif (planned := planner.route(ctx, guard, get_llm if get_settings().llm_ready else None)) is not None:
+        text_out, source = planned
     elif get_settings().llm_ready:
         try:
             out = _llm_turn(ctx, guard.text)
@@ -299,6 +304,8 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 
 
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
+    if selection.get("type") == "plan":  # 计划卡的按钮（WS7）
+        return planner.selection_turn(ctx, selection)
     pq = (ctx.session.state or {}).get("pending_question") or {}
     if selection.get("type") == "contact" and pq.get("kind") == "payee" and selection.get("contact_id") in pq.get("contact_ids", []):
         return _apply(ctx, propose(ctx, contact_id=selection["contact_id"], amount_fen=pq["amount_fen"], memo=pq.get("memo")))

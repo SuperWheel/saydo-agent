@@ -27,4 +27,6 @@ export const api = {
   killSwitch: (enabled, reason) => post('/admin/kill-switch', { enabled, reason }),
   reset: () => post('/dev/seed'),
   aaPay: (shareId) => post(`/dev/aa/shares/${shareId}/pay`),
+  planSync: (sessionId) => post('/api/plans/sync', { session_id: sessionId }),
+  fastForward: (to) => post('/dev/fast-forward', { to }),
 }

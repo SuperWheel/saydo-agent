@@ -11,6 +11,8 @@ const done = ref('')
 const left = ref(0)
 const cool = ref(0) // 冷静期剩余秒数（反诈）：倒计时结束前确认按钮不可用，后端也会拒绝提前确认
 const coolEnd = Date.now() + (props.card.cooling_off_s || 0) * 1000
+// 有效期按服务端给的剩余秒数算：演示「时间快进」后服务端时钟和浏览器不一致
+const deadline = props.card.expires_in_s != null ? Date.now() + props.card.expires_in_s * 1000 : new Date(props.card.expires_at)
 let timer
 
 const isRed = computed(() => props.card.level === 'RED')
@@ -18,7 +20,7 @@ const expired = computed(() => !done.value && left.value <= 0)
 const countdown = computed(() => `${Math.floor(left.value / 60)}:${String(left.value % 60).padStart(2, '0')}`)
 
 function tick() {
-  left.value = Math.max(0, Math.round((new Date(props.card.expires_at) - Date.now()) / 1000))
+  left.value = Math.max(0, Math.round((deadline - Date.now()) / 1000))
   cool.value = Math.max(0, Math.ceil((coolEnd - Date.now()) / 1000))
 }
 onMounted(() => { tick(); timer = setInterval(tick, 1000) })

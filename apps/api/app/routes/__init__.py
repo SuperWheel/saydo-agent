@@ -245,3 +245,44 @@ def aa_share_pay(share_id: int, db: Session = Depends(get_db), user_id: int = De
         raise HTTPException(404, str(e)) from e
     db.commit()
     return {"card": card}
+
+
+# ---------- 跨场景联动（WS7）：计划同步、时间快进触发临期任务 ----------
+
+class PlanSyncIn(BaseModel):
+    session_id: str | None = None
+
+
+@api.post("/plans/sync")
+def plan_sync(body: PlanSyncIn, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """确认卡办完后前端调一次：计划里的步骤跟着推进（出下一张确认卡）。没有进行中的计划时返回空。"""
+    from ..agent import planner
+
+    out = planner.sync_session(db, user_id=user_id, session_id=body.session_id)
+    db.commit()
+    return out
+
+
+class FastForwardIn(BaseModel):
+    days: int = 0
+    hours: int = 0
+    to: str | None = None  # 直接快进到某个时间（ISO，北京时间），如计划卡上的临期时间
+
+
+@dev.post("/fast-forward", dependencies=[Depends(_demo_only)])
+def fast_forward(body: FastForwardIn, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """时间快进 + 定时扫描：到期的定时转账、心愿罐、到了临期时间的计划立即执行，返回要推送给用户的消息。"""
+    from datetime import datetime
+
+    from ..agent import planner
+
+    delta = timedelta(days=body.days, hours=body.hours)
+    if body.to:
+        try:
+            delta = max(datetime.fromisoformat(body.to).replace(tzinfo=None) - clock.now(), timedelta(0))
+        except ValueError as e:
+            raise HTTPException(400, "时间格式不对") from e
+    at = clock.travel(delta)
+    events = planner.tick(db, user_id=user_id)
+    db.commit()
+    return {"now": at.isoformat(), "events": events}
