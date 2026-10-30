@@ -1,6 +1,6 @@
 """卡片管理（WS3）：查卡 🟢、锁卡 🟡、解锁 / 解除挂失 🔴、挂失 🔴、交易限制（收紧 🟡 / 放宽 🔴）、限额虚拟卡 🟡。
 
-设计要点是不对称：收紧保护的操作门槛低，放松保护的操作门槛高。锁卡、挂失是止损操作（stop_loss），熔断开着也能办。
+设计要点是不对称：收紧保护的操作门槛低，放松保护的操作门槛高。锁卡、挂失是止损操作（stop_loss），收紧交易限制也算（stop_loss_if），熔断开着也能办。
 收紧还是放宽由系统比对卡片当前设置算出（规则 card_loosen），模型只传「改哪一项、改成什么」。
 给模型、前端和审计的卡片信息一律只露尾号。
 """
@@ -443,6 +443,8 @@ def report_loss(db: Session, args: dict, *, idempotency_key: str, user_id: int) 
 
 @bank_tool(
     name="card.limit_set", domain="card", base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    # 收紧是止损（熔断时照常可办），放宽不是；before 由系统在提议时读卡片当前设置写入，受摘要保护，执行前还会重新核对
+    stop_loss_if=lambda a: _direction(a["setting"], a["before"], a["value"]) == "tighten",
     policy_context=_card_context("card.limit_set"), description="修改卡片交易限制。只能由工具网关凭执行令牌调用。",
 )
 def set_limit(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:

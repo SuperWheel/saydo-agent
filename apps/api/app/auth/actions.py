@@ -113,6 +113,7 @@ def decide(db: Session, tool: str, args: dict, env: PolicyEnv) -> Decision:
         ctx = spec.policy_context(db, args, env)
     else:
         ctx = base_context(db, env, tool=tool, amount_fen=args.get("amount_fen", 0) if spec.moves_money else 0)
+    ctx.stop_loss = spec.is_stop_loss(args)  # 按参数判断的止损（收紧限额）只有这里知道参数
     return evaluate(ctx)
 
 
@@ -122,7 +123,7 @@ def propose_action(ctx: ToolContext, *, tool: str, args: dict, display: dict, da
     """提议工具的统一出口：定级 → 拦截或生成待确认动作 → 返回确认卡。data 是给模型看的补充信息（已脱敏）。"""
     db = ctx.db
     expire_stale(db, ctx.user_id)
-    if (blocked := breaker.check_propose(ctx, tool, data)) is not None:  # 熔断：只读 / 暂停 / 转人工，止损类放行
+    if (blocked := breaker.check_propose(ctx, tool, args, data)) is not None:  # 熔断：只读 / 暂停 / 转人工，止损类放行
         return blocked
     decision = decide(db, tool, args, PolicyEnv(ctx.user_id, ctx.channel, ctx.injection_flag))
     audit.record(db, ctx.trace_id, "policy_decision", {"tool": tool, "summary": display["summary"],
@@ -194,7 +195,7 @@ def _invalidate(db: Session, a: PendingAction, reason: str) -> Outcome:
 
 def _revalidate(db: Session, a: PendingAction) -> Outcome | None:
     """执行前用同一个构造器重新取上下文（余额、额度、收款人状态等）；风险比生成确认卡时高，就作废授权。"""
-    if (block := breaker.check(db, user_id=a.user_id, tool=a.tool, session_id=a.session_id)) is not None:
+    if (block := breaker.check(db, user_id=a.user_id, tool=a.tool, session_id=a.session_id, args=a.args)) is not None:
         _invalidate(db, a, "安全保护：" + block.reason)
         return Outcome("invalidated", block.card)
     decision = decide(db, a.tool, a.args, PolicyEnv(a.user_id, "app", a.display.get("injection_flag", False), exclude=a))

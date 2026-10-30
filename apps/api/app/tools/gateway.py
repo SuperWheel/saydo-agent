@@ -58,9 +58,10 @@ def execute_write(action: PendingAction, token: str, db) -> dict:
         raise GatewayError("令牌与动作不匹配")
     if compute_digest(action.tool, action.args, action.user_id, action.nonce) != action.digest:
         raise GatewayError("动作参数与确认内容不一致")
-    if kill_switch_on(db) and not spec.stop_loss:
+    if kill_switch_on(db) and not spec.is_stop_loss(action.args):
         raise GatewayError("系统处于只读保护状态")
-    if (block := breaker.check(db, user_id=action.user_id, tool=action.tool, session_id=action.session_id)) is not None:
+    block = breaker.check(db, user_id=action.user_id, tool=action.tool, session_id=action.session_id, args=action.args)
+    if block is not None:
         raise GatewayError(block.text.rstrip("。"))  # 熔断状态在策略引擎和网关两处都检查
     action.token_jti = None  # 用过即作废
     try:

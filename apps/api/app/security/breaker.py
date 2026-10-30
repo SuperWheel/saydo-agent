@@ -4,7 +4,8 @@
 按工具的断路器：下游异常率过高 → 断开（closed → open → half_open），冷却后放一次探测请求。
 每次触发、拦截、解除都写审计；处置可在运营后台（/admin/risk-events）解除。
 
-止损类工具（stop_loss=True，如锁卡、挂失）不受任何熔断影响：熔断不能妨碍用户止损。
+止损类操作不受任何熔断影响：熔断不能妨碍用户止损。止损按这次调用判断（ToolSpec.is_stop_loss）：
+锁卡、挂失整个工具都是（stop_loss=True）；改交易限制只有收紧时是（stop_loss_if）。
 被拦下时向用户说明原因类别、恢复方式和申诉渠道（《反电信网络诈骗法》第三十二条）。
 
 安全外壳里只加了调用点，逻辑都在这里：
@@ -127,10 +128,10 @@ def active_trips(db: Session, user_id: int, session_id: str | None = None) -> li
     return sorted(rows, key=lambda r: -_SEVERITY[r.level])
 
 
-def check(db: Session, *, user_id: int, tool: str, session_id: str | None) -> Block | None:
-    """这个写工具现在能不能办。止损类永远放行；其次看全局只读开关、用户 / 会话处置、工具断路器。"""
+def check(db: Session, *, user_id: int, tool: str, session_id: str | None, args: dict | None = None) -> Block | None:
+    """这次写操作现在能不能办。止损类永远放行；其次看全局只读开关、用户 / 会话处置、工具断路器。"""
     spec = REGISTRY.get(tool)
-    if spec is None or spec.stop_loss:
+    if spec is None or spec.is_stop_loss(args):
         return None
     if kill_switch_on(db):
         return _system_block(db)
@@ -140,13 +141,13 @@ def check(db: Session, *, user_id: int, tool: str, session_id: str | None) -> Bl
     return circuit_block(db, spec)
 
 
-def check_propose(ctx: ToolContext, tool: str, data: dict | None = None) -> ToolResult | None:
+def check_propose(ctx: ToolContext, tool: str, args: dict, data: dict | None = None) -> ToolResult | None:
     """提议写操作前的熔断检查；资金类在这里计频率。返回 None 表示放行，否则是带熔断提示卡的拦截结果。"""
     db, spec = ctx.db, REGISTRY[tool]
-    block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id)
-    if block is None and spec.moves_money and not spec.stop_loss:
+    block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id, args=args)
+    if block is None and spec.moves_money and not spec.is_stop_loss(args):
         _record(db, "money_propose", user_id=ctx.user_id, session_id=ctx.session.id, trace_id=ctx.trace_id, tool=tool)
-        block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id)
+        block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id, args=args)
     if block is None:
         return None
     audit.record(db, ctx.trace_id, "breaker_blocked", {"tool": tool, **block.as_dict()}, ctx.session.id)

@@ -29,9 +29,14 @@ class ToolSpec:
     fn: Callable
     moves_money: bool = False  # 资金转出：做余额 / 限额检查，生成确认卡时预占额度，args 里必须有 amount_fen
     stop_loss: bool = False  # 止损类操作（锁卡、挂失），只读保护下仍可执行
+    stop_loss_if: Callable[[dict], bool] | None = None  # 按参数判断的止损（如收紧限额）：返回 True 时同 stop_loss
     policy_context: Callable | None = None  # (db, args, env) -> PolicyContext；不填用 base_context
     capability: str = ""  # 给用户看的能力短语，如「查余额」，用于提示词和帮助语
     examples: tuple[str, ...] = ()  # 示范说法，如「我还有多少钱」
+
+    def is_stop_loss(self, args: dict | None) -> bool:
+        """这次调用算不算止损。不知道参数时只认工具级的 stop_loss。"""
+        return self.stop_loss or (self.stop_loss_if is not None and args is not None and self.stop_loss_if(args))
 
     @property
     def llm_name(self) -> str:  # OpenAI 函数名不允许出现点号
@@ -61,13 +66,14 @@ REGISTRY: dict[str, ToolSpec] = {}
 
 def bank_tool(*, name: str, domain: str, base_risk: Risk, side_effect: bool = False, llm_visible: bool = True,
               description: str = "", parameters: dict | None = None, moves_money: bool = False, stop_loss: bool = False,
-              policy_context: Callable | None = None, capability: str = "", examples: tuple[str, ...] = ()):
+              stop_loss_if: Callable[[dict], bool] | None = None, policy_context: Callable | None = None,
+              capability: str = "", examples: tuple[str, ...] = ()):
     def deco(fn: Callable) -> Callable:
         REGISTRY[name] = ToolSpec(
             name=name, domain=domain, base_risk=base_risk, side_effect=side_effect, llm_visible=llm_visible,
             description=description, parameters=parameters or {"type": "object", "properties": {}}, fn=fn,
-            moves_money=moves_money, stop_loss=stop_loss, policy_context=policy_context, capability=capability,
-            examples=examples,
+            moves_money=moves_money, stop_loss=stop_loss, stop_loss_if=stop_loss_if, policy_context=policy_context,
+            capability=capability, examples=examples,
         )
         return fn
 

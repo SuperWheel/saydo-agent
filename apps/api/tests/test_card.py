@@ -194,6 +194,35 @@ def test_kill_switch_blocks_loosen_and_virtual(client):
         assert "只读保护" in only_card(say(client, t))["text"], t
 
 
+@pytest.mark.parametrize("utterance,kind,key,after", [
+    ("关闭信用卡的境外交易", "credit", "overseas", False),
+    ("把借记卡单笔限额调到2000", "debit", "per_txn_fen", 200_000),
+])
+def test_kill_switch_tighten_limit_still_works(client, utterance, kind, key, after):
+    """收紧交易限制是止损：熔断开着照常可办；熔断前发出的收紧确认卡，确认时也不作废。"""
+    kill_switch(client)
+    c = only_card(say(client, utterance))
+    assert (c["type"], c["level"]) == ("confirm", "YELLOW")
+    assert confirm(client, c).json()["status"] == "succeeded" and card(kind).limits[key] == after
+    kill_switch(client, False)
+    set_card(kind, **{key: True if key == "overseas" else 1_000_000})
+    c = only_card(say(client, utterance))
+    kill_switch(client)
+    assert confirm(client, c).json()["status"] == "succeeded" and card(kind).limits[key] == after
+
+
+def test_breaker_freeze_allows_tighten_blocks_loosen(client):
+    """放宽限额连续 3 次验证失败，限额工具被暂停：收紧照常可办，放宽被拦。"""
+    out = confirm(client, only_card(say(client, "开通借记卡的境外交易"))).json()
+    url = f"/api/auth/challenges/{out['card']['challenge_id']}/verify"
+    for _ in range(3):
+        client.post(url, json={"factor": "sms", "value": "000000"})
+    c = only_card(say(client, "把借记卡的无卡支付关掉"))
+    assert (c["type"], c["level"]) == ("confirm", "YELLOW")
+    assert confirm(client, c).json()["status"] == "succeeded" and card("debit").limits["online"] is False
+    assert is_breaker(only_card(say(client, "开通借记卡的境外交易")), "freeze")
+
+
 # ---------- 解锁、挂失：强验证 ----------
 
 @pytest.mark.parametrize("status,utterance,title,after", [

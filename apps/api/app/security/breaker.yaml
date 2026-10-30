@@ -5,7 +5,7 @@
 #   readonly  会话只读   只限触发它的会话；开新会话或人工解除后恢复
 #   freeze    暂停办理   整个用户，按 block 范围暂停；有 duration_s 就到期自动恢复
 #   handoff   转人工     整个用户，全部写操作暂停，只能在运营后台人工解除
-# 止损类工具（stop_loss=True，如锁卡、挂失）不受任何熔断影响。
+# 止损类操作不受任何熔断影响：锁卡、挂失（stop_loss=True），以及收紧卡片交易限制（stop_loss_if）。
 #
 # 每条触发条件：
 #   event      计数的安全事件：auth_failed / injection / injection_high / money_propose / tool_violation
