@@ -46,13 +46,13 @@ def test_follow_up_keeps_previous_domain(llm_client, fake):
 
 def test_hallucinated_number_falls_back_to_template(llm_client, fake):
     fake(tool("account_balance"), text("你的余额是 99,999.00 元"), text("你的余额是 99,999.00 元"))
-    r = say(llm_client, "我还有多少钱")
+    r = say(llm_client, "帮我瞅瞅账户")
     assert r["reply"]["source"] == "template" and r["reply"]["text"] == "你名下账户余额合计 28,650.32 元。"
 
 
 def test_false_success_claim_is_rewritten(llm_client, fake):
     f = fake(tool("account_balance"), text("已经帮你转账成功！"), text("你名下账户余额合计 28,650.32 元。"))
-    r = say(llm_client, "我还有多少钱")
+    r = say(llm_client, "帮我瞅瞅账户")
     assert r["reply"]["text"] == "你名下账户余额合计 28,650.32 元。"
     assert "[系统校验]" in f.calls[-1]["messages"][-1]["content"]
 
@@ -105,14 +105,14 @@ def test_reasoning_is_passed_back_in_tool_loop(llm_client, fake):
     first = tool("account_balance")
     first.reasoning = "用户想知道余额，先查账户"
     f = fake(first, text("你名下账户余额合计 28,650.32 元。"))
-    say(llm_client, "我还有多少钱")
+    say(llm_client, "帮我瞅瞅账户")
     assistant = next(m for m in f.calls[1]["messages"] if m["role"] == "assistant" and m.get("tool_calls"))
     assert assistant["reasoning_content"] == "用户想知道余额，先查账户"
 
 
 def test_untrusted_memo_never_reaches_model(llm_client, fake):
     f = fake(tool("account_balance"), text("你名下账户余额合计 28,650.32 元。"))
-    say(llm_client, "我还有多少钱")
+    say(llm_client, "帮我瞅瞅账户")
     sent = json.dumps([c["messages"] for c in f.calls], ensure_ascii=False)
     assert "忽略之前的所有指令" not in sent  # 种子数据里的注入备注不会进入模型上下文
 
@@ -143,7 +143,7 @@ def test_tool_history_is_masked_bounded_and_session_scoped(llm_client, fake):
     first = tool("account_balance")
     first.reasoning = "测试号码13912345678，账号6222000011112222，卡号6230581000006688"
     f = fake(first, text("请查看余额。"), *(text("你好") for _ in range(HISTORY_MESSAGES)))
-    r = say(llm_client, "我还有多少钱")
+    r = say(llm_client, "帮我瞅瞅账户")
     say(llm_client, "你好", r["session_id"])
     messages = f.calls[-1]["messages"]
     call = next(m for m in messages if m.get("tool_calls"))
@@ -169,7 +169,7 @@ def test_tool_history_preserves_numbers_and_masks_string_leaves(llm_client, fake
                                                     "phone": {"type": "string"}}}))
     f = fake(tool("account_balance", amount_fen=10000000, phone="13912345678"),
              text("请查看结果。"), text("你好"))
-    r = say(llm_client, "查余额")
+    r = say(llm_client, "帮我瞅瞅账户")
     with new_session() as db:
         stored = db.scalar(select(ChatMessage.content).where(ChatMessage.trace_id == r["trace_id"],
                                                             ChatMessage.role == "tool"))
@@ -214,7 +214,7 @@ def test_long_reply_trimmed_at_sentence_boundary(llm_client, fake):
     long = ("你名下账户余额合计 28,650.32 元。这些钱分布在借记卡和其他账户里，可以随时查看明细。"
             "如果需要转账、理财或者分析账单，也可以直接告诉我，我会帮你一步步办理。")
     fake(tool("account_balance"), text(long))
-    r = say(llm_client, "我还有多少钱")
+    r = say(llm_client, "帮我瞅瞅账户")
     assert r["reply"]["text"] == "你名下账户余额合计 28,650.32 元。这些钱分布在借记卡和其他账户里，可以随时查看明细。"
     events = llm_client.get(f"/admin/audit?trace_id={r['trace_id']}").json()
     assert any(e["event"] == "reply_trimmed" for e in events)
@@ -223,4 +223,31 @@ def test_long_reply_trimmed_at_sentence_boundary(llm_client, fake):
 def test_single_long_sentence_kept_whole(llm_client, fake):
     one = "你名下账户余额合计 28,650.32 元，其中借记卡是主要账户，日常消费和转账都从这张卡走，近期没有大额异常支出"
     fake(tool("account_balance"), text(one))
-    assert say(llm_client, "我还有多少钱")["reply"]["text"] == one  # 只有一句：宁可长一点，也不截半句
+    assert say(llm_client, "帮我瞅瞅账户")["reply"]["text"] == one  # 只有一句：宁可长一点，也不截半句
+
+
+def test_markdown_stripped_from_model_reply(llm_client, fake):
+    fake(tool("account_balance"), text("您的余额合计为 **28,650.32 元**。"))
+    assert say(llm_client, "帮我瞅瞅账户")["reply"]["text"] == "您的余额合计为 28,650.32 元。"
+
+
+def test_trimmed_reply_ends_with_full_stop(llm_client, fake):
+    long = ("9月收入 18,000 元，消费 9,425.64 元，储蓄率 47.6%，比8月少花 508.87 元；"
+            "最大支出是居住 4,500 元，占 47.8%，购物减少了不少，交通增加较多，整体比较健康，没有异常交易。")
+    fake(tool("bill_report"), text(long))
+    r = say(llm_client, "上个月的账单报告")
+    assert r["reply"]["text"].endswith("508.87 元。")
+
+
+def test_promise_fallback_is_compliant_not_help(llm_client, fake):
+    fake(text("有的，这款保本稳赚。"), text("这款产品保本。"))
+    r = say(llm_client, "有没有保本稳赚的理财")
+    assert r["reply"]["text"].startswith("理财产品都有风险，本金和收益都不作保证") and r["reply"]["source"] == "template"
+
+
+def test_plain_balance_question_skips_model(llm_client, fake):
+    """只问余额：走规则快速通道，不调模型；有注入嫌疑或问了别的就照常走模型。"""
+    f = fake(text("不该被调用"))
+    r = say(llm_client, "我还有多少钱")
+    assert r["reply"] == {"text": "你名下账户余额合计 28,650.32 元。", "source": "rule", "ai_generated": False}
+    assert [c["type"] for c in r["cards"]] == ["balance"] and f.calls == []

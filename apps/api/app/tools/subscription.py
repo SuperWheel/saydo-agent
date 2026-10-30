@@ -75,6 +75,8 @@ def _days_left(d: date) -> int:
 
 
 def _when(days: int) -> str:
+    if days < 0:  # 过了应扣日还没看到这一期扣款（演示「时间快进」后常见）
+        return f"已过 {-days} 天，尚未看到扣款"
     return "今天" if days == 0 else "明天" if days == 1 else f"{days} 天后"
 
 

@@ -90,6 +90,8 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     # 定时转账等必须确定性处理的话。不是这些就返回 None，照常走模型或规则。说明见 agent/planner.py
     elif (planned := planner.route(ctx, guard, get_llm if get_settings().llm_ready else None)) is not None:
         text_out, source = planned
+    elif _fast_path(ctx, guard):  # 「我还有多少钱」这类只查余额的话：规则就能确定性作答，不用等模型
+        text_out, source = _rule_turn(ctx, guard)
     elif get_settings().llm_ready:
         try:
             out = _llm_turn(ctx, guard.text)
@@ -218,7 +220,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
                                                     "tool_calls": [tc.function.name for tc in reply.tool_calls]},
                      ctx.session.id)
         if not reply.tool_calls:
-            final = reply.content.strip()
+            final = _plain(reply.content)
             break
         assistant = {"role": "assistant", "content": reply.content,
                      "tool_calls": [tc.model_dump(exclude_none=True) for tc in reply.tool_calls]}
@@ -264,12 +266,22 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     messages += [{"role": "assistant", "content": final},
                  {"role": "user", "content": f"[系统校验] 上一条回复有问题：{g.describe()}。请只使用工具结果里的数字重写，并且不要声称已经办理完成（转账、锁卡等都要用户确认后才执行）。"}]
     db.commit()
-    retry = llm.chat(messages, tools=tools, tool_choice="none").content.strip()
+    retry = _plain(llm.chat(messages, tools=tools, tool_choice="none").content)
     g2 = check(retry, facts, **opts)
     audit.record(db, ctx.trace_id, "grounding_retry", {"text": retry, "ok": g2.ok, "problem": g2.describe()}, ctx.session.id)
     if retry and g2.ok:
         return _brief(ctx, retry), "llm"
+    if (g.promises or g2.promises) and not ctx.cards:  # 「有没有保本稳赚的理财」：给一句合规的话，而不是帮助语
+        return NO_PROMISE, "template"
     return _template_reply(ctx.cards), "template"  # 两次都不过：丢弃模型文字，只返回模板
+
+
+_MARKDOWN = re.compile(r"\*\*|__|`|^#{1,6}\s*", re.M)
+
+
+def _plain(text: str | None) -> str:
+    """聊天气泡按纯文本显示：去掉模型爱加的 Markdown 粗体、行内代码和标题符号。"""
+    return _MARKDOWN.sub("", text or "").strip()
 
 
 MAX_REPLY = 60  # 回复字数上限（提示词第 7 条）；卡片上有细节，文字只说结论
@@ -286,7 +298,7 @@ def _brief(ctx: ToolContext, text: str) -> str:
         if out and len(out) + len(s) > MAX_REPLY:
             break
         out += s
-    out = out.strip()
+    out = re.sub(r"[；;，,、：:]+$", "。", out.strip())  # 截在分号处时补成句号，不像没说完
     audit.record(ctx.db, ctx.trace_id, "reply_trimmed", {"from": len(text), "to": len(out)}, ctx.session.id)
     return out
 
@@ -294,6 +306,7 @@ def _brief(ctx: ToolContext, text: str) -> str:
 # ---------- 发给模型的工具：只发这句话涉及的业务域 ----------
 # 全部 34 个工具的说明约 5,400 token，一次调用里要多花 3–4 秒；按规则意图只发相关业务域，认不出来时照旧发全部
 
+NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
 ENDS_TURN = {"confirm", "clarify", "notice"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
@@ -323,6 +336,18 @@ def _tool_domains(text: str, messages: list[dict]) -> set[str] | None:
 
 _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("sub_", "subscription"),
                 ("wealth_", "wealth"), ("aa", "transfer"), ("contact", "transfer"))
+
+
+FAST_INTENTS = {"balance"}  # 只发一个查询工具、回复由卡片模板生成的意图
+
+
+def _fast_path(ctx: ToolContext, guard) -> bool:
+    """整句每一段都是同一个快速意图（「查下余额」「我还有多少钱」），且没有注入嫌疑、没有待回答的追问时直接走规则。
+    查余额走模型要两次调用（10 秒上下），走规则是毫秒级，结果完全一样。"""
+    if guard.suspicious or (ctx.session.state or {}).get("pending_question"):
+        return False
+    parts = [p.strip() for p in _CLAUSE.split(guard.text) if p.strip()]
+    return bool(parts) and all(rule_intent(p).intent in FAST_INTENTS for p in parts)
 
 
 def _order_cards(cards: list[dict], text: str) -> None:

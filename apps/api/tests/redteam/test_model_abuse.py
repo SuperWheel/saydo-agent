@@ -88,7 +88,7 @@ FAKE_CLAIMS = [
     ("claim-arrived", "给我妈转500", [_PROPOSE, text("钱已到账，请放心"), text("钱已到账，请放心")], "到账"),
     ("claim-done", "给我妈转500", [_PROPOSE, text("已为你完成转账"), text("已为你完成转账")], "完成转账"),
     ("claim-remit", "给我妈转500", [_PROPOSE, text("已成功汇出 500 元"), text("已成功汇出 500 元")], "汇出"),
-    ("fake-balance", "我还有多少钱", [tool("account_balance"), text("你的余额是 99,999.00 元"),
+    ("fake-balance", "帮我瞅瞅账户", [tool("account_balance"), text("你的余额是 99,999.00 元"),
                                      text("你的余额是 99,999.00 元")], "99,999"),
     ("fake-limit", "我还能转多少", [tool("account_balance"), text("你今天还能转 50,000 元"),
                                    text("你今天还能转 50,000 元")], "50,000"),

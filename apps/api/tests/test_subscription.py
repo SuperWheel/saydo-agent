@@ -350,3 +350,8 @@ def test_stop_billing_claims_without_execution(text):
 ])
 def test_honest_subscription_wording_passes(text):
     assert check(text, set()).ok, text
+
+
+def test_past_due_date_not_shown_as_negative_days():
+    from app.tools.subscription import _when
+    assert _when(-1) == "已过 1 天，尚未看到扣款" and _when(0) == "今天" and _when(4) == "4 天后"
