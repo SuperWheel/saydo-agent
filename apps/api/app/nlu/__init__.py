@@ -215,8 +215,28 @@ _WM_RECOMMEND = re.compile(r"推荐.{0,6}(理财|产品)|理财.{0,6}推荐|买�
                            r"|有没有.{0,8}(理财|产品)|适合我的|怎么理财|理财.{0,4}(建议|方案)|(钱|资金).{0,6}(放哪|存哪|怎么放|怎么打理)")
 
 
+_ORDINAL = re.compile(r"第\s*([一二三四五1-5])\s*(?:个|款|只|支|种|项)?|(?:头|首)一?(?:个|款)|最后一?(?:个|款)")
+_ORDINAL_N = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4}
+
+
+def ordinal_index(text: str) -> int | None:
+    """「第一个」「第2款」「最后一个」指的是刚才推荐的第几款：0 起，最后一个是 -1。没说序号返回 None。"""
+    if not (m := _ORDINAL.search(text or "")):
+        return None
+    if m.group(1):
+        return _ORDINAL_N.get(m.group(1), int(m.group(1)) - 1 if m.group(1).isdigit() else 0)
+    return -1 if m.group().startswith("最后") else 0
+
+
+def strip_ordinal(text: str) -> str:
+    """找金额前去掉序号：「买第一个，1万」里的「一」不是金额。"""
+    return _ORDINAL.sub(" ", text)
+
+
 def _wealth_intent(text: str) -> RuleIntent | None:
     product = _WM_PRODUCT.search(text)
+    if ordinal_index(text) is not None and _WM_BUY.search(text) and not _WM_REDEEM.search(text):
+        return RuleIntent("wealth", {"op": "subscribe"})  # 推荐之后「买第一个」「第二款买1万」
     if _WM_ASSESS.search(text):
         return RuleIntent("wealth", {"op": "assess"})
     if _WM_REDEEM.search(text) and (product or "理财" in text or "赎回" in text):

@@ -26,7 +26,7 @@ from ..core_mock import wealth as wm
 from ..core_mock.ledger import LedgerError, post
 from ..models import Account, RiskProfile, Transaction, WealthHolding, WealthProduct
 from ..money import fmt_yuan, parse_amount
-from ..nlu import amounts_in, card_amount_text
+from ..nlu import amounts_in, card_amount_text, ordinal_index, strip_ordinal
 from ..policy import PolicyContext, Risk, load_rules
 from . import ToolContext, ToolResult, bank_tool
 
@@ -80,7 +80,7 @@ def _clean(db: Session, text: str) -> str:
     names = sorted({n for p in _products(db) for n in _names(p)}, key=len, reverse=True)
     for n in names:
         text = text.replace(n, " ")
-    return _DURATION.sub(r" \1", text)
+    return _DURATION.sub(r" \1", strip_ordinal(text))
 
 
 def amount_text_in(db: Session, text: str) -> str | None:
@@ -407,6 +407,7 @@ def recommend(ctx: ToolContext, horizon_text: str | None = None, amount_text: st
     ranked = sorted(cands, key=lambda p: (-scores[p.code], p.code))[:3]
     items = [{**_product_view(p), "score": scores[p.code], "reasons": _why(p, profile.level, horizon)} for p in ranked]
     diff = _diff(ranked[0], ranked[1]) if len(ranked) >= 2 else ""
+    ctx.session.state = {**(ctx.session.state or {}), "wealth_picks": [p.code for p in ranked]}  # 「买第一个」按这个顺序找
     if ranked:
         reply = (f"按你的风险承受能力 {LEVEL_LABEL[profile.level]}，筛出 {len(cands)} 款可购产品，"
                  f"排在前面的是{'、'.join(p.name for p in ranked[:2])}。")
@@ -425,7 +426,8 @@ def recommend(ctx: ToolContext, horizon_text: str | None = None, amount_text: st
     return ToolResult({"profile": LEVEL_LABEL[profile.level], "summary": reply, "diff": diff,
                        "items": [{k: i[k] for k in ("name", "risk", "yield_label", "yield", "term", "score")} for i in items],
                        "filtered": filtered,
-                       "note": "推荐卡已展示。不要承诺收益，不能说保本、稳赚；用户要买就调用 wealth_subscribe_propose。"}, card)
+                       "note": "推荐卡已展示。不要承诺收益，不能说保本、稳赚；用户要买就调用 wealth_subscribe_propose，"
+                               "用户说「买第一个」「第二款」时 product_text 照抄序号或填对应的产品名都可以。"}, card)
 
 
 # ---------- F-WM-03 对比 ----------
@@ -532,9 +534,25 @@ def holdings(ctx: ToolContext) -> ToolResult:
 
 # ---------- F-WM-06 申购 🔴 ----------
 
+def _picked_by_ordinal(ctx: ToolContext, text: str | None) -> WealthProduct | ToolResult | None:
+    """「买第一个」：按本会话最近一次推荐卡上的顺序找。没说序号返回 None。"""
+    if (i := ordinal_index(text or "")) is None:
+        return None
+    codes = (ctx.session.state or {}).get("wealth_picks") or []
+    if not codes:
+        msg = "还没有给你推荐过产品。可以先说「推荐理财」，再说买第几个；也可以直接说产品名。"
+        return ToolResult({"status": "product_not_found", "message": msg}, notice_card(msg, "warning"))
+    if not -len(codes) <= i < len(codes):
+        msg = f"刚才只推荐了 {len(codes)} 款产品，请说第 1 到第 {len(codes)} 个，或者直接说产品名。"
+        return ToolResult({"status": "product_not_found", "message": msg}, notice_card(msg, "warning"))
+    return ctx.db.get(WealthProduct, codes[i])
+
+
 def _pick_product(ctx: ToolContext, text: str | None, pool: list[WealthProduct] | None = None,
                   verb: str = "申购") -> WealthProduct | ToolResult:
     found = find_products(ctx.db, text)
+    if not found and pool is None and (by_order := _picked_by_ordinal(ctx, text)) is not None:
+        return by_order
     if pool is not None:
         found = [p for p in found if p.code in {q.code for q in pool}]
     if len(found) == 1:
@@ -843,6 +861,41 @@ def rule_turn(ctx: ToolContext, intent, text: str) -> str | None:
     if pq["op"] == "subscribe":
         return _rule_text(ctx, propose_subscribe(ctx, p.name, amount))
     return _rule_text(ctx, propose_redeem(ctx, p.name, amount))
+
+
+def buy_from_card(ctx: ToolContext, selection: dict) -> str:
+    """产品详情卡上点「申购」：和说「买 1 万安享90天」走同一个提议工具，同样的适当性校验、风险揭示、确认卡和强验证。
+    金额是用户在卡片上自己填的，算作用户原话，参与金额来源校验。"""
+    p = ctx.db.get(WealthProduct, str(selection.get("code") or "")[:8])
+    if p is None:
+        ctx.cards.append(notice_card("没有找到这款产品，请重新打开推荐列表。", "warning"))
+        return "没有找到这款产品，请重新打开推荐列表。"
+    amount_text = str(selection.get("amount_text") or "").strip()[:20] or None
+    if amount_text:
+        ctx.user_texts = [amount_text, *ctx.user_texts]
+    return _rule_text(ctx, propose_subscribe(ctx, p.name, amount_text))
+
+
+def product_detail(db: Session, user_id: int, code: str) -> dict | None:
+    """产品详情（只读）：卡片上点开看。净值走势、各期收益、回撤、费用、风险揭示，以及这位用户能不能买、扣款账户余额。"""
+    p = db.get(WealthProduct, code)
+    if p is None:
+        return None
+    today = _today()
+    series = [{"day": f"{d:%m-%d}", "nav": float(nav(p, d))} for d in (today - timedelta(days=30 * k) for k in range(12, -1, -1))]
+    returns = [[label, wm.pct(round(_return_bp(p, days)))] for label, days in (("近1月", 30), ("近3月", 91), ("近1年", 365))]
+    profile = latest_profile(db, user_id)
+    acct = _debit(db, user_id)
+    problem = "该产品暂停销售" if p.status != "on_sale" else suitability_problem(p, profile)
+    v = _product_view(p)
+    rows = [["产品代码", p.code], ["产品类型", p.kind], ["风险等级", v["risk"]], [v["yield_label"], v["yield"]],
+            ["期限", v["term"]], ["流动性", v["liquidity"]], ["起购金额", f"¥{v['min_purchase']}"], ["费用", v["fee"]],
+            ["最新净值", f"{nav(p):.4f}（{today:%Y-%m-%d}）"], ["近一年最大回撤", wm.pct(round(_drawdown_bp(p)))]]
+    return scrub({**v, "intro": p.intro, "rows": rows, "returns": returns, "series": series,
+                  "disclosure": _disclosure(p), "can_buy": problem is None, "problem": problem,
+                  "profile": _profile_view(profile), "min_purchase_fen": p.min_purchase_fen,
+                  "account": {"name": acct.name, "tail": acct.card_tail, "balance": fmt_yuan(acct.balance_fen),
+                              "balance_fen": acct.balance_fen}, **_meta()})
 
 
 def _rule_text(ctx: ToolContext, r: ToolResult) -> str:

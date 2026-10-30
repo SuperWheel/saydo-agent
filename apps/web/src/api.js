@@ -23,6 +23,7 @@ const post = (url, body = {}) => request('POST', url, body)
 
 export const api = {
   health: () => get('/api/health'),
+  wealthProduct: (code) => get(`/api/wealth/products/${encodeURIComponent(code)}`),
   handoff: (code) => get(`/api/handoff/${encodeURIComponent(code)}`),
   chat: (body) => post('/api/chat', body),
   confirm: (actionId, digest) => post(`/api/actions/${actionId}/confirm`, { digest }),

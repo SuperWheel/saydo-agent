@@ -21,6 +21,7 @@ from ..flags import kill_switch_on, set_flag
 from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
 from ..security import breaker
+from ..tools.wealth import product_detail
 
 
 
@@ -97,6 +98,15 @@ def verify(challenge_id: str, body: VerifyIn, db: Session = Depends(get_db), use
 def accounts(db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
     rows = db.scalars(select(Account).where(Account.user_id == user_id)).all()
     return [{"id": a.id, "name": a.name, "tail": a.card_tail, "balance": fmt_yuan(a.balance_fen)} for a in rows]
+
+
+@api.get("/wealth/products/{code}")
+def wealth_product(code: str, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """理财产品详情（只读）。申购不在这里：详情页的「申购」按钮走 /chat 的 selection，和对话里说「买」是同一条路。"""
+    detail = product_detail(db, user_id, code[:8])
+    if detail is None:
+        raise HTTPException(404, "没有这款产品")
+    return detail
 
 
 @api.get("/handoff/{code}")

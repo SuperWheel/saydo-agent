@@ -1,6 +1,18 @@
 <script setup>
 // 理财推荐（F-WM-02）：只列风险等级不高于客户等级的产品。分数、收益参考、过滤原因都来自后端，这里只负责排版。
+// 点产品打开详情，详情里填金额申购：转成 selection 回到对话，和说「买第一个，1万」走同一条申购流程。
+import { ref } from 'vue'
+import WealthProductSheet from './WealthProductSheet.vue'
+
 defineProps({ card: { type: Object, required: true } })
+const emit = defineEmits(['select'])
+const open = ref('')
+
+function buy(b) {
+  open.value = ''
+  emit('select', { label: `申购${b.name}`, detail: `¥${b.amount}`,
+                   selection: { type: 'wealth_buy', code: b.code, amount_text: b.amount_text } })
+}
 </script>
 
 <template>
@@ -9,7 +21,7 @@ defineProps({ card: { type: Object, required: true } })
     <div class="cond">
       风险承受能力 <b>{{ card.profile.level }}</b> · 可购 {{ card.profile.range }}<span v-if="card.condition"> · {{ card.condition }}</span>
     </div>
-    <div v-for="(p, i) in card.items" :key="p.code" class="item">
+    <div v-for="(p, i) in card.items" :key="p.code" class="item" data-testid="wealth-item" @click="open = p.code">
       <div class="top">
         <span class="name"><i class="rank">{{ i + 1 }}</i>{{ p.name }}</span>
         <span class="score">{{ p.score }} 分</span>
@@ -23,7 +35,9 @@ defineProps({ card: { type: Object, required: true } })
       <div class="row"><span class="k">起购金额</span><span class="v">¥{{ p.min_purchase }}</span></div>
       <ul class="why"><li v-for="r in p.reasons" :key="r">{{ r }}</li></ul>
       <div class="risk">{{ p.risk_note }}</div>
+      <div class="more">查看详情 · 申购 ›</div>
     </div>
+    <div v-if="card.items.length" class="how">点产品查看详情并申购，也可以直接说「买第一个，1万」。</div>
     <div v-if="card.diff" class="diff">{{ card.diff }}</div>
     <template v-if="card.filtered.length">
       <div class="sec">没有推荐的产品</div>
@@ -32,6 +46,10 @@ defineProps({ card: { type: Object, required: true } })
     <div class="meta">打分权重：{{ card.weights }}</div>
     <div class="meta">{{ card.disclaimer }}</div>
     <div class="meta">数据来源：{{ card.source }} · {{ card.as_of }}</div>
+    <van-popup :show="!!open" position="bottom" round closeable :style="{ maxHeight: '86%' }" teleport="body"
+               @update:show="(v) => { if (!v) open = '' }">
+      <WealthProductSheet :code="open" @buy="buy" />
+    </van-popup>
   </div>
 </template>
 
@@ -40,7 +58,10 @@ defineProps({ card: { type: Object, required: true } })
 .cond { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
 .cond b { color: var(--text); }
 .item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.item { cursor: pointer; }
 .item + .item { margin-top: 8px; }
+.more { font-size: 12px; color: var(--brand); text-align: right; margin-top: 6px; }
+.how { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .top { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
 .score { color: var(--brand); font-variant-numeric: tabular-nums; }
 .rank { display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; font-style: normal;

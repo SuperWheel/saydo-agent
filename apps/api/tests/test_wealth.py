@@ -537,3 +537,81 @@ def test_wealth_rule_intents(sentence, op):
 ])
 def test_wealth_does_not_steal_other_intents(sentence, intent):
     assert rule_intent(sentence).intent == intent
+
+
+# ---------- 推荐之后按序号买、产品详情卡上买 ----------
+
+def recommend_items(client, sid: str) -> list[dict]:
+    card = only(say(client, "推荐点理财产品", sid))
+    assert card["type"] == "wealth_recommend" and len(card["items"]) >= 2
+    return card["items"]
+
+
+def test_buy_by_ordinal_after_recommend(client):
+    sid = assess(client, C3)
+    items = recommend_items(client, sid)
+    r = say(client, "买第一个", sid)
+    assert r["reply"]["text"].startswith("买多少？") and items[0]["name"] in r["reply"]["text"]
+    card = only(say(client, "2万", sid))
+    assert card["type"] == "confirm" and card["level"] == "RED" and card["amount"] == "20,000.00"
+    assert ["产品", items[0]["name"]] in card["rows"] and "风险揭示" in card["warning"]
+    out = pass_auth(client, confirm(client, card).json()["card"])
+    assert out["status"] == "succeeded" and holding_of(items[0]["code"])
+
+
+@pytest.mark.parametrize("sentence,index,amount", [
+    ("第二个买2万", 1, "20,000.00"), ("买第2款，一万", 1, "10,000.00"), ("最后一个买3000", -1, "3,000.00"),
+])
+def test_buy_by_ordinal_with_amount(client, sentence, index, amount):
+    sid = assess(client, C3)
+    items = recommend_items(client, sid)
+    card = only(say(client, sentence, sid))
+    assert card["type"] == "confirm", card
+    assert card["amount"] == amount and ["产品", items[index]["name"]] in card["rows"]
+
+
+def test_ordinal_without_or_beyond_recommendation(client):
+    sid = assess(client, C3)
+    assert "还没有给你推荐过" in only(say(client, "买第一个", sid))["text"]
+    items = recommend_items(client, sid)
+    assert f"只推荐了 {len(items)} 款" in only(say(client, "买第五个", sid))["text"]
+
+
+def test_buy_from_product_card(client):
+    """详情卡上点「申购」：selection 回传产品代码和用户填的金额，出的确认卡和说出来的一样。"""
+    sid = assess(client, C3)
+    r = say(client, "", sid, selection={"type": "wealth_buy", "code": "WM04", "amount_text": "10000"})
+    card = only(r)
+    assert card["type"] == "confirm" and card["level"] == "RED" and card["amount"] == "10,000.00"
+    assert card["fields"]["product"] == "WM04" and "风险揭示" in card["warning"]
+    # 没填金额：追问；产品不存在：提示
+    assert say(client, "", sid, selection={"type": "wealth_buy", "code": "WM04"})["reply"]["text"].startswith("买多少？")
+    assert only(say(client, "", sid, selection={"type": "wealth_buy", "code": "NOPE"}))["type"] == "notice"
+
+
+def test_product_card_buy_still_checks_suitability(client):
+    sid = assess(client, C3)
+    for code in ("WM06", "WM07"):  # 高于 C3 的产品：卡片上点了也拦
+        r = say(client, "", sid, selection={"type": "wealth_buy", "code": code, "amount_text": "10000"})
+        card = only(r)
+        assert card["type"] == "notice" and card["level"] == "error" and "不能申购" in card["text"]
+    with new_session() as db:
+        assert not db.scalars(select(PendingAction).where(PendingAction.tool == "wealth.subscribe")).all()
+
+
+def test_product_detail(client):
+    assess(client, C3)
+    d = client.get("/api/wealth/products/WM02").json()
+    assert d["can_buy"] and d["problem"] is None and len(d["series"]) == 13 and d["account"]["tail"]
+    assert "风险揭示" in d["disclosure"] and dict(d["rows"])["产品代码"] == "WM02" and compliant(d)
+    high = client.get("/api/wealth/products/WM07").json()
+    assert not high["can_buy"] and "不能申购" in high["problem"]
+    assert client.get("/api/wealth/products/NOPE").status_code == 404
+
+
+@pytest.mark.parametrize("utterance,op", [
+    ("买第一个", "subscribe"), ("第二款买1万", "subscribe"), ("我要申购第3个", "subscribe"), ("赎回第一个", "redeem"),
+])
+def test_ordinal_rule_intent(utterance, op):
+    i = rule_intent(utterance)
+    assert (i.intent, i.slots["op"]) == ("wealth", op)
