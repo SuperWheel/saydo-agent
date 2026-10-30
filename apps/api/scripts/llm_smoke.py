@@ -27,6 +27,8 @@ DIALOG = [
 def main() -> int:
     tmp = tempfile.mkdtemp()
     os.environ["DATABASE_URL"] = f"sqlite:///{tmp}/smoke.db"
+    # 同一个企业微信机器人只能有一个长连接：评测时不连，免得把正在演示的后端踢下线
+    os.environ["WECOM_BOT_ID"] = os.environ["WECOM_BOT_SECRET"] = ""
     from fastapi.testclient import TestClient
 
     from app.config import get_settings
