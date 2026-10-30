@@ -14,6 +14,8 @@ def _make_client(tmp_path, monkeypatch, *, llm: bool):
     monkeypatch.setenv("LLM_ENABLED", "true" if llm else "false")
     monkeypatch.setenv("LLM_API_KEY", "sk-test" if llm else "")
     monkeypatch.setenv("ADMIN_PASSWORD", "")  # 不受开发者本机 .env 里口令的影响
+    monkeypatch.setenv("WECOM_BOT_ID", "")  # 本机 .env 填了企业微信凭证时，测试也不去连企业微信
+    monkeypatch.setenv("WECOM_BOT_SECRET", "")
     get_settings.cache_clear()
     clock.reset()
     from app.main import create_app
