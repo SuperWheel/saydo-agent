@@ -29,7 +29,7 @@ function onSay(text) {
   <div v-if="card.breaker" class="card notice breaker" :class="{ released }" data-testid="breaker-card">
     <div class="status-head">
       <span class="status-icon" :class="{ ok: released, img: custom }">
-        <van-icon :name="released ? icon('shield-check', 'passed') : icon('shield-alert', 'shield-o')" :size="custom ? 36 : 20" />
+        <van-icon :name="released ? icon('shield-check', 'passed') : icon('shield-alert', 'shield-o')" :size="custom ? 24 : 18" />
       </span>
       <span class="title">安全保护已开启</span>
       <span class="tags">
