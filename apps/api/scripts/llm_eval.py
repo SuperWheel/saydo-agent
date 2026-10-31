@@ -1,4 +1,4 @@
-"""真实模型回归集：统计意图准确率（该调的工具调没调）和任务成功率（该出的卡片出没出）。
+"""真实模型回归集：统计意图准确率（该调的工具调没调）和出卡正确率（该出的卡片出没出，只看出卡这一步，原名任务成功率）。
 
 用法：`make eval-llm`，或 `uv run python scripts/llm_eval.py transfer-`（只跑 id 含 transfer- 的用例）。
 用例在 evals/regression.yaml。使用临时数据库，每条用例前重置演示数据。意图准确率低于 90% 时退出码为 1。
@@ -84,7 +84,7 @@ def main() -> int:
     intent = sum(r[1] for r in rows) / n
     task = sum(r[2] for r in rows) / n
     print(f"\n意图准确率 {intent:.0%}（{sum(r[1] for r in rows)}/{n}，目标 ≥ {TARGET:.0%}）  "
-          f"任务成功率 {task:.0%}（{sum(r[2] for r in rows)}/{n}）  平均每条 {total / n:.1f} 秒  "
+          f"出卡正确率 {task:.0%}（{sum(r[2] for r in rows)}/{n}）  平均每条 {total / n:.1f} 秒  "
           f"模型回复超 {MAX_REPLY} 字 {long_replies} 条  走工作流（不调模型）{n_workflow} 条")
     return 0 if intent >= TARGET else 1
 

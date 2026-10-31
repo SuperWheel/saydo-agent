@@ -49,6 +49,8 @@ def main() -> int:
         if not get_settings().llm_ready:
             print("没有可用的模型：先在「设置」→「模型」里配好密钥")
             return 1
+        # 进入前人脸核身（模拟）：不带进入凭证，/api/chat 返回 401；凭证 30 分钟有效，够跑完一遍
+        client.headers["X-Entry-Token"] = client.post("/api/auth/entry-face", json={"value": "face-ok:entry"}).json()["token"]
         for workflow in (True, False):
             get_settings().workflow_enabled = workflow
             for text, want in QUESTIONS:

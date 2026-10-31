@@ -42,6 +42,8 @@ def main() -> int:
     print(f"模型：{s.llm_provider} / {s.llm_model} @ {s.llm_base_url}\n")
     failures, warnings, total = 0, 0, 0.0
     with TestClient(create_app()) as c:
+        # 进入前人脸核身（模拟）：不带进入凭证，/api/chat 返回 401
+        c.headers["X-Entry-Token"] = c.post("/api/auth/entry-face", json={"value": "face-ok:entry"}).json()["token"]
         sid = None
         for text, expected in DIALOG:
             t0 = time.perf_counter()
