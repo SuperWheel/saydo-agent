@@ -33,6 +33,24 @@ def schedule() -> ScheduledTransfer:
 
 # ---------- 定时转账（F-TR-05） ----------
 
+@pytest.mark.parametrize("sentence,label,first_day", [
+    ("帮我设置一个每个月月初定时给我妈转账500的任务", "每月 1 日 10:00", 1),
+    ("每月底给我妈转500", "每月最后一天 10:00", None),
+    ("每个月月末给我妈转500", "每月最后一天 10:00", None),
+])
+def test_month_start_and_end_are_schedules_not_transfers(client, sentence, label, first_day):
+    """「每个月月初 / 月底」是定时转账，不能落到普通转账规则变成立即扣款。月底按 31 号存，小月按月末执行。"""
+    c = say(client, sentence)["cards"][0]
+    rows = dict(c["rows"])
+    assert c["title"] == "定时转账确认" and rows["执行时间"] == label and c["amount"] == "500.00"
+    first = datetime.fromisoformat(rows["首次执行"].replace(" ", "T"))
+    if first_day:
+        assert first.day == first_day
+    else:  # 首次执行是那个月的最后一天
+        assert (first + timedelta(days=1)).day == 1
+    assert balance(client) == BALANCE  # 只是设置，没有扣款
+
+
 def test_monthly_transfer_created_and_runs(client):
     r = say(client, "每月15号给我妈转500，备注生活费")
     c = r["cards"][0]

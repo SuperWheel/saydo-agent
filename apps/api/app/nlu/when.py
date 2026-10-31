@@ -1,6 +1,7 @@
 """日期解析（技术文档 §7.6 时间解析的子集）：显式传入 now，按北京时间算。
 
-支持：2026-11-20、11月20号、下个月20号、20号、下周五、这周六、周日、今天 / 明天 / 后天 / 大后天、每月15号。
+支持：2026-11-20、11月20号、下个月20号、20号、下周五、这周六、周日、今天 / 明天 / 后天 / 大后天、每月15号、
+每月月初（1 号）/ 月底（最后一天）。
 解析不了返回 None，由上层追问，不猜。
 """
 
@@ -20,7 +21,8 @@ _THIS_MONTH = re.compile(rf"(?:这|本)个?月{_NUM}[日号]")
 _WEEK = re.compile(r"(下下|下|这|本)?(?:个)?(?:周|星期|礼拜)([一二三四五六日天1-7])")
 _RELATIVE = {"今天": 0, "明天": 1, "后天": 2, "大后天": 3}
 _BARE_DAY = re.compile(rf"(?<![月\d]){_NUM}[日号]")
-_MONTHLY = re.compile(rf"每个?月(?:的)?{_NUM}[日号]")
+_MONTHLY = re.compile(rf"每个?月(?:的)?(?:{_NUM}[日号]|月?(?P<edge>初|底|末))")
+MONTH_END = 31  # 「月底」按 31 号存：next_monthly 遇到小月按月末执行
 
 
 def cn_int(s: str) -> int | None:
@@ -89,7 +91,8 @@ class When:
     @property
     def label(self) -> str:
         if self.recurrence == "monthly":
-            return f"每月 {self.day_of_month} 日 {self.first:%H:%M}"
+            day = "最后一天" if self.day_of_month == MONTH_END else f" {self.day_of_month} 日"
+            return f"每月{day} {self.first:%H:%M}"
         return f"{self.first:%Y-%m-%d %H:%M}"
 
 
@@ -111,7 +114,7 @@ def next_monthly(day: int, after: datetime) -> datetime:
 def parse_when(text: str, at: datetime) -> When | None:
     """定时转账的执行时间：每月 N 号，或者某一天（只认今天以后）。"""
     if m := _MONTHLY.search(text):
-        day = cn_int(m.group(1))
+        day = {"初": 1, "底": MONTH_END, "末": MONTH_END}[m.group("edge")] if m.group("edge") else cn_int(m.group(1))
         if day is None or not 1 <= day <= 31:
             return None
         return When("monthly", next_monthly(day, at), day)

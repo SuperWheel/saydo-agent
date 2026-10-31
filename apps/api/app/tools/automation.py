@@ -27,7 +27,7 @@ from ..models import (Account, ChatMessage, Contact, MerchantOrder, PendingActio
                       Transaction, WishPot)
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, ordinal_index, resolve_payee
-from ..nlu.when import next_monthly, parse_date, parse_when
+from ..nlu.when import MONTH_END, next_monthly, parse_date, parse_when
 from ..policy import PolicyContext, Risk
 from ..security import breaker, mask_pii
 from . import ToolContext, ToolResult, bank_tool
@@ -667,7 +667,7 @@ def active_schedules(db: Session, user_id: int) -> list[ScheduledTransfer]:
 def _schedule_label(db: Session, st: ScheduledTransfer) -> str:
     c = db.get(Contact, st.contact_id)
     if st.recurrence == "monthly":
-        when = f"每月 {st.day_of_month} 日"
+        when = "每月最后一天" if st.day_of_month == MONTH_END else f"每月 {st.day_of_month} 日"
     else:
         when = f"{st.next_run_at:%m-%d}" if st.next_run_at else "单次"
     return f"{when}给{c.masked_name}转 {fmt_yuan(st.amount_fen)} 元"
@@ -884,7 +884,7 @@ def release_expired_pots(db: Session, user_id: int, trace_id: str) -> list[tuple
 _POT_LOCK = re.compile(r"(存|放|锁|攒|留|转|划|预留|锁定)[^，,。；;]{0,12}心愿罐|心愿罐[^，,。；;]{0,4}(存|放|锁|攒|留|转|划)")
 _LIST = re.compile(r"自动任务|定时转账有哪些|有哪些定时|心愿罐.{0,6}(多少|余额|情况|还有)|我设了哪些|我的心愿罐|我的计划")
 _SCHEDULE_CANCEL = re.compile(r"(取消|停掉|关掉|不要了).{0,8}(定时|每月|每个月|自动)转账|(定时|每月|每个月|自动)转账.{0,6}(取消|停掉|不要了)")
-_SCHEDULE = re.compile(r"(?P<when>每个?月的?[\d一二三四五六七八九十]{1,3}[日号]|下下?个?月[\d一二三四五六七八九十]{1,3}[日号]"
+_SCHEDULE = re.compile(r"(?P<when>每个?月的?(?:[\d一二三四五六七八九十]{1,3}[日号]|月?[初底末])|下下?个?月[\d一二三四五六七八九十]{1,3}[日号]"
                        r"|[\d一二三四五六七八九十]{1,2}月[\d一二三四五六七八九十]{1,3}[日号]|下下?(?:个)?(?:周|星期|礼拜)[一二三四五六日天]"
                        r"|明天|后天|大后天)[^，,。]{0,6}?(?:给|向)(?P<payee>[^\s，,。！!？?]{1,10}?)(?:转账|转)(?!了)"
                        r"(?P<amount>[¥￥]?[\d零〇一壹二两贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟万萬wWkK.]+(?:块|元)?)")
