@@ -1,10 +1,10 @@
 """HTTP 接口。M0 没有登录，固定使用演示用户（DEMO_USER_ID）。"""
 
 import hmac
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from ..flags import kill_switch_on, set_flag
 from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
 from ..security import breaker
+from ..tools.bill import DETAIL_MAX_DAYS, txn_detail
 from ..tools.wealth import product_detail
 
 
@@ -107,6 +108,20 @@ def wealth_product(code: str, db: Session = Depends(get_db), user_id: int = Depe
     if detail is None:
         raise HTTPException(404, "没有这款产品")
     return detail
+
+
+@api.get("/bill/txns")
+def bill_txns(start: datetime, end: datetime, kind: str | None = None, category: str | None = None,
+              keyword: str | None = Query(default=None, max_length=100), min_amount: str | None = Query(default=None, max_length=20),
+              max_amount: str | None = Query(default=None, max_length=20), offset: int = Query(default=0, ge=0),
+              limit: int = Query(default=100, ge=1, le=200),
+              db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """消费分类卡 / 交易明细卡点开后的完整明细（只读）。参数照抄卡片上的 detail，口径和对话里查到的一致。"""
+    start, end = start.replace(tzinfo=None), end.replace(tzinfo=None)  # 卡片给的是不带时区的北京时间
+    if end <= start or end - start > timedelta(days=DETAIL_MAX_DAYS):
+        raise HTTPException(400, f"时间范围不对：结束要晚于开始，最长 {DETAIL_MAX_DAYS} 天")
+    return txn_detail(db, user_id, start, end, kind=kind, category=category, keyword=keyword,
+                      min_amount=min_amount, max_amount=max_amount, offset=offset, limit=limit)
 
 
 @api.get("/handoff/{code}")
