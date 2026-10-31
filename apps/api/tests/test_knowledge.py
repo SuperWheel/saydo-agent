@@ -11,7 +11,7 @@ from app import knowledge
 from app.agent.grounding import _PROMISE, check, collect_facts
 from app.core_mock.subscriptions import MERCHANT_SIDE, cancel_guide
 from app.core_mock.wealth import PRODUCTS
-from app.nlu import rule_intent
+from app.nlu import asks_rule, has_action_slots, rule_intent
 from app.security import mask_pii
 from app.tools import REGISTRY, model_tools
 from app.tools.knowledge import MODEL_NOTE, NO_HIT, lookup
@@ -290,3 +290,61 @@ def test_llm_no_hit_dropped_when_other_tool_answers(llm_client, fake):
     f = fake(both, text("推荐前需要先完成风险测评。"))
     r = say(llm_client, "有没有保本稳赚的理财")
     assert "notice" not in kinds(r) and len(f.calls) == 2
+
+
+# ---------- 规则 / 条件类问句（kb-routing）：业务正则会接走的问法，没有办理槽位时先走知识库 ----------
+
+@pytest.mark.parametrize("t", [
+    "赎回理财的时候需要刷脸吗", "支付宝里的自动扣款服务怎么停", "把一张卡解除绑定会有什么影响", "用助手订花付款要不要人脸验证",
+    "活钱宝赎回当天能到账吗", "风险承受能力低能不能买高风险理财产品", "证明盗刷不是本人交易要准备哪些材料",
+    "腾讯视频的连续包月在哪里关", "会员没提醒就自动续费扣钱了能要回来吗", "我能要求银行删掉我的个人信息吗",
+    "停了代扣以后爱奇艺会员还会续费吗", "年年盈起购金额是多少", "公安让我把钱转到安全账户是真的吗",
+])
+def test_rule_questions_are_faq(t):
+    assert asks_rule(t) and rule_intent(t).intent == "faq"
+
+
+@pytest.mark.parametrize("t, intent", [
+    ("给我妈转500行吗", "transfer"),  # 有金额：办理
+    ("赎回活钱宝1000元可以吗", "wealth"),
+    ("能帮我锁一下尾号6688的卡吗", "card"),  # 有尾号
+    ("帮我取消爱奇艺会员", "sub"),  # 请求办理
+    ("怎么取消腾讯视频的自动续费", "sub"),  # 点名了自己订的商户：走取消流程（卡上指引同样来自知识库）
+    ("我的卡丢了怎么办", "card"),  # 先锁卡止损
+    ("我的理财怎么样", "wealth"),  # 问自己的账户
+    ("怎么理财", "wealth"),  # 要建议，不是问规则
+    ("我还有多少钱", "balance"),
+    ("我的风险等级是什么", "wealth"),
+    ("这个月钱怎么花这么快", "unknown"),  # 看自己的账单，交给模型
+    ("活钱宝和稳盈30天有什么区别", "wealth"),  # 两个产品：理财对比
+])
+def test_action_or_personal_questions_are_not_faq(t, intent):
+    assert not asks_rule(t) and rule_intent(t).intent == intent
+
+
+def test_rule_question_without_kb_hit_is_not_faq():
+    """问法像规则问句、但知识库查不到（超范围）：不改原来的分流。"""
+    assert not asks_rule("怎么申请信用卡分期提额到十万") and not asks_rule("为什么天是蓝的")
+
+
+@pytest.mark.parametrize("t, slots", [
+    ("给我妈转500行吗", True), ("转1万要人脸吗", True), ("两千块能转吗", True), ("尾号6688的卡能解绑吗", True),
+    ("给13812345678转钱要验证吗", True),
+    ("安享90天风险等级是多少", False), ("稳健型客户能买R4的产品吗", False), ("七天无理由退货怎么算", False),
+    ("能不能每月固定日子自动给家里转钱", False),  # 只有收款人、没有金额，不算办理槽位
+])
+def test_action_slots(t, slots):
+    assert has_action_slots(t) is slots
+
+
+@pytest.mark.parametrize("t, want", [
+    ("赎回理财的时候需要刷脸吗", "faq-wm-verify"),
+    ("支付宝里的自动扣款服务怎么停", "mc-alipay"),
+    ("把一张卡解除绑定会有什么影响", "faq-card-unbind"),
+    ("用助手订花付款要不要人脸验证", "faq-order-verify"),
+    ("证明盗刷不是本人交易要准备哪些材料", "reg-card-fraud-evidence"),
+])
+def test_rule_mode_rule_questions_answer_from_kb(client, t, want):
+    """规则模式：这些问句原来被赎回、订阅、解绑、下单、账单异常接走，现在出知识卡，不出确认卡。"""
+    r = say(client, t)
+    assert kinds(r) == ["knowledge"] and want in [i["id"] for i in r["cards"][0]["items"]]
