@@ -22,6 +22,7 @@ from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
 from ..security import breaker, support
 from ..tools.bill import DETAIL_MAX_DAYS, txn_detail
+from ..tools import card as card_tools
 from ..tools.wealth import product_detail
 
 
@@ -108,6 +109,40 @@ def wealth_product(code: str, db: Session = Depends(get_db), user_id: int = Depe
     if detail is None:
         raise HTTPException(404, "没有这款产品")
     return detail
+
+
+def _card_call(fn, db: Session, *args):
+    try:
+        out = fn(db, *args)
+    except actions.ActionError as e:
+        db.commit()  # 人脸失败也要落审计和熔断计数
+        raise HTTPException(e.status_code, str(e)) from e
+    db.commit()
+    return out
+
+
+@api.get("/cards/{card_id}")
+def card_detail(card_id: int, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """卡片列表上点开一张卡的详情（只读）。卡号只给掩码，完整卡号走下面的人脸验证。"""
+    return _card_call(card_tools.card_detail, db, user_id, card_id)
+
+
+@api.post("/cards/{card_id}/reveal")
+def card_reveal_start(card_id: int, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """详情里点小眼睛：发一个模拟人脸挑战（只要人脸，不要短信）。"""
+    return _card_call(card_tools.start_reveal, db, user_id, card_id)
+
+
+class RevealIn(BaseModel):
+    factor: Literal["face"]
+    value: str = Field(max_length=200)
+
+
+@api.post("/cards/reveals/{challenge_id}/verify")
+def card_reveal_verify(challenge_id: str, body: RevealIn, db: Session = Depends(get_db),
+                       user_id: int = Depends(current_user_id)):
+    """人脸通过后返回一次完整卡号（只在这个响应里出现，不进审计、不进对话和模型上下文）。"""
+    return _card_call(card_tools.reveal_number, db, user_id, challenge_id[:32], body.value)
 
 
 @api.get("/bill/txns")

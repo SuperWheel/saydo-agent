@@ -1,27 +1,33 @@
-"""卡片管理（WS3）：查卡 🟢、锁卡 🟡、解锁 / 解除挂失 🔴、挂失 🔴、交易限制（收紧 🟡 / 放宽 🔴）、限额虚拟卡 🟡。
+"""卡片管理（WS3）：查卡 🟢、锁卡 🟡、解锁 / 解除挂失 🔴、挂失 🔴、交易限制（收紧 🟡 / 放宽 🔴）、限额虚拟卡 🟡、绑卡 🔴。
 
 设计要点是不对称：收紧保护的操作门槛低，放松保护的操作门槛高。锁卡、挂失是止损操作（stop_loss），收紧交易限制也算（stop_loss_if），熔断开着也能办。
 收紧还是放宽由系统比对卡片当前设置算出（规则 card_loosen），模型只传「改哪一项、改成什么」。
-给模型、前端和审计的卡片信息一律只露尾号。
+给模型、前端和审计的卡片信息一律只露尾号。完整卡号只在卡片详情里、本人人脸验证通过后由 reveal_number 返回一次。
 """
 
+import hashlib
+import hmac
 import re
 import secrets
 from datetime import timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth.actions import PolicyEnv, base_context, propose_action
+from .. import audit
+from ..auth.actions import ActionError, PolicyEnv, base_context, propose_action
 from ..cards import SOURCE_CORE, action_display, notice_card
 from ..clock import now
+from ..core_mock import cards as core
 from ..core_mock.ledger import LedgerError
-from ..models import Card
+from ..flags import kill_switch_on
+from ..models import Account, Card, CardReveal, User
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, card_amount_text
 from ..nlu import card_hint as hint_in
 from ..policy import PolicyContext, Risk
-from ..security import mask_pii
+from ..security import breaker, mask_pii
 from . import ToolContext, ToolResult, bank_tool
 
 KIND_LABEL = {"debit": "借记卡", "credit": "信用卡", "virtual": "虚拟卡"}
@@ -43,7 +49,7 @@ OPS = {
     "limit": {"tool": "card.limit_set", "verb": "修改交易限制", "ask": "要修改哪张卡的交易限制？", "status": ("active", "locked"),
               "kinds": ("debit", "credit", "virtual")},
 }
-OP_OF_TOOL = {v["tool"]: k for k, v in OPS.items()} | {"card.virtual_create": "virtual_apply"}
+OP_OF_TOOL = {v["tool"]: k for k, v in OPS.items()} | {"card.virtual_create": "virtual_apply", "card.bind": "bind"}
 
 LOST_TIP = "别着急，建议先临时锁卡止损：立即生效，找到了可以随时解锁；确定找不到了再办理挂失。"
 
@@ -100,12 +106,14 @@ def _view(c: Card) -> dict:
     return v
 
 
-def card_list_card(cards: list[Card], *, hint: str | None = None) -> dict:
+def card_list_card(cards: list[Card], *, hint: str | None = None, bind: bool = False) -> dict:
     return {
         "type": "card_list",
         "hint": hint,
-        "cards": [{"name": c.name, "kind": c.kind, "kind_label": KIND_LABEL[c.kind], "tail": c.tail, "status": c.status,
-                   "status_label": STATUS_LABEL[c.status], "rows": _limit_rows(c) + _extra_rows(c)} for c in cards],
+        "cards": [{"id": c.id, "name": c.name, "kind": c.kind, "kind_label": KIND_LABEL[c.kind], "tail": c.tail,
+                   "status": c.status, "status_label": STATUS_LABEL[c.status], "rows": _limit_rows(c) + _extra_rows(c)}
+                  for c in cards],
+        "can_bind": bind,  # 查卡结果上显示「绑定新卡」；「锁哪张卡」追问时不显示
         "as_of": now().strftime("%Y-%m-%d %H:%M"),
         "source": SOURCE_CORE,
     }
@@ -175,7 +183,101 @@ def _pick(ctx: ToolContext, op: str, card_hint: str | None, *, card_ids: list[in
 def list_cards(ctx: ToolContext, card_hint: str | None = None) -> ToolResult:
     every = _user_cards(ctx.db, ctx.user_id)
     cards = resolve_cards(every, card_hint) or every
-    return ToolResult({"cards": [_view(c) for c in cards], "total": len(every)}, card_list_card(cards))
+    return ToolResult({"cards": [_view(c) for c in cards], "total": len(every)}, card_list_card(cards, bind=True))
+
+
+# ---------- 卡片详情 🟢 与查看完整卡号（人脸）----------
+
+REVEAL_TTL_S = 120  # 人脸挑战两分钟内有效，一次一用
+REVEAL_MAX_ATTEMPTS = 3
+
+
+def _owned(db: Session, user_id: int, card_id: int) -> Card:
+    card = db.get(Card, card_id)
+    if card is None or card.user_id != user_id:
+        raise ActionError(404, "没有这张卡")
+    return card
+
+
+def _profile(c: Card) -> core.CardProfile:
+    """开户资料按卡号在模拟核心里查；虚拟卡跟着扣款账户走，开立日期就是申请那天。"""
+    if p := core.profile_of(c.card_no):
+        return p
+    if c.kind == "virtual":
+        return core.CardProfile(core.HOME_BANK, "线上开立（随扣款卡）", "限额虚拟卡", c.created_at.date())
+    return core.CardProfile(core.HOME_BANK, "—", KIND_LABEL[c.kind], c.created_at.date())
+
+
+def card_detail(db: Session, user_id: int, card_id: int) -> dict:
+    """卡片详情弹层（只读）。卡号只给掩码（前 4 后 4），完整卡号要人脸验证后另取。
+    余额由账务引擎记账的账户余额给出；他行绑定卡的余额、额度是模拟核心按发卡行返回的数据。"""
+    c = _owned(db, user_id, card_id)
+    p, user = _profile(c), db.get(User, user_id)
+    bound = core.POOL_BY_NO.get(c.card_no)
+    if c.kind == "credit":
+        money = [["信用额度", f"¥{fmt_yuan(c.credit_limit_fen or 0)}"], ["可用额度", f"¥{fmt_yuan(c.available_fen or 0)}"]]
+    elif c.kind == "debit":
+        acct = c.account_id and db.get(Account, c.account_id)
+        balance = acct.balance_fen if acct else bound.balance_fen if bound else None
+        money = [["账户余额", "—" if balance is None else f"¥{fmt_yuan(balance)}"]]
+    else:
+        money = [["卡片限额", f"¥{fmt_yuan(c.limits['daily_fen'])}"]]
+    rows = [["开户银行", p.bank], ["开户网点", p.branch], ["卡种", p.card_class], ["户名", core.mask_holder(user.name)],
+            ["卡片状态", STATUS_LABEL[c.status]], ["开户日期", f"{p.opened_on:%Y-%m-%d}"],
+            ["预留手机号", user.phone_masked]]
+    if bound:
+        rows.append(["绑定日期", f"{c.created_at:%Y-%m-%d}"])
+    return {"id": c.id, "name": c.name, "kind": c.kind, "kind_label": KIND_LABEL[c.kind], "tail": c.tail,
+            "status": c.status, "status_label": STATUS_LABEL[c.status], "card_no_masked": core.masked_no(c.card_no),
+            "bank": p.bank, "money": money, "rows": rows, "limits": _limit_rows(c) + _extra_rows(c),
+            "bound": bool(bound and p.bank != core.HOME_BANK),
+            "reveal": {"factors": ["face"], "ttl_s": REVEAL_TTL_S,
+                       "note": "查看完整卡号需要本人人脸验证；关闭详情后再看要重新验证"},
+            "as_of": now().strftime("%Y-%m-%d %H:%M"), "source": SOURCE_CORE}
+
+
+def start_reveal(db: Session, user_id: int, card_id: int) -> dict:
+    """要看完整卡号：先发一个人脸挑战。熔断中（只读 / 暂停 / 转人工）不让看，避免被盗号的人拿到卡号。"""
+    c = _owned(db, user_id, card_id)
+    if kill_switch_on(db) or breaker.active_trips(db, user_id):
+        raise ActionError(423, "安全保护期间暂不能查看完整卡号，解除后再试")
+    rid = "R" + secrets.token_hex(8)
+    digest = hashlib.sha256(f"{rid}:{user_id}:{c.id}:{secrets.token_hex(8)}".encode()).hexdigest()
+    db.add(CardReveal(id=rid, user_id=user_id, card_id=c.id, digest=digest,
+                      expires_at=now() + timedelta(seconds=REVEAL_TTL_S)))
+    audit.record(db, rid, "auth_challenge", {"challenge_id": rid, "purpose": "card_reveal", "card_tail": c.tail,
+                                             "factors": ["face"]})
+    return {"challenge_id": rid, "digest": digest, "factors": [{"factor": "face", "label": "人脸识别"}],
+            "summary": f"查看{_label(c)}的完整卡号", "expires_in_s": REVEAL_TTL_S}
+
+
+def reveal_number(db: Session, user_id: int, challenge_id: str, value: str) -> dict:
+    """校验模拟人脸断言（绑定这次挑战的摘要），通过后返回一次完整卡号。审计只记尾号，不记卡号。"""
+    rv = db.get(CardReveal, challenge_id)
+    if rv is None or rv.user_id != user_id:
+        raise ActionError(404, "验证不存在")
+    if rv.status != "pending":
+        raise ActionError(409, "这次验证已经用过，请重新点小眼睛")
+    if now() > rv.expires_at:
+        rv.status = "failed"
+        raise ActionError(410, "验证已超时，请重新点小眼睛")
+    c = _owned(db, user_id, rv.card_id)
+    who = SimpleNamespace(user_id=user_id, session_id=None, trace_id=rv.id, tool="card.reveal")
+    if not hmac.compare_digest(value.encode(), f"face-ok:{rv.digest}".encode()):  # 按字节比，非 ASCII 输入不报错
+        rv.attempts += 1
+        audit.record(db, rv.id, "auth_failed", {"challenge_id": rv.id, "purpose": "card_reveal", "factor": "face",
+                                                "attempts": rv.attempts})
+        # 计入熔断计数，触发条件和转账、挂失的验证失败相同：连续 3 次失败冻结「查看卡号」30 分钟，期间 start_reveal 拒绝
+        breaker.on_auth_failed(db, who)
+        if rv.attempts >= REVEAL_MAX_ATTEMPTS:
+            rv.status = "failed"
+            raise ActionError(403, "人脸验证失败次数过多，本次不能查看完整卡号")
+        raise ActionError(403, "人脸验证未通过，请重试")
+    rv.status = "passed"
+    audit.record(db, rv.id, "auth_passed", {"challenge_id": rv.id, "purpose": "card_reveal", "factor": "face"})
+    breaker.on_auth_passed(db, who)  # 「连续失败」从这里重新计数
+    audit.record(db, rv.id, "card_number_viewed", {"challenge_id": rv.id, "card_id": c.id, "card_tail": c.tail})
+    return {"card_no": core.grouped_no(c.card_no), "tail": c.tail}
 
 
 # ---------- 锁卡 🟡 / 解锁 🔴 / 挂失 🔴 ----------
@@ -367,6 +469,99 @@ def propose_virtual(ctx: ToolContext, amount_text: str | None = None, merchant: 
                           data={"limit_yuan": fmt_yuan(limit), "merchant": merchant or "不限", "funding_tail": funding.tail})
 
 
+# ---------- 绑卡 🔴 ----------
+# 演示卡池（core_mock/cards.BIND_POOL）是银联卡库里户名为本人的 20 张卡，按卡号后四位匹配。
+# 绑卡会多出一个能付款的工具，盗号后最常见的就是先绑一张卡，所以和挂失、解锁一样要人脸 + 短信（规则 card_bind）
+
+LIMIT_MSG = f"目前最多支持绑定 {core.MAX_CARDS} 张卡。"
+BOUND_LIMITS = {
+    "debit": {"overseas": False, "online": True, "atm": True, "per_txn_fen": 500_000, "daily_fen": 2_000_000},
+    "credit": {"overseas": False, "online": True, "atm": False, "per_txn_fen": 2_000_000, "daily_fen": 5_000_000},
+}
+
+
+def _unbound(db: Session, user_id: int) -> list[core.PoolCard]:
+    mine = {c.card_no for c in _user_cards(db, user_id)}
+    return [p for p in core.BIND_POOL if p.card_no not in mine]
+
+
+def _pool_view(p: core.PoolCard) -> dict:
+    return {"id": p.id, "bank": p.bank, "kind": p.kind, "kind_label": KIND_LABEL[p.kind], "card_class": p.card_class,
+            "tail": p.tail, "card_no_masked": core.masked_no(p.card_no)}
+
+
+def card_bind_card(candidates: list[core.PoolCard], *, count: int, tail: str | None = None) -> dict:
+    return {"type": "card_bind", "candidates": [_pool_view(p) for p in candidates], "tail": tail,
+            "reply": "请输入要绑定的卡号后四位，或在卡片上选择一张。",
+            "count": count, "max": core.MAX_CARDS, "source": SOURCE_CORE,
+            "note": "演示环境：卡池是银联卡库里户名为你本人的卡（虚构）。输入后四位或点选一张，确认后需人脸 + 短信验证。"}
+
+
+@bank_tool(
+    name="card.bind_propose", domain="card", base_risk=Risk.GREEN,
+    description="绑定一张新的银行卡（本人名下的他行或本行借记卡 / 信用卡），生成确认卡，需要人脸 + 短信验证。"
+                "用户说了卡号后四位就填 tail；没说就不填，系统会展示绑卡卡片让用户输入或选择。",
+    capability="绑定新银行卡", examples=("我要绑一张新卡",),
+    parameters={"type": "object", "properties": {
+        "tail": {"type": "string", "description": "要绑定的卡号后四位，照抄用户原话；用户没说就不填"}}},
+)
+def propose_bind(ctx: ToolContext, tail: str | None = None, *, pool_id: str | None = None,
+                 typed: bool = False) -> ToolResult:
+    """pool_id：绑卡卡片上点选的那张；typed：后四位是用户在卡片上输入的（不在聊天原话里）。"""
+    count = len(_user_cards(ctx.db, ctx.user_id))
+    if count >= core.MAX_CARDS:
+        _set_question(ctx, None)
+        return ToolResult({"status": "limit_reached", "message": LIMIT_MSG, "count": count}, notice_card(LIMIT_MSG, "warning"))
+    free = _unbound(ctx.db, ctx.user_id)
+    if pool_id is not None:
+        picked = [p for p in free if p.id == pool_id]
+        if not picked:
+            msg = "这张卡已经绑定过了，或者选项已失效，请重新选择。"
+            return ToolResult({"status": "not_found", "message": msg}, notice_card(msg, "warning"))
+    else:
+        tail = (m := re.search(r"\d{4}", tail or "")) and m.group()
+        if tail and not typed and not any(tail in t for t in ctx.user_texts):
+            tail = None  # 尾号必须来自用户原话，模型编的不算
+        if not tail:
+            _set_question(ctx, {"kind": "card", "op": "bind", "card_ids": [], "params": {}})
+            return ToolResult({"status": "need_tail", "ask": "请输入要绑定的卡号后四位，或在卡片上选择一张。",
+                               "note": "绑卡卡片已展示给用户，不要列出卡号。"}, card_bind_card(free, count=count))
+        if any(c.tail == tail and c.card_no in core.POOL_BY_NO for c in _user_cards(ctx.db, ctx.user_id)):
+            msg = f"尾号{tail}的卡已经绑定，可以在卡片列表里查看。"
+            return ToolResult({"status": "already_bound", "message": msg}, notice_card(msg))
+        picked = [p for p in free if p.tail == tail]
+        if not picked:
+            msg = f"没有找到尾号{tail}、户名是你本人的卡。请核对卡号后四位（演示卡池在绑卡卡片里可以点选）。"
+            return ToolResult({"status": "not_found", "message": msg}, notice_card(msg, "warning"))
+        if len(picked) > 1:
+            _set_question(ctx, {"kind": "card", "op": "bind", "card_ids": [], "params": {}})
+            return ToolResult({"status": "need_tail", "ask": f"尾号{tail}的卡有 {len(picked)} 张，请在卡片上选择一张。"},
+                              card_bind_card(picked, count=count, tail=tail))
+    _set_question(ctx, None)
+    p, user = picked[0], ctx.db.get(User, ctx.user_id)
+    label = f"{p.bank}{KIND_LABEL[p.kind]}（尾号{p.tail}）"
+    display = action_display(title="绑卡确认", verb="绑卡", summary=f"绑定{label}", rows=[
+        ["发卡银行", p.bank], ["卡种", p.card_class], ["卡号", core.masked_no(p.card_no)], ["开户网点", p.branch],
+        ["户名", core.mask_holder(user.name)], ["预留手机号", user.phone_masked],
+        ["绑定后", "出现在卡片列表，可查看详情、锁卡、调整限额"], ["已绑定", f"{count} / {core.MAX_CARDS} 张"]],
+        fields={"op": "bind", "card_tail": p.tail, "bank": p.bank})
+    return propose_action(ctx, tool="card.bind", args={"pool_id": p.id, "card_tail": p.tail}, display=display,
+                          data={"bank": p.bank, "kind": KIND_LABEL[p.kind], "tail": p.tail,
+                                "tip": "绑卡需要人脸 + 短信验证，验证码发到这张卡的预留手机号。"})
+
+
+def _bind_problem(db: Session, args: dict, user_id: int) -> str | None:
+    p = core.POOL_BY_ID.get(args.get("pool_id"))
+    if p is None or p.tail != args.get("card_tail"):
+        return "卡片信息校验失败"
+    cards = _user_cards(db, user_id)
+    if any(c.card_no == p.card_no for c in cards):
+        return "这张卡已经绑定"
+    if len(cards) >= core.MAX_CARDS:
+        return LIMIT_MSG.rstrip("。")
+    return None
+
+
 # ---------- 写工具：只能由网关凭执行令牌调用 ----------
 
 def _card_context(tool: str):
@@ -374,6 +569,8 @@ def _card_context(tool: str):
 
     def build(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
         facts = {"op": OP_OF_TOOL[tool]}
+        if tool == "card.bind":
+            return base_context(db, env, tool=tool, block_reason=_bind_problem(db, args, env.user_id), facts=facts)
         if tool == "card.virtual_create":
             funding = db.get(Card, args["funding_card_id"])
             limit = args["limit_fen"]
@@ -488,6 +685,26 @@ def create_virtual(db: Session, args: dict, *, idempotency_key: str, user_id: in
                              ["卡号与安全码", "请在 App「卡片」页查看（演示环境不展示完整卡号）"]]}
 
 
+@bank_tool(
+    name="card.bind", domain="card", base_risk=Risk.RED, side_effect=True, llm_visible=False,
+    policy_context=_card_context("card.bind"), description="绑定新银行卡。只能由工具网关凭执行令牌调用。",
+)
+def bind_card(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:
+    card = db.scalars(select(Card).where(Card.idempotency_key == idempotency_key)).first()
+    if card is None:  # 幂等：同一个动作只绑一次
+        if problem := _bind_problem(db, args, user_id):
+            raise LedgerError(problem)
+        p = core.POOL_BY_ID[args["pool_id"]]
+        card = Card(user_id=user_id, kind=p.kind, name=p.name, card_no=p.card_no, limits=dict(BOUND_LIMITS[p.kind]),
+                    credit_limit_fen=p.credit_limit_fen, available_fen=p.available_fen, idempotency_key=idempotency_key)
+        db.add(card)
+        db.flush()
+    p = core.POOL_BY_NO[card.card_no]
+    return {"status": "succeeded", "card_tail": card.tail,
+            "receipt_rows": [["已绑定", f"{p.bank}{KIND_LABEL[p.kind]}（尾号{card.tail}）"],
+                             ["生效时间", f"{now():%Y-%m-%d %H:%M:%S}"], ["查看", "说「查看我的银行卡」，点卡片看详情"]]}
+
+
 # ---------- 规则兜底（模型不可用时）----------
 
 def rule_turn(ctx: ToolContext, intent, text: str) -> str | None:
@@ -503,6 +720,9 @@ def rule_turn(ctx: ToolContext, intent, text: str) -> str | None:
     if intent.intent != "unknown" or pq.get("kind") != "card":
         return None
     op, params = pq["op"], pq.get("params") or {}
+    if op == "bind":  # 绑卡卡片出来后直接打字回后四位：「1234」「尾号是1234」
+        tails = re.findall(r"(?<!\d)\d{4}(?!\d)", text)
+        return _rule_text(ctx, propose_bind(ctx, tails[0])) if len(tails) == 1 else None
     if op == "virtual_apply":
         if not (amount := card_amount_text(text)):
             return None
@@ -528,6 +748,8 @@ def _run(ctx: ToolContext, op: str, card_hint: str | None, card_ids: list[int] |
                                  card_ids=card_ids)
         case "virtual_apply":
             return propose_virtual(ctx, p.get("amount_text"), p.get("merchant"), p.get("one_time", False))
+        case "bind":
+            return propose_bind(ctx, p.get("tail"))
     raise ValueError(op)
 
 
@@ -535,7 +757,7 @@ def _rule_text(ctx: ToolContext, r: ToolResult, *, lost: bool = False) -> str:
     if r.card:
         ctx.cards.append(r.card)
     status = r.data.get("status")
-    if status in ("need_card", "need_value"):
+    if status in ("need_card", "need_value", "need_tail"):
         return (LOST_TIP if lost else "") + r.data["ask"]
     if status == "pending_confirmation":
         if lost:

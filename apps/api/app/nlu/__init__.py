@@ -157,7 +157,13 @@ _CARD_SETTINGS = [
 _SWITCH_OFF = re.compile(r"关闭|关掉|关了|关上|停用|禁止|禁用|不允许|不让|屏蔽|停掉")
 _SWITCH_ON = re.compile(r"开通|开启|打开|允许|启用|开放|放开|恢复")
 _CARD_SETTINGS_ANY = re.compile(r"限额|额度|限制|境外|海外|线上|网上|无卡|ATM|取现|虚拟卡|单笔|单日|每天|每日")
-_CARD_LIST = re.compile(r"我的卡|几张卡|哪些卡|查.{0,3}卡|卡.{0,4}(状态|情况|限额|额度)|限额|额度")
+# 「我的银行卡」「几张信用卡」：卡前面可以带卡种；「查看我的银行卡」「银行卡列表」也是查卡
+_CARD_KIND_WORD = r"(?:银行|储蓄|借记|信用)?"
+_CARD_LIST = re.compile(rf"我的{_CARD_KIND_WORD}卡|(?:几|多少)张{_CARD_KIND_WORD}卡|哪些{_CARD_KIND_WORD}卡|查.{{0,3}}卡"
+                        r"|(?:看|查看|查询|列出|显示).{0,4}(?:银行|储蓄)卡|银行卡(?:列表|信息|情况|状态)?$"
+                        r"|卡.{0,4}(状态|情况|限额|额度)|限额|额度")
+# 绑卡：「我要绑一张新卡」「添加银行卡」「绑定尾号1234的卡」。「解绑」不是绑卡，申请虚拟卡另有流程
+_CARD_BIND = re.compile(r"(?<!解)绑(?:定)?.{0,8}卡|(?:添加|新增|加一张|增加|关联|绑上).{0,6}(?:银行|储蓄|借记|信用|新)?卡")
 _MERCHANT = re.compile(r"(?:只在|仅在|仅限|只限|专门在|只能在)(?P<m>[^\s，,。！!？?的]{1,10}?)(?:上|里)?(?:用|使用|消费|购物|买|的|$)")
 _COUNTER = re.compile(r"\s*(?:张|个|次|笔|天|日)")
 
@@ -186,6 +192,9 @@ def _card_intent(text: str) -> RuleIntent | None:
     hint = card_hint(text)
     if not re.search(r"\d{4}", hint) and not _CARD_SETTINGS_ANY.search(text):
         hint += "".join(f"尾号{t}" for t in bare_tails(text))
+    if _CARD_BIND.search(text) and not _CARD_VIRTUAL.search(text) and "虚拟卡" not in text:
+        tail = (m := re.search(r"\d{4}", hint)) and m.group()
+        return RuleIntent("card", {"op": "bind", "tail": tail})
     for op, pat in (("unlock", _CARD_UNLOCK), ("report_loss", _CARD_REPORT)):
         if pat.search(text):
             return RuleIntent("card", {"op": op, "card_hint": hint})

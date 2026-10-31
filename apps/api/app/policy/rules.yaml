@@ -83,6 +83,12 @@ rules:
     when: {op: report_loss}
     elevate_to: RED
     reason: "正式挂失后原卡立即停用，需要本人强验证"
+
+  - id: card_bind
+    tool_in: [card.bind]
+    when: {op: bind}
+    elevate_to: RED
+    reason: "绑定新卡会多一个能付款的工具（盗号后常见的第一步），需要本人强验证"
   # ---------- 理财（WS5）：适当性（R ≤ C、测评有效）在策略上下文的 block_reason 里硬拦截，这里只管定级 ----------
   # 事实由系统按当日净值和持仓算出（tools/wealth.py），不由模型填写
   - id: wealth_assess_raise

@@ -57,6 +57,29 @@ def test_fixed_flows_skip_model(llm_client, workflow, words, cards):
 
 
 @pytest.mark.parametrize("words", [
+    "查看我的银行卡", "我的银行卡", "看看我的卡", "我有几张卡", "我有几张银行卡", "看看我的银行卡",
+    "我名下有哪些银行卡", "查一下银行卡", "银行卡列表",
+])
+def test_card_list_is_workflow(llm_client, workflow, words):
+    """「查看我的银行卡」：直接出卡片列表，不调模型；余额、额度都是核心系统的数，不经过模型。"""
+    f = workflow(text("不该被调用"))
+    r = say(llm_client, words)
+    assert [c["type"] for c in r["cards"]] == ["card_list"] and f.calls == []
+    assert r["reply"]["workflow"] is True and r["reply"]["source"] == "rule"
+
+
+@pytest.mark.parametrize("words, cards", [
+    ("我要绑一张新卡", ["card_bind"]),
+    ("添加银行卡", ["card_bind"]),
+    ("绑定尾号1554的卡", ["confirm"]),
+])
+def test_card_bind_is_workflow(llm_client, workflow, words, cards):
+    f = workflow(text("不该被调用"))
+    r = say(llm_client, words)
+    assert [c["type"] for c in r["cards"]] == cards and f.calls == [] and r["reply"]["workflow"] is True
+
+
+@pytest.mark.parametrize("words", [
     "周末打车比工作日多花多少",  # 明细查询：规则只会算总额，答偏题
     "这个月比上个月多花了多少",  # 比较
     "在喜茶花了多少",  # 规则不认识的商户：规则会把全部消费当成答案
