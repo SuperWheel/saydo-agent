@@ -17,5 +17,5 @@ const parts = computed(() => props.text.split(SPLIT).map((seg, i) => {
 </script>
 
 <template>
-  <span class="icon-text"><template v-for="(p, i) in parts" :key="i"><template v-if="p.emoji"><img :src="p.src" class="app-icon" alt="" /><span class="sr-only">{{ p.emoji }} </span></template><template v-else>{{ p.text }}</template></template></span>
+  <span class="icon-text"><template v-for="(p, i) in parts" :key="i"><template v-if="p.emoji"><img :src="p.src" class="app-icon" alt="" /><span class="sr-only">{{ `${p.emoji} ` }}</span></template><template v-else>{{ p.text }}</template></template></span>
 </template>
