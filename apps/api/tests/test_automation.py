@@ -9,7 +9,7 @@ from app.db import new_session
 from app.models import PendingAction, ScheduledTransfer, Transaction, WishPot
 
 from .conftest import confirm, say
-from .helpers import BALANCE, after_travel, balance, events, ledger_ok
+from .helpers import BALANCE, after_travel, balance, events, ledger_ok, order
 
 
 def ok(client, card: dict) -> dict:
@@ -151,7 +151,7 @@ def test_pot_not_in_bill(client):
 def test_single_order_from_pot(client):
     r = say(client, "存500进心愿罐")
     ok(client, r["cards"][0])
-    r = say(client, "帮我订一束花送我妈", r["session_id"])
+    r = order(client, "帮我订一束花送我妈", r["session_id"])
     c = r["cards"][0]
     assert c["title"] == "订单确认" and dict(c["rows"])["付款方式"] == "心愿罐「心愿」" and "康乃馨" in r["reply"]["text"]
     ok(client, c)
@@ -166,7 +166,7 @@ def test_single_order_from_pot(client):
 
 def test_order_debit_is_red(client):
     """没有心愿罐时从活期付款：不在一键确认的范围内，升 🔴。"""
-    c = say(client, "帮我订个蛋糕")["cards"][0]
+    c = order(client, "帮我订个蛋糕")["cards"][0]
     assert c["level"] == "RED" and any("心愿罐" in x for x in c["reasons"])
 
 
@@ -210,14 +210,14 @@ def edit(client, sid: str, c: dict, sku: str, days: int = 3) -> dict:
 
 
 def test_order_card_offers_edit_options(client):
-    c = say(client, "帮我订个蛋糕")["cards"][0]
+    c = order(client, "帮我订个蛋糕")["cards"][0]
     e = c["edit"]
     assert e["kind"] == "order" and e["sku"] == "C201" and len(e["dates"]) == 14
     assert [i["sku"] for i in e["items"]] == ["C201", "C202", "C203"]  # 只列同一类目（蛋糕）
 
 
 def test_edit_order_changes_item_and_date(client):
-    r = say(client, "帮我订个蛋糕")
+    r = order(client, "帮我订个蛋糕")
     old = r["cards"][0]
     r = edit(client, r["session_id"], old, "C202", days=3)
     new = r["cards"][0]
@@ -241,7 +241,7 @@ def fmt(balance_text: str, delta_fen: int) -> str:
 
 @pytest.mark.parametrize("sku,days", [("F101", 3), ("C999", 3), ("C202", 0), ("C202", 15)])
 def test_edit_order_rejects_bad_choice_and_keeps_old_card(client, sku, days):
-    r = say(client, "帮我订个蛋糕")
+    r = order(client, "帮我订个蛋糕")
     old = r["cards"][0]
     c = edit(client, r["session_id"], old, sku, days)["cards"][0]
     assert c["type"] == "notice" and "重新选" in c["text"]
@@ -260,7 +260,7 @@ def test_edit_order_rolls_back_when_new_card_fails(client, monkeypatch):
     """新卡没出来（比如被策略拦下）：旧卡的作废一起回滚，原订单还能确认。"""
     from app.cards import notice_card
     from app.tools import ToolResult, automation
-    r = say(client, "帮我订个蛋糕")
+    r = order(client, "帮我订个蛋糕")
     old = r["cards"][0]
     monkeypatch.setattr(automation, "order_propose",
                         lambda ctx, quote_id, pot_id=None: ToolResult({"status": "blocked"}, notice_card("超出限额", "error")))

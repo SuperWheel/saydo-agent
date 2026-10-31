@@ -5,7 +5,8 @@
   2. 「撤销锁定」「转人工」「每月 15 号给我妈转 2000」这类必须确定性处理的话（否则规则会当成锁卡、立即转账）；
   3. 多步请求（跨场景动作 ≥ 2 个，或「生日 / 纪念日」+ 订花 / 存钱）才进规划器：有模型用模型出计划，
      模型不可用时用规则模板出计划；两者都过同一个校验器，校验不过就不执行、退回追问；
-  4. 规则模式下其余单步的心愿罐、订花、定时转账（tools/automation.py 的 rule_turn）。
+  4. 刚出过候选商品卡时的「要第二个」（两种模式都确定性处理，按候选卡顺序选）；
+  5. 规则模式下其余单步的心愿罐、买东西（出候选卡）、定时转账（tools/automation.py 的 rule_turn）。
 其余返回 None，照常走模型或规则。
 
 安全边界：计划里只能出现已注册的模型可见工具（只读工具和提议工具），写操作仍由提议工具生成确认卡，
@@ -48,7 +49,7 @@ ACTIVE = ("draft", "running", "waiting", "rolling_back")
 # 但只有这里声明过的输出字段才能被引用。
 PLAN_TOOLS = {
     "pot.lock_propose": ("把一笔钱存进心愿罐（生成确认卡）", ("pot_id",)),
-    "merchant.quote": ("向花店（flower）或蛋糕店（cake）询价，只读", ("quote_id",)),
+    "merchant.quote": ("向合作商户询价（category 填 flower 鲜花 / cake 蛋糕 等类目代码），按收礼人挑一件，只读", ("quote_id",)),
     "order.propose": ("按报价下单（生成订单确认卡），pot_id 填心愿罐步骤的引用就从心愿罐付款", ("order_id",)),
     "transfer.propose": ("立即转账（生成确认卡）", ("txn_no",)),
     "schedule.transfer_propose": ("设置定时 / 每月转账（生成确认卡）", ("schedule_id",)),
@@ -489,7 +490,7 @@ def _run_step(ctx: ToolContext, plan: TaskPlan, s: dict) -> bool:
     s["status"], s["output"] = "done", _scalars(result.data)
     if spec.name == "merchant.quote":
         d = result.data
-        s["detail"] = f"{d['shop']} · {d['item']} ¥{fmt_yuan(d['price_fen'])} · {d['delivery']}"
+        s["detail"] = f"{d['shop_label']} · {d['item']} ¥{fmt_yuan(d['price_fen'])} · {d['delivery']}"
     elif card:
         ctx.cards.append(card)
     return True
@@ -898,6 +899,13 @@ def route(ctx: ToolContext, guard, llm: Callable | None = None) -> tuple[str, st
         return request_handoff(ctx, None)
     if _undo_lock_said(text) and (out := undo_lock(ctx, None)) is not None:
         return out
+    if (picked := auto.pick_turn(ctx, text)) is not None:  # 候选卡之后「要第二个」
+        args, result = picked
+        _audit_tool(ctx, "order.propose", args, result)
+        if (result.card or {}).get("type") == "confirm":
+            ctx.cards.append(result.card)
+            return f"好的，选了{result.data['shop']}的{result.data['item']}，请核对订单确认卡。", "rule"
+        return _reply_for(ctx, result), "rule"
     if is_multi_step(text):
         return create_plan(ctx, text, llm)
     if slots := auto.schedule_slots(text):  # 「每月15号给我妈转2000」：两种模式都确定性处理，不能被当成立即转账

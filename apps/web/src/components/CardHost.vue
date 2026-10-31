@@ -14,6 +14,7 @@ import AutomationCard from './cards/AutomationCard.vue'
 import PlanCard from './cards/PlanCard.vue'
 import ReceiptCard from './cards/ReceiptCard.vue'
 import ReportCard from './cards/ReportCard.vue'
+import ShopOptionsCard from './cards/ShopOptionsCard.vue'
 import TxnListCard from './cards/TxnListCard.vue'
 import WealthCompareCard from './cards/WealthCompareCard.vue'
 import WealthHoldingsCard from './cards/WealthHoldingsCard.vue'
@@ -39,6 +40,7 @@ const CARDS = {
   card_list: CardListCard,
   plan: PlanCard,
   automation: AutomationCard,
+  shop_options: ShopOptionsCard,
   wealth_quiz: WealthQuizCard,
   wealth_recommend: WealthRecommendCard,
   wealth_compare: WealthCompareCard,

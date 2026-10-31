@@ -407,7 +407,8 @@ def recommend(ctx: ToolContext, horizon_text: str | None = None, amount_text: st
     ranked = sorted(cands, key=lambda p: (-scores[p.code], p.code))[:3]
     items = [{**_product_view(p), "score": scores[p.code], "reasons": _why(p, profile.level, horizon)} for p in ranked]
     diff = _diff(ranked[0], ranked[1]) if len(ranked) >= 2 else ""
-    ctx.session.state = {**(ctx.session.state or {}), "wealth_picks": [p.code for p in ranked]}  # 「买第一个」按这个顺序找
+    state = {k: v for k, v in (ctx.session.state or {}).items() if k != "shop_picks"}  # 「第一个」只认最近出的那张卡
+    ctx.session.state = {**state, "wealth_picks": [p.code for p in ranked]}  # 「买第一个」按这个顺序找
     if ranked:
         reply = (f"按你的风险承受能力 {LEVEL_LABEL[profile.level]}，筛出 {len(cands)} 款可购产品，"
                  f"排在前面的是{'、'.join(p.name for p in ranked[:2])}。")

@@ -80,6 +80,13 @@ def red_auth_card(client, sentence="给赵磊转100", session_id=None) -> dict:
     return out["card"]
 
 
+def order(client, sentence: str, session_id=None, nth: str = "第一个") -> dict:
+    """说要买东西 → 候选卡 → 「要第一个」→ 订单确认卡。返回选完这一轮的响应（cards[0] 是订单确认卡）。"""
+    r = say(client, sentence, session_id)
+    assert r["cards"][0]["type"] == "shop_options", r["cards"]
+    return say(client, f"要{nth}", r["session_id"])
+
+
 def is_breaker(card: dict, level: str | None = None) -> bool:
     """熔断提示卡：说明原因、恢复方式和申诉渠道。"""
     b = card.get("breaker")

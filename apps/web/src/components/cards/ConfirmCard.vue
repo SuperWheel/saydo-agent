@@ -1,24 +1,35 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import { api } from '../../api'
 
 const props = defineProps({ card: { type: Object, required: true } })
 const emit = defineEmits(['outcome', 'modify', 'select'])
 
-// 订单卡（订花、订蛋糕）的「修改」：换商品或送达日期。选好后回到对话重新报价，出一张新的确认卡，这张由后端作废。
+// 订单卡（订花、订蛋糕、买鞋……）的「修改」：换同类商品或送达日期（电子卡没有日期可选）。选好后回到对话重新报价，出一张新的确认卡，这张由后端作废。
 // 其他确认卡的「修改」仍是作废后请用户重新说。
 const editOpen = ref(false)
 const editSku = ref(props.card.edit?.sku || '')
 const editDate = ref(props.card.edit?.date || '')
 const WEEK = '日一二三四五六'
 const dayLabel = (d) => { const t = new Date(`${d}T00:00:00`); return `${d.slice(5)} 周${WEEK[t.getDay()]}` }
+// 快递几天才到的商品，早于它最快时效的日期不能选；换商品时日期跟着顺延
+const editItem = computed(() => props.card.edit?.items.find((i) => i.sku === editSku.value))
+const editFirst = computed(() => editItem.value?.first || '')
+// 时段说明按选中商品的店（「上午 10:00–12:00」「18:00 前」）；快递类只到日期（「11-03 前送达」），不另外写
+const slotHint = computed(() => {
+  const slot = (editItem.value?.slot ?? '上午 10:00–12:00 送达').replace(/\s*送达.*$/, '')
+  return slot && !slot.startsWith('前') ? `（${slot}）` : ''
+})
+const editDates = computed(() => (props.card.edit?.dates || []).filter((d) => d >= editFirst.value))
+watch(editSku, () => { if (editDate.value < editFirst.value) editDate.value = editDates.value[0] || editDate.value })
 const editChanged = computed(() => editSku.value !== props.card.edit?.sku || editDate.value !== props.card.edit?.date)
 
 function submitEdit() {
   const item = props.card.edit.items.find((i) => i.sku === editSku.value)
   editOpen.value = false
-  emit('select', { label: '修改订单', detail: `${item.name} · ${dayLabel(editDate.value)}送达`,
+  const when = props.card.edit.dates.length ? ` · ${dayLabel(editDate.value)}送达` : ''
+  emit('select', { label: '修改订单', detail: `${item.name}${when}`,
                    selection: { type: 'order_edit', action_id: props.card.action_id, sku: editSku.value, date: editDate.value } })
 }
 
@@ -102,14 +113,14 @@ async function act(kind) {
         <div class="edit-title">修改订单</div>
         <div class="edit-sec">商品</div>
         <van-radio-group v-model="editSku">
-          <van-cell v-for="i in card.edit.items" :key="i.sku" :title="i.name" :value="`¥${i.price}`" clickable
-                    @click="editSku = i.sku">
+          <van-cell v-for="i in card.edit.items" :key="i.sku" :title="i.name" :label="i.shop" :value="`¥${i.price}`"
+                    clickable @click="editSku = i.sku">
             <template #icon><van-radio :name="i.sku" class="radio" /></template>
           </van-cell>
         </van-radio-group>
-        <div class="edit-sec">送达日期（上午 10:00–12:00）</div>
-        <div class="dates">
-          <span v-for="d in card.edit.dates" :key="d" class="date" :class="{ on: d === editDate }" @click="editDate = d">
+        <div v-if="card.edit.dates.length" class="edit-sec">送达日期{{ slotHint }}</div>
+        <div v-if="card.edit.dates.length" class="dates">
+          <span v-for="d in editDates" :key="d" class="date" :class="{ on: d === editDate }" @click="editDate = d">
             {{ dayLabel(d) }}
           </span>
         </div>

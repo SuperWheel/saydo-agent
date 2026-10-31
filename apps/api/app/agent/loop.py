@@ -31,7 +31,7 @@ from ..tools.subscription import rule_turn as sub_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
-from ..tools.automation import edit_order
+from ..tools.automation import edit_order, pick_option
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
@@ -317,7 +317,8 @@ def _brief(ctx: ToolContext, text: str) -> str:
 # 全部 34 个工具的说明约 5,400 token，一次调用里要多花 3–4 秒；按规则意图只发相关业务域，认不出来时照旧发全部
 
 NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
-ENDS_TURN = {"confirm", "clarify", "notice"}
+# 候选商品卡也结束这一轮：等用户自己挑，不让模型接着替用户下单
+ENDS_TURN = {"confirm", "clarify", "notice", "shop_options"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
@@ -535,6 +536,8 @@ def _selection_turn(ctx: ToolContext, selection: dict) -> str:
         return _apply(ctx, submit_quiz(ctx, selection))
     if selection.get("type") == "order_edit":  # 订单确认卡上「修改」：换商品或送达日期，出新的确认卡
         return _apply(ctx, edit_order(ctx, selection))
+    if selection.get("type") == "shop_pick":  # 候选商品卡上点了一款：和说「要第二个」走同一条路，出订单确认卡
+        return _apply(ctx, pick_option(ctx, str(selection.get("sku") or "")[:8]))
     if selection.get("type") == "wealth_buy":  # 理财产品详情卡上的「申购」：和说出来走同一个提议工具
         return buy_from_card(ctx, selection)
     if selection.get("type") == "plan":  # 计划卡的按钮（WS7）

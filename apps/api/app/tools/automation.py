@@ -26,7 +26,7 @@ from ..core_mock.ledger import LedgerError, post
 from ..models import (Account, ChatMessage, Contact, MerchantOrder, PendingAction, ScheduledTransfer, TaskPlan,
                       Transaction, WishPot)
 from ..money import fmt_yuan, parse_amount
-from ..nlu import amount_from_user, resolve_payee
+from ..nlu import amount_from_user, ordinal_index, resolve_payee
 from ..nlu.when import next_monthly, parse_date, parse_when
 from ..policy import PolicyContext, Risk
 from ..security import breaker, mask_pii
@@ -239,22 +239,108 @@ def pot_release(db: Session, args: dict, *, idempotency_key: str, user_id: int) 
 
 # ---------- 模拟商户：询价、下单、取消（F-XS-03） ----------
 
-_CATEGORY_WORDS = {"flower": ("flower", "花", "鲜花", "花束"), "cake": ("cake", "蛋糕")}
+# 先列长词：「超市购物卡」是礼品卡，不是日用超市
+_CATEGORY_WORDS = {"giftcard": ("礼品卡", "购物卡", "电子卡", "卡券"), "flower": ("鲜花", "花束", "花"), "cake": ("蛋糕",),
+                   "shoes": ("鞋", "衣服", "服装"), "digital": ("数码", "耳机", "充电宝", "平板", "电子产品"),
+                   "daily": ("日用", "超市", "纸巾", "洗衣液", "水果", "粮油", "米面", "零食"),
+                   "book": ("图书", "绘本", "书")}
 
 
 def category_of(word: str) -> str | None:
     w = (word or "").strip().lower()
+    if w in _CATEGORY_WORDS:  # 模型传的类目代码
+        return w
     return next((c for c, words in _CATEGORY_WORDS.items() if any(x in w for x in words)), None)
+
+
+_CATEGORY_ENUM = {"type": "string", "enum": list(shops.CATEGORY_LABELS),
+                  "description": " / ".join(f"{k} {v}" for k, v in shops.CATEGORY_LABELS.items())}
+_SUPPORTED = "、".join(shops.CATEGORY_LABELS.values())
+
+
+def _when(date_text: str | None, at: datetime) -> date | None:
+    d = _parse_iso_date(date_text)
+    return d if d is not None and d > at.date() else None
+
+
+@bank_tool(
+    name="merchant.options", domain=DOMAIN, base_risk=Risk.GREEN,
+    description="用户要买东西（买花、订蛋糕、买双鞋、买个耳机、买点日用品、买本书、买购物卡）时调用：按类目列出 3 款候选商品"
+                "（不同平台、价位、送达时间），出候选卡让用户挑。只读，不会下单。出了候选卡就等用户选，不要替用户挑、"
+                "也不要同一轮接着调用 order_propose；用户之后点名某一款时，用候选结果里那一款的 quote_id 调用 order_propose。",
+    capability=f"代购常见商品（{_SUPPORTED}），先给几款候选再下单",
+    examples=("帮我买双鞋",),
+    parameters={"type": "object", "properties": {
+        "category": _CATEGORY_ENUM,
+        "for_whom": {"type": "string", "description": "送给谁，照抄用户原话，如「我妈」「爱人」，没说就不填"},
+        "date": {"type": "string", "description": "希望送达的日期 YYYY-MM-DD，没说就不填（按各商品最快时效）"},
+    }, "required": ["category"]},
+)
+def merchant_options(ctx: ToolContext, category: str, for_whom: str = "", date: str | None = None) -> ToolResult:
+    cat = category_of(category)
+    if cat is None:
+        msg = f"这类商品暂时买不了，目前能代购的有{_SUPPORTED}。"
+        return ToolResult({"status": "unsupported", "message": msg}, notice_card(msg))
+    at, who = now(), _clean(for_whom, 10)
+    wanted = _when(date, at)
+    quotes = shops.options(cat, for_whom=who, delivery_date=wanted, at=at)
+    label = shops.CATEGORY_LABELS[cat]
+    if not quotes:
+        return ToolResult({"status": "out_of_stock", "message": f"{label}暂时没有可售商品"})
+    # 「要第二个」按这个顺序找；和理财推荐的「买第一个」只认最近出的那张卡
+    state = {k: v for k, v in (ctx.session.state or {}).items() if k != "wealth_picks"}
+    ctx.session.state = {**state, "shop_picks": {"category": cat, "skus": [q.item.sku for q in quotes],
+                                                "date": f"{wanted}" if wanted else None,
+                                                "action_id": (state.get("shop_picks") or {}).get("action_id")}}
+    items = [{"sku": q.item.sku, "name": q.item.name, "note": q.item.note, "price": fmt_yuan(q.item.price_fen),
+              "platform": q.shop.platform, "shop": q.shop.name, "shop_label": q.shop.label, "delivery": q.delivery,
+              "whitelisted": q.shop.whitelisted, "date": f"{q.delivery_date}"} for q in quotes]
+    reply = f"给你挑了 {len(quotes)} 款{label}，点一款或说「要第二个」，我再出订单确认卡。"
+    card = {"type": "shop_options", "category": cat, "category_label": label, "for_whom": who, "items": items,
+            "badge": f"适合送{who}" if who and any(w in who for w in quotes[0].item.for_whom) else "推荐",
+            "hint": "点一款出订单确认卡，也可以说「要第二个」。价格以下单时商户报价为准。", "reply": reply}
+    data = {"status": "ok", "category": label,
+            "options": [{"index": n, "quote_id": q.quote_id, "platform": q.shop.platform, "shop": q.shop.name,
+                         "item": q.item.name, "price_fen": q.item.price_fen, "delivery": q.delivery}
+                        for n, q in enumerate(quotes, 1)],
+            "note": "候选卡已展示，等用户挑。用户点名某一款时，用那一款的 quote_id 调用 order_propose。"}
+    return ToolResult(data, card)
+
+
+def pick_option(ctx: ToolContext, sku: str) -> ToolResult:
+    """候选卡上点了一款，或说「要第二个」：按这款重新报价，出订单确认卡。和说出来、点出来走同一个下单提议工具。
+    上一次选的那张确认卡还没确认时，按「修改」处理：旧卡作废、出新卡（不会同时挂着两张订单）。"""
+    item = next((i for i in shops.CATALOG if i.sku == sku), None)
+    if item is None:
+        msg = "这款商品已经下架，请重新说一下要买什么。"
+        return ToolResult({"status": "pick_invalid", "message": msg}, notice_card(msg, "warning"))
+    at = now()
+    picks = (ctx.session.state or {}).get("shop_picks") or {}
+    d = shops.earliest(item, _when(picks.get("date"), at), at)
+    old = ctx.db.get(PendingAction, picks.get("action_id") or "")
+    if (old is not None and old.user_id == ctx.user_id and old.tool == "order.pay" and old.status in actions.ACTIVE
+            and old.args.get("sku") != sku and _category_of_action(old) == shops.SHOPS[item.shop_id].category):
+        result = edit_order(ctx, {"action_id": old.id, "sku": sku, "date": f"{d}"})
+    else:
+        q = shops.quote_item(sku, delivery_date=d, at=at)
+        result = order_propose(ctx, q.quote_id)
+    if result.card and result.card["type"] == "confirm":
+        ctx.session.state = {**(ctx.session.state or {}), "shop_picks": {**picks, "action_id": result.card["action_id"]}}
+    return result
+
+
+def _category_of_action(action: PendingAction) -> str | None:
+    q = shops.lookup_quote(action.args.get("quote_id") or "")
+    return q.shop.category if q else None
 
 
 @bank_tool(
     name="merchant.quote", domain=DOMAIN, base_risk=Risk.GREEN,
-    description="向合作花店或蛋糕店询价：按收礼人挑一件商品，返回价格、配送时段、退款条件和报价单号 quote_id"
-                "（2 小时内有效）。只读，不会下单。用户已经说了要订 / 要买时，询价后同一轮接着调用 order_propose 出确认卡，"
-                "不要先问「要下单吗」：确认卡就是让用户确认的。",
-    capability="给花店、蛋糕店询价",
+    description="向合作商户询价：按收礼人直接挑一件商品，返回平台、店铺、价格、配送时段、退款条件和报价单号 quote_id"
+                "（2 小时内有效）。只读，不会下单。用于多步计划里的询价步骤；用户只是说要买某类东西时用 merchant_options 给候选。",
+    capability="给合作商户询价",
     parameters={"type": "object", "properties": {
-        "category": {"type": "string", "enum": ["flower", "cake"], "description": "flower 鲜花 / cake 蛋糕"},
+        "category": _CATEGORY_ENUM,
         "for_whom": {"type": "string", "description": "送给谁，照抄用户原话，如「我妈」「爱人」"},
         "date": {"type": "string", "description": "送达日期 YYYY-MM-DD，没说就不填（默认明天）"},
     }, "required": ["category"]},
@@ -262,11 +348,9 @@ def category_of(word: str) -> str | None:
 def merchant_quote(ctx: ToolContext, category: str, for_whom: str = "", date: str | None = None) -> ToolResult:
     cat = category_of(category)
     if cat is None:
-        return ToolResult({"status": "unsupported", "message": "目前只合作了花店和蛋糕店"})
+        return ToolResult({"status": "unsupported", "message": f"目前能代购的有{_SUPPORTED}"})
     at = now()
-    d = _parse_iso_date(date)
-    if d is None or d <= at.date():
-        d = at.date() + timedelta(days=1)
+    d = _when(date, at) or at.date() + timedelta(days=1)
     q = shops.quote(cat, for_whom=_clean(for_whom, 10), delivery_date=d, at=at)
     if q is None:
         return ToolResult({"status": "out_of_stock", "message": f"{shops.CATEGORY_LABELS[cat]}暂时没有可售商品"})
@@ -283,11 +367,11 @@ def quote_problem(q: shops.Quote | None, at: datetime) -> str | None:
 
 @bank_tool(
     name="order.propose", domain=DOMAIN, base_risk=Risk.GREEN,
-    description="按询价结果（quote_id 来自 merchant_quote）生成订单确认卡；有在用的心愿罐时默认从心愿罐付款。"
+    description="按报价（quote_id 来自 merchant_options 的候选或 merchant_quote）生成订单确认卡；有在用的心愿罐时默认从心愿罐付款。"
                 "价格以商户报价为准，只生成待确认动作，不会马上付款。",
-    capability="在花店、蛋糕店下单",
+    capability="在合作商户下单",
     parameters={"type": "object", "properties": {
-        "quote_id": {"type": "string", "description": "merchant_quote 返回的报价单号，原样填写"},
+        "quote_id": {"type": "string", "description": "merchant_options 候选里用户选中那一款、或 merchant_quote 返回的报价单号，原样填写"},
         "pot_id": {"type": "string", "description": "从哪个心愿罐付款，不填时自动选用唯一的心愿罐"},
     }, "required": ["quote_id"]},
 )
@@ -307,15 +391,16 @@ def order_propose(ctx: ToolContext, quote_id: str, pot_id: str | None = None) ->
     pay_from = f"心愿罐「{pot.purpose}」" if pot else f"{debit.name} · 尾号 {debit.card_tail}"
     args = {"quote_id": q.quote_id, "shop_id": q.shop.id, "sku": q.item.sku, "amount_fen": price,
             "pot_id": pot.id if pot else None, "from_account_id": debit.id, "delivery_date": f"{q.delivery_date}"}
-    rows = [["商户", q.shop.name + ("（合作商户）" if q.shop.whitelisted else "")], ["商品", q.item.name],
-            ["配送", q.delivery], ["付款方式", pay_from], ["退款条件", q.shop.refund], ["报价有效期", f"至 {q.valid_until:%m-%d %H:%M}"]]
+    rows = [["订购平台", q.shop.platform], ["商户", q.shop.name + ("（合作商户）" if q.shop.whitelisted else "")],
+            ["商品", q.item.name], ["配送", q.delivery], ["付款方式", pay_from], ["退款条件", q.shop.refund],
+            ["报价有效期", f"至 {q.valid_until:%m-%d %H:%M}"]]
     display = action_display(title="订单确认", verb="下单", amount_fen=price, rows=rows,
-                             summary=f"在{q.shop.name}购买{q.item.name}，{fmt_yuan(price)}元",
-                             fields={"shop": q.shop.name, "item": q.item.name, "category": q.shop.category,
-                                     "pay_from": "pot" if pot else "debit"})
+                             summary=f"在{q.shop.label}购买{q.item.name}，{fmt_yuan(price)}元",
+                             fields={"shop": q.shop.name, "platform": q.shop.platform, "item": q.item.name,
+                                     "category": q.shop.category, "pay_from": "pot" if pot else "debit"})
     display["edit"] = _edit_options(q, at)
     return propose_action(ctx, tool="order.pay", args=args, display=display,
-                          data={"shop": q.shop.name, "item": q.item.name, "price_yuan": fmt_yuan(price),
+                          data={"shop": q.shop.label, "item": q.item.name, "price_yuan": fmt_yuan(price),
                                 "pay_from": pay_from})
 
 
@@ -323,11 +408,15 @@ EDIT_DAYS = 14  # 「修改」里可选的送达日期：明天起两周内
 
 
 def _edit_options(q: shops.Quote, at: datetime) -> dict:
-    """确认卡「修改」能改的项：同一类目的商品、送达日期。改完重新报价、出新的确认卡，不在原卡上改。"""
+    """确认卡「修改」能改的项：同一类目的商品、送达日期。改完重新报价、出新的确认卡，不在原卡上改。
+    电子卡付款后即时发放，没有日期可选；送达时段各店不同，卡片上按商品显示。"""
     first = at.date() + timedelta(days=1)
+    instant = q.shop.slot == shops.INSTANT
     return {"kind": "order", "sku": q.item.sku, "date": f"{q.delivery_date}",
-            "items": [{"sku": i.sku, "name": i.name, "price": fmt_yuan(i.price_fen)} for i in shops.catalog(q.shop.category)],
-            "dates": [f"{first + timedelta(days=k)}" for k in range(EDIT_DAYS)]}
+            "items": [{"sku": i.sku, "name": i.name, "price": fmt_yuan(i.price_fen), "shop": shops.SHOPS[i.shop_id].label,
+                       "first": f"{shops.earliest(i, None, at)}", "slot": shops.SHOPS[i.shop_id].slot}
+                      for i in shops.catalog(q.shop.category)],
+            "dates": [] if instant else [f"{first + timedelta(days=k)}" for k in range(EDIT_DAYS)]}
 
 
 def edit_order(ctx: ToolContext, selection: dict) -> ToolResult:
@@ -341,10 +430,11 @@ def edit_order(ctx: ToolContext, selection: dict) -> ToolResult:
     category = shops.lookup_quote(old.args["quote_id"]).shop.category
     item = next((i for i in shops.catalog(category) if i.sku == selection.get("sku")), None)
     d = _parse_iso_date(selection.get("date"))
-    if item is None or d is None or not at.date() < d <= at.date() + timedelta(days=EDIT_DAYS):
+    instant = item is not None and shops.SHOPS[item.shop_id].slot == shops.INSTANT
+    if item is None or not instant and (d is None or not at.date() < d <= at.date() + timedelta(days=EDIT_DAYS)):
         msg = "选的商品或日期不可用，请在「修改」里重新选。"
         return ToolResult({"status": "edit_invalid", "message": msg}, notice_card(msg, "warning"))
-    q = shops.quote_item(item.sku, delivery_date=d, at=at)
+    q = shops.quote_item(item.sku, delivery_date=None if instant else d, at=at)  # 早于这款最快时效的日期按最快时效送
     # 先作废旧卡再出新卡：旧卡占着的当日累计额度要先释放，新卡的定级和「今日累计」才对。新卡没出来（比如超出限额）就整体回滚，旧卡照旧可用
     sp = db.begin_nested()
     actions.cancel(db, action_id=old.id, user_id=ctx.user_id)
@@ -410,7 +500,7 @@ def order_pay(db: Session, args: dict, *, idempotency_key: str, user_id: int) ->
 
 
 def _order_result(db: Session, order: MerchantOrder) -> dict:
-    rows = [["订单号", order.id], ["配送", order.delivery]]
+    rows = [["订单号", order.id], ["商户", shops.SHOPS[order.shop_id].label], ["配送", order.delivery]]
     if order.pot_id:
         rows.append(["心愿罐余额", f"¥{fmt_yuan(db.get(Account, db.get(WishPot, order.pot_id).account_id).balance_fen)}"])
     return {"status": "succeeded", "order_id": order.id, "txn_no": order.txn_no, "amount_fen": order.amount_fen,
@@ -424,10 +514,10 @@ def paid_orders(db: Session, user_id: int) -> list[MerchantOrder]:
 
 @bank_tool(
     name="order.cancel_propose", domain=DOMAIN, base_risk=Risk.GREEN,
-    description="取消在花店、蛋糕店下的订单并退款（退回原付款的心愿罐或活期），生成确认卡。只生成待确认动作。",
-    capability="取消花店、蛋糕店订单",
+    description="取消在合作商户下的订单并退款（退回原付款的心愿罐或活期），生成确认卡。只生成待确认动作。",
+    capability="取消代购订单",
     parameters={"type": "object", "properties": {
-        "order_hint": {"type": "string", "description": "哪个订单：订单号，或照抄用户说的商品，如「蛋糕」「花」"},
+        "order_hint": {"type": "string", "description": "哪个订单：订单号，或照抄用户说的商品，如「蛋糕」「花」「鞋」"},
     }},
 )
 def order_cancel_propose(ctx: ToolContext, order_hint: str = "") -> ToolResult:
@@ -451,7 +541,7 @@ def propose_cancel(ctx: ToolContext, order: MerchantOrder) -> ToolResult:
     args = {"order_id": order.id, "amount_fen": order.amount_fen, "refund_to_pot": pot.id if to_pot else None,
             "to_account_id": debit.id}
     shop = shops.SHOPS[order.shop_id]
-    rows = [["商户", shop.name], ["商品", order.item], ["订单号", order.id],
+    rows = [["商户", shop.label], ["商品", order.item], ["订单号", order.id],
             ["退款去向", f"心愿罐「{pot.purpose}」" if to_pot else f"{debit.name} · 尾号 {debit.card_tail}"],
             ["退款条件", shop.refund]]
     display = action_display(title="取消订单", verb="取消订单", amount_fen=order.amount_fen, rows=rows,
@@ -798,9 +888,16 @@ _SCHEDULE = re.compile(r"(?P<when>每个?月的?[\d一二三四五六七八九�
                        r"|[\d一二三四五六七八九十]{1,2}月[\d一二三四五六七八九十]{1,3}[日号]|下下?(?:个)?(?:周|星期|礼拜)[一二三四五六日天]"
                        r"|明天|后天|大后天)[^，,。]{0,6}?(?:给|向)(?P<payee>[^\s，,。！!？?]{1,10}?)(?:转账|转)(?!了)"
                        r"(?P<amount>[¥￥]?[\d零〇一壹二两贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟万萬wWkK.]+(?:块|元)?)")
-_ORDER = re.compile(r"(订|买|预订|定|帮我订|下单)(一|1)?(束|个|份|只)?(?P<what>鲜花|花束|花|蛋糕)")
-_ORDER_CANCEL = re.compile(r"(取消|退掉|退了|不要).{0,6}(订单|蛋糕|花)|(订单|蛋糕|花)[^，,。]{0,6}(取消|退掉|不要了)")
-_FOR_WHOM = re.compile(r"(给|送)(?P<who>我妈|妈妈|老妈|母亲|我爸|爸爸|老爸|爱人|老婆|媳妇|妻子|女朋友)")
+_GOODS = (r"鲜花|花束|花(?!钱|了|费|在|销|多少|的|掉|光)|蛋糕|鞋|衣服|服装|耳机|充电宝|平板|数码|纸巾|洗衣液|日用|水果|粮油|米面"
+          r"|零食|图书|绘本|书|礼品卡|购物卡|电子卡|卡券")
+# 「买双鞋」「给我妈订一束花」「买点纸巾」：动词后面隔几个字（量词、修饰）就是商品；「买了」「订阅」「订单」不算
+_ORDER = re.compile(rf"(?:订|买|预订|定|下单|购买)(?!了|过|阅|单|的)[^，,。？?！!\s]{{0,4}}?(?P<what>{_GOODS})")
+# 问账（「上个月买衣服花了多少」「买书的记录」）不是要下单
+_NOT_ORDER = re.compile(r"花了|多少钱|花多少|消费|支出|账单|明细|记录|几次|多少次|上个?月|这个?月|本月|今年|去年|上周|这周|本周|订阅|退款")
+_ORDER_CANCEL = re.compile(rf"(取消|退掉|退了|不要).{{0,6}}(订单|{_GOODS})|(订单|{_GOODS})[^，,。]{{0,6}}(取消|退掉|不要了)")
+_FOR_WHOM = re.compile(r"(给|送)(?P<who>我妈|妈妈|老妈|母亲|我爸|爸爸|老爸|爱人|老婆|媳妇|妻子|女朋友|老公|孩子|儿子|女儿)")
+# 候选卡之后「要第二个」「换第三款」：只认很短、不带其他业务词的话，免得把「锁第二张卡」「买第一个理财」认成选商品
+_PICK_OTHER = re.compile(r"理财|产品|基金|赎回|万|银行卡|信用卡|借记卡|锁|挂失|转账|转给|订阅|取消")
 
 
 def schedule_slots(text: str) -> dict | None:
@@ -836,17 +933,32 @@ def rule_turn(ctx: ToolContext, text: str) -> tuple[str | None, list[tuple[str, 
         slots["until"] = f"{until}" if until and until >= now().date() else None
         return None, [("pot.lock_propose", slots, pot_lock_propose(ctx, **slots))]
     if _ORDER_CANCEL.search(text) and paid_orders(ctx.db, ctx.user_id):
-        args = {"order_hint": (m := re.search(r"蛋糕|花", text)) and m.group() or ""}
+        args = {"order_hint": (m := re.search(_GOODS, text)) and m.group() or ""}
         return None, [("order.cancel_propose", args, order_cancel_propose(ctx, **args))]
-    if m := _ORDER.search(text):
-        who = (w := _FOR_WHOM.search(text)) and w.group("who") or ""
-        d = parse_date(text, now())
-        qargs = {"category": category_of(m.group("what")), "for_whom": who, "date": f"{d}" if d else None}
-        q = merchant_quote(ctx, **qargs)
-        calls = [("merchant.quote", qargs, q)]
-        if q.data.get("status") != "ok":
-            return q.data.get("message", "暂时没法询价。"), calls
-        oargs = {"quote_id": q.data["quote_id"]}
-        calls.append(("order.propose", oargs, order_propose(ctx, **oargs)))
-        return f"已询价：{q.data['shop']} {q.data['item']}，请核对订单确认卡。", calls
+    if args := order_slots(text):
+        r = merchant_options(ctx, **args)
+        return r.data.get("message") if r.card is None else None, [("merchant.options", args, r)]
     return None
+
+
+def order_slots(text: str) -> dict | None:
+    """「帮我买双鞋」「给我妈订一束花，下周五送到」→ 候选卡的参数；不是要买东西返回 None。"""
+    if _NOT_ORDER.search(text) or not (m := _ORDER.search(text)):
+        return None
+    d = parse_date(text, now())
+    return {"category": category_of(m.group("what")), "for_whom": (w := _FOR_WHOM.search(text)) and w.group("who") or "",
+            "date": f"{d}" if d else None}
+
+
+def pick_turn(ctx: ToolContext, text: str) -> tuple[dict, ToolResult] | None:
+    """刚出过候选卡时的「要第二个」「换最后一个」：按候选卡的顺序选，两种模式都确定性处理。不是这类话返回 None。"""
+    state = ctx.session.state or {}
+    picks = state.get("shop_picks") or {}
+    if (not picks.get("skus") or state.get("pending_question") or len(text) > 16 or _PICK_OTHER.search(text)
+            or (i := ordinal_index(text)) is None):  # 正在追问（同名收款人选哪位）时「第一个」是在回答追问
+        return None
+    skus = picks["skus"]
+    if not -len(skus) <= i < len(skus):
+        msg = f"刚才只列了 {len(skus)} 款，请说第 1 到第 {len(skus)} 个，或者直接点候选卡。"
+        return {"index": i}, ToolResult({"status": "pick_invalid", "message": msg}, notice_card(msg, "warning"))
+    return {"sku": skus[i]}, pick_option(ctx, skus[i])

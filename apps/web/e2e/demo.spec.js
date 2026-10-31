@@ -242,3 +242,33 @@ test('9b 交易明细卡：卡片只列前几笔，点开看完整一个月', as
   await loadAll(sheet)
   await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(count)
 })
+
+test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 强验证 → 下单回执', async ({ page }) => {
+  await say(page, '帮我买双鞋')
+  const opts = cards(page, 'shop-options-card')
+  await expect(opts.getByTestId('shop-item')).toHaveCount(3)
+  await expect(opts).toContainText('京东')
+  await expect(opts).toContainText('天猫')
+  await expect(opts).toContainText('步云鞋服旗舰店')
+
+  await opts.getByTestId('shop-item').nth(1).click() // 第二款：京东自营 透气健步鞋 ¥269
+  await expect(page.getByText('选择：透气健步鞋（中老年款）（京东自营 · ¥269.00）')).toBeVisible()
+  const card = cards(page, 'confirm-card')
+  await expect(card).toContainText('订购平台')
+  await expect(card).toContainText('京东自营（合作商户）')
+  await expect(card).toContainText('¥269.00')
+  await expect(card).toContainText('🔴') // 没有心愿罐，从活期付款：照旧要强验证
+
+  await card.getByRole('button', { name: '确认' }).click()
+  const auth = cards(page, 'auth-card')
+  await auth.getByRole('button', { name: '模拟人脸识别' }).click()
+  await expect(auth).toContainText('已通过')
+  const sms = await auth.getByText(/验证码\d{6}/).textContent()
+  await auth.getByPlaceholder('输入 6 位验证码').fill(sms.match(/验证码(\d{6})/)[1])
+  await auth.getByRole('button', { name: '提交' }).click()
+
+  const receipt = cards(page, 'receipt-card')
+  await expect(receipt).toContainText('下单成功')
+  await expect(receipt).toContainText('京东自营')
+  await expect(receipt).toContainText('¥269.00')
+})
