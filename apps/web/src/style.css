@@ -80,6 +80,38 @@ html, body {
 /* 底部弹层的公共标题 */
 .sheet-title { font-size: var(--fs-sheet); font-weight: 600; line-height: 24px; padding-right: 32px; }
 
+/* 底部弹层：头部（标题、关闭、汇总、页签）固定，只有内容区滚动。
+   <van-popup class="sheet-pop"> 自己不滚，里面放 .sheet-frame > .sheet-head + .sheet-body（+ .sheet-foot）。
+   不用 position: sticky：弹层本身可滚时，iOS Safari 的回弹会把 sticky 头一起带走。 */
+.van-popup.sheet-pop { display: flex; flex-direction: column; overflow: hidden; }
+.sheet-frame { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.sheet-head {
+  flex: none; background: var(--surface); /* 不加 z-index：Vant 的关闭按钮（z-index 1）要盖在头部上面 */
+  padding: var(--space-4) var(--space-4) 10px; box-shadow: 0 1px 0 var(--line-soft);
+}
+.sheet-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: var(--space-2) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom));
+}
+.sheet-foot { flex: none; padding: var(--space-2) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom)); }
+.sheet-back { flex: none; font-size: var(--fs-sm); line-height: 20px; color: var(--brand); padding: 14px 48px 0 var(--space-4); cursor: pointer; }
+.sheet-back + .sheet-frame > .sheet-head { padding-top: 6px; }
+.sheet-sub { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--space-1); }
+/* 头部里的合计框：「共 N 笔，合计 ¥xxx」 */
+.sheet-sum {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2);
+  background: var(--surface-2); border-radius: var(--radius-md); padding: var(--space-2) 10px; margin-top: 10px;
+}
+.sheet-sum .k { color: var(--muted); font-size: var(--fs-sm); }
+.sheet-sum .money { font-size: var(--fs-money-md); line-height: 28px; }
+/* 弹层里的页签：页签栏跟着头部固定，页签内容单独滚动 */
+.van-tabs.sheet-tabs { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.sheet-tabs > .van-tabs__wrap { flex: none; box-shadow: 0 1px 0 var(--line-soft); }
+.sheet-tabs > .van-tabs__content {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: var(--space-3) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom));
+}
+
 /* 定制图标：跟着文字大小走 */
 .app-icon { width: 1.15em; height: 1.15em; flex-shrink: 0; object-fit: contain; }
 .icon-text .app-icon { display: inline-block; vertical-align: -0.2em; margin-right: 0.25em; }

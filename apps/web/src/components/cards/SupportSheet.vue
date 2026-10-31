@@ -43,6 +43,7 @@ onMounted(async () => {
   if (s.value.evidence.length) await add('agent', '触发这次安全保护的记录：', { evidence: s.value.evidence })
   await add('agent', s.value.question)
   step.value = 'question'
+  scrollEnd() // 底部多了两个按钮，聊天区变矮，把问题露出来
 })
 
 async function answer(yes) {
@@ -76,16 +77,18 @@ async function submit(selfOperated, identity = '') {
 </script>
 
 <template>
-  <div class="sheet" data-testid="support-sheet">
-    <div class="title">人工客服</div>
-    <div class="banner">模拟人工客服 · 演示环境（不会真的转接坐席）</div>
-    <div v-if="s" class="info">
-      <div><span class="k">当前状态</span>{{ s.level_label }} · {{ s.reason }}</div>
-      <div><span class="k">恢复方式</span>{{ s.recover }}</div>
-      <div v-if="s.auto_recover_at" class="auto">不联系客服也可以：{{ s.auto_recover_at }} 自动恢复</div>
+  <div class="sheet-frame" data-testid="support-sheet">
+    <div class="sheet-head" data-testid="sheet-head">
+      <div class="sheet-title">人工客服</div>
+      <div class="banner">模拟人工客服 · 演示环境（不会真的转接坐席）</div>
+      <div v-if="s" class="info">
+        <div><span class="k">当前状态</span>{{ s.level_label }} · {{ s.reason }}</div>
+        <div><span class="k">恢复方式</span>{{ s.recover }}</div>
+        <div v-if="s.auto_recover_at" class="auto">不联系客服也可以：{{ s.auto_recover_at }} 自动恢复</div>
+      </div>
     </div>
 
-    <div ref="body" class="chat">
+    <div ref="body" class="sheet-body chat">
       <div v-if="step === 'queue'" class="queue" data-testid="support-queue">
         <van-loading size="18" />
         <span>正在为你接入人工客服{{ ahead ? `，前面还有 ${ahead} 位` : '…' }}</span>
@@ -102,39 +105,39 @@ async function submit(selfOperated, identity = '') {
       </template>
     </div>
 
-    <div class="actions">
-      <template v-if="step === 'question'">
-        <van-button block round type="danger" data-testid="support-yes" @click="answer(true)">{{ s.yes }}</van-button>
-        <van-button block round plain data-testid="support-no" @click="answer(false)">{{ s.no }}</van-button>
-      </template>
-      <van-button v-else-if="step === 'identity' || step === 'face' || step === 'retry'" block round type="danger"
-                  :icon="icon('face-id', 'contact')" :loading="step === 'face'" loading-text="人脸比对中…" data-testid="support-face"
-                  @click="face">{{ step === 'retry' ? '重新验证' : '开始模拟人脸识别' }}</van-button>
-      <van-loading v-else-if="step === 'busy'" size="20" class="center">客服核实中…</van-loading>
-      <template v-else-if="step === 'released'">
-        <div class="done" data-testid="support-released">✓ 安全保护已解除，可以继续办理</div>
-        <van-button block round type="danger" data-testid="support-continue" @click="emit('released', result)">继续办理</van-button>
-      </template>
-      <template v-else-if="step === 'kept'">
-        <div class="kept">安全保护保持开启，期间不会有资金转出</div>
-        <van-button v-for="a in result.advice || []" :key="a.label" block round type="danger" plain
-                    @click="emit('say', a.text)">{{ a.label }}</van-button>
-        <van-button block round plain @click="emit('close')">关闭</van-button>
-      </template>
-      <van-button v-else-if="step === 'gone'" block round plain @click="emit('close')">关闭</van-button>
+    <div class="sheet-foot">
+      <div class="actions">
+        <template v-if="step === 'question'">
+          <van-button block round type="danger" data-testid="support-yes" @click="answer(true)">{{ s.yes }}</van-button>
+          <van-button block round plain data-testid="support-no" @click="answer(false)">{{ s.no }}</van-button>
+        </template>
+        <van-button v-else-if="step === 'identity' || step === 'face' || step === 'retry'" block round type="danger"
+                    :icon="icon('face-id', 'contact')" :loading="step === 'face'" loading-text="人脸比对中…" data-testid="support-face"
+                    @click="face">{{ step === 'retry' ? '重新验证' : '开始模拟人脸识别' }}</van-button>
+        <van-loading v-else-if="step === 'busy'" size="20" class="center">客服核实中…</van-loading>
+        <template v-else-if="step === 'released'">
+          <div class="done" data-testid="support-released">✓ 安全保护已解除，可以继续办理</div>
+          <van-button block round type="danger" data-testid="support-continue" @click="emit('released', result)">继续办理</van-button>
+        </template>
+        <template v-else-if="step === 'kept'">
+          <div class="kept">安全保护保持开启，期间不会有资金转出</div>
+          <van-button v-for="a in result.advice || []" :key="a.label" block round type="danger" plain
+                      @click="emit('say', a.text)">{{ a.label }}</van-button>
+          <van-button block round plain @click="emit('close')">关闭</van-button>
+        </template>
+        <van-button v-else-if="step === 'gone'" block round plain @click="emit('close')">关闭</van-button>
+      </div>
+      <div class="meta">核实记录会写入审计，运营后台「熔断与风险」可查</div>
     </div>
-    <div class="meta">核实记录会写入审计，运营后台「熔断与风险」可查</div>
   </div>
 </template>
 
 <style scoped>
-.sheet { padding: 4px 16px 16px; display: flex; flex-direction: column; height: 100%; }
-.title { font-size: var(--fs-sheet); font-weight: 600; line-height: 24px; padding: 12px 32px 0 0; }
 .banner { margin-top: 8px; font-size: var(--fs-xs); padding: 6px 10px; border-radius: var(--radius-sm); background: var(--yellow-soft); color: var(--yellow-ink); }
 .info { margin-top: 8px; font-size: var(--fs-sm); line-height: 1.6; background: var(--surface-2); border-radius: var(--radius-md); padding: 10px 12px; }
 .info .k { color: var(--muted); margin-right: 8px; }
 .info .auto { color: var(--green-ink); }
-.chat { flex: 1; overflow-y: auto; padding: 8px 0; }
+.chat { padding-bottom: 8px; }
 .queue { display: flex; align-items: center; gap: 8px; justify-content: center; color: var(--muted); font-size: var(--fs-sm); padding: 24px 0; }
 .sys { text-align: center; font-size: var(--fs-xs); color: var(--muted); margin: 8px 0; }
 .msg { display: flex; flex-direction: column; margin: 8px 0; }
@@ -144,7 +147,7 @@ async function submit(selfOperated, identity = '') {
 .msg.user .bubble { background: var(--brand); color: var(--on-brand); border-bottom-left-radius: var(--radius-bubble); border-bottom-right-radius: 6px; }
 .ev { font-size: var(--fs-xs); margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line); }
 .ev .at { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
-.actions { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.actions { display: flex; flex-direction: column; gap: 8px; }
 .center { justify-content: center; }
 .done { text-align: center; color: var(--green-ink); font-weight: 600; }
 .kept { text-align: center; color: var(--red-ink); font-size: var(--fs-sm); }

@@ -449,6 +449,33 @@ def test_category_card_detail_matches_card(client):
         assert {i["category"] for i in its} == {row["category"]}
 
 
+@pytest.mark.parametrize("ask,period", [("这个月的消费总结", "本月"), ("最近30天的账单报告", "近30天")])
+def test_report_card_detail_matches_card(client, ask, period):
+    """报告卡点开：分类构成和消费分类卡同口径，「查看消费明细」的笔数、合计和报告里的消费一致。"""
+    r = say(client, ask)
+    card = r["cards"][0]
+    assert card["type"] == "bill_report" and r["reply"].get("workflow")  # 工作流出卡，不调模型
+    p = window(period)
+    assert card["detail"] == {"start": p.start.isoformat(), "end": p.end.isoformat(), "kind": "消费"}
+    spend = next(k["value"] for k in card["kpis"] if k["label"] == "消费")
+    head, items = _detail(client, card["detail"])
+    assert head["total"] == spend and len(items) == head["count"] == len(_spends(p.start, p.end))
+    assert sum(i["kind"] == "消费" for i in items) == sum(row["count"] for row in card["rows"])
+    cats = say(client, f"{period}钱都花哪了")["cards"][0]
+    assert cats["type"] == "bill_categories" and card["rows"] == cats["rows"]
+
+
+def test_report_card_from_model_has_detail(llm_client, monkeypatch):
+    f = _Restater(tool("bill_report", period="本月"), lambda d: f"本月消费 {d['spend_yuan']} 元。")
+    monkeypatch.setattr(loop, "get_llm", lambda: f)
+    monkeypatch.setattr(loop, "FAST_INTENTS", {"balance"})  # 走模型路径，不让工作流截走
+    r = say(llm_client, "这个月的账单报告")
+    card = r["cards"][0]
+    assert r["reply"]["source"] == "llm" and card["type"] == "bill_report"
+    head, _ = _detail(llm_client, card["detail"])
+    assert head["total"] == next(k["value"] for k in card["kpis"] if k["label"] == "消费") and card["rows"]
+
+
 def test_txn_card_detail_lists_every_record(client):
     card = say(client, "最近一个月的消费明细")["cards"][0]
     assert card["type"] == "bill_txns" and card["more"] > 0  # 卡片上只列前几笔

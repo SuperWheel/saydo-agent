@@ -284,6 +284,84 @@ test('9b 交易明细卡：卡片只列前几笔，点开看完整一个月', as
   await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(count)
 })
 
+test('9c 账单报告卡：点开看报告详情 → 查看全部消费明细，笔数完整、合计等于报告里的消费', async ({ page }) => {
+  await say(page, '这个月的消费总结') // 工作流出报告卡，不调模型
+  const card = cards(page, 'report-card')
+  await expect(card).toHaveCount(1)
+  const spend = await card.locator('.kpi').filter({ hasText: /^消费/ }).locator('.value').textContent() // ¥x,xxx.xx
+
+  await card.click()
+  const detail = page.getByTestId('report-detail')
+  await expect(detail).toBeVisible()
+  await expect(detail.getByTestId('category-row').first()).toBeVisible()
+  const n = await detail.getByTestId('category-row').count()
+  expect(n).toBeGreaterThan(0)
+  let rowCount = 0 // 各类笔数加起来 = 明细里的消费笔数（退款另算）
+  for (const t of await detail.getByTestId('category-row').locator('small').allTextContents()) rowCount += Number(t.match(/\d+/)[0])
+  await detail.getByTestId('report-all-txns').click()
+
+  let sheet = page.getByTestId('txn-detail')
+  await expect(sheet.locator('.sum .money')).toHaveText(spend)
+  const count = Number((await sheet.locator('.sum .k').textContent()).match(/共 (\d+) 笔/)[1])
+  expect(count).toBeGreaterThanOrEqual(rowCount)
+  await loadAll(sheet)
+  await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(count)
+  await expect(sheet).toContainText(`共 ${count} 笔，已全部显示`)
+  await page.getByText('‹ 返回报告详情').click()
+  await expect(detail).toBeVisible()
+  await page.locator('.van-popup__close-icon').filter({ visible: true }).click()
+  await expect(detail).toHaveCount(0)
+
+  // 卡片上的「查看消费明细」直接打开同一份明细
+  await card.getByTestId('report-txns').click()
+  sheet = page.getByTestId('txn-detail')
+  await expect(sheet.locator('.sum .money')).toHaveText(spend)
+  await expect(sheet.locator('.sum .k')).toContainText(`共 ${count} 笔`)
+})
+
+// 弹层滚到底以后，头部（标题、汇总）还在弹层顶上
+async function expectHeadPinned(page, frame, body) {
+  const head = frame.getByTestId('sheet-head')
+  let before = null // 等弹层滑入动画结束、位置不再变化
+  await expect(async () => {
+    const a = await head.boundingBox()
+    await page.waitForTimeout(150)
+    before = await head.boundingBox()
+    expect(Math.abs(before.y - a.y)).toBeLessThan(1)
+  }).toPass({ timeout: 5_000 })
+  const scrolled = await body.evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollTop })
+  expect(scrolled).toBeGreaterThan(100) // 内容确实滚过了一屏
+  await expect(head).toBeInViewport()
+  const after = await head.boundingBox()
+  expect(Math.abs(after.y - before.y)).toBeLessThan(1)
+  const pop = await page.locator('.van-popup').filter({ visible: true }).last().boundingBox()
+  expect(after.y - pop.y).toBeLessThan(40) // 贴着弹层上沿（返回链接占一行）
+}
+
+test('9d 详情弹层滚动后标题栏不跟着滑走：报告详情、交易明细、运营后台', async ({ page }) => {
+  await say(page, '这个月的消费总结')
+  await cards(page, 'report-card').click()
+  const detail = page.getByTestId('report-detail')
+  await expect(detail.getByTestId('category-row').first()).toBeVisible()
+  await expectHeadPinned(page, detail, detail.locator('.sheet-body'))
+  await expect(detail.getByTestId('sheet-head')).toContainText('账单报告')
+
+  await detail.getByTestId('report-all-txns').click()
+  const sheet = page.getByTestId('txn-detail')
+  await loadAll(sheet)
+  await expectHeadPinned(page, sheet, sheet.locator('.sheet-body'))
+  await expect(sheet.getByTestId('sheet-head').locator('.sum')).toBeInViewport()
+  await page.locator('.van-popup__close-icon').filter({ visible: true }).click()
+  await expect(sheet).toHaveCount(0)
+
+  await page.getByRole('button', { name: '运营后台' }).click()
+  const admin = page.locator('.van-popup').filter({ hasText: '运营后台（演示）' })
+  await admin.locator('.trace').first().click()
+  await expect(admin.getByText('用户消息', { exact: true }).first()).toBeVisible()
+  await expectHeadPinned(page, admin, admin.locator('.van-tabs__content'))
+  await expect(admin.getByRole('tab', { name: '熔断与风险' })).toBeInViewport()
+})
+
 test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 强验证 → 下单回执', async ({ page }) => {
   await say(page, '帮我买双鞋')
   const opts = cards(page, 'shop-options-card')

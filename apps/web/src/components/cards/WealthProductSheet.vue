@@ -51,61 +51,61 @@ function buy() {
 </script>
 
 <template>
-  <div class="sheet" data-testid="wealth-detail">
-    <div v-if="err" class="err">{{ err }}</div>
-    <van-loading v-else-if="!d" class="loading" />
-    <template v-else>
-      <div class="head">
-        <div class="name">{{ d.name }}</div>
-        <div class="tags">
-          <van-tag :type="d.risk_n >= 3 ? 'warning' : 'primary'" plain>{{ d.risk }}</van-tag>
-          <van-tag plain>{{ d.kind }}</van-tag>
-          <van-tag plain>{{ d.term }}</van-tag>
-        </div>
-        <div class="yield"><span>{{ d.yield_label }}</span><b>{{ d.yield }}</b></div>
-        <div class="intro">{{ d.intro }}</div>
+  <div class="sheet-frame" data-testid="wealth-detail">
+    <div v-if="d" class="sheet-head" data-testid="sheet-head">
+      <div class="sheet-title name">{{ d.name }}</div>
+      <div class="tags">
+        <van-tag :type="d.risk_n >= 3 ? 'warning' : 'primary'" plain>{{ d.risk }}</van-tag>
+        <van-tag plain>{{ d.kind }}</van-tag>
+        <van-tag plain>{{ d.term }}</van-tag>
       </div>
-
-      <div class="sec">净值走势（近一年）</div>
-      <svg viewBox="0 0 300 60" class="spark" preserveAspectRatio="none"><polyline :points="line" /></svg>
-      <div class="returns">
-        <div v-for="[k, v] in d.returns" :key="k"><span>{{ k }}</span><b>{{ v }}</b></div>
-      </div>
-
-      <div class="sec">产品信息</div>
-      <div v-for="[k, v] in d.rows" :key="k" class="row"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></div>
-      <div class="disclosure">{{ d.disclosure }}</div>
-
-      <div class="sec">申购</div>
-      <div v-if="!d.can_buy" class="blocked">{{ d.problem }}</div>
+      <div class="yield"><span>{{ d.yield_label }}</span><b>{{ d.yield }}</b></div>
+    </div>
+    <div class="sheet-body">
+      <div v-if="err" class="err">{{ err }}</div>
+      <van-loading v-else-if="!d" class="loading" />
       <template v-else>
-        <div class="row"><span class="k">扣款账户</span><span class="v">{{ d.account.name }}（尾号{{ d.account.tail }}）</span></div>
-        <div class="row"><span class="k">可用余额</span><span class="v">¥{{ d.account.balance }}</span></div>
-        <van-field v-model="amount" type="digit" label="金额（元）" :placeholder="`起购 ${d.min_purchase} 元`" clearable
-                   :error-message="tip" data-testid="wealth-amount" />
-        <div class="chips">
-          <span v-for="v in quick" :key="v" class="chip" @click="amount = String(v / 100)">{{ yuan(v) }}</span>
+        <div class="intro">{{ d.intro }}</div>
+
+        <div class="sec">净值走势（近一年）</div>
+        <svg viewBox="0 0 300 60" class="spark" preserveAspectRatio="none"><polyline :points="line" /></svg>
+        <div class="returns">
+          <div v-for="[k, v] in d.returns" :key="k"><span>{{ k }}</span><b>{{ v }}</b></div>
         </div>
-        <van-button type="danger" round block :disabled="!canSubmit" data-testid="wealth-buy" @click="buy">
-          申购{{ canSubmit ? ` ¥${yuan(fen)}` : '' }}
-        </van-button>
-        <div class="note">点申购后会在对话里出确认卡，阅读风险揭示、确认后再做人脸和短信验证，验证通过才扣款。</div>
+
+        <div class="sec">产品信息</div>
+        <div v-for="[k, v] in d.rows" :key="k" class="row"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></div>
+        <div class="disclosure">{{ d.disclosure }}</div>
+
+        <div class="sec">申购</div>
+        <div v-if="!d.can_buy" class="blocked">{{ d.problem }}</div>
+        <template v-else>
+          <div class="row"><span class="k">扣款账户</span><span class="v">{{ d.account.name }}（尾号{{ d.account.tail }}）</span></div>
+          <div class="row"><span class="k">可用余额</span><span class="v">¥{{ d.account.balance }}</span></div>
+          <van-field v-model="amount" type="digit" label="金额（元）" :placeholder="`起购 ${d.min_purchase} 元`" clearable
+                     :error-message="tip" data-testid="wealth-amount" />
+          <div class="chips">
+            <span v-for="v in quick" :key="v" class="chip" @click="amount = String(v / 100)">{{ yuan(v) }}</span>
+          </div>
+          <van-button type="danger" round block :disabled="!canSubmit" data-testid="wealth-buy" @click="buy">
+            申购{{ canSubmit ? ` ¥${yuan(fen)}` : '' }}
+          </van-button>
+          <div class="note">点申购后会在对话里出确认卡，阅读风险揭示、确认后再做人脸和短信验证，验证通过才扣款。</div>
+        </template>
+        <div class="meta">{{ d.disclaimer }}</div>
+        <div class="meta">数据来源：{{ d.source }} · {{ d.as_of }}</div>
       </template>
-      <div class="meta">{{ d.disclaimer }}</div>
-      <div class="meta">数据来源：{{ d.source }} · {{ d.as_of }}</div>
-    </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.sheet { padding: 4px 16px 24px; }
 .loading { display: flex; justify-content: center; padding: 32px; }
 .err { color: var(--red); padding: 24px 0; text-align: center; }
-.name { font-size: var(--fs-sheet); font-weight: 600; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 .yield { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
 .yield b { font-size: var(--fs-money-md); color: var(--brand); font-variant-numeric: tabular-nums; }
-.intro { font-size: var(--fs-sm); line-height: 1.6; margin-top: 6px; }
+.intro { font-size: var(--fs-sm); line-height: 1.6; margin-top: 4px; }
 .sec { font-size: var(--fs-sm); font-weight: 600; margin: 16px 0 6px; }
 .spark { width: 100%; height: 60px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .spark polyline { fill: none; stroke: var(--brand); stroke-width: 2; vector-effect: non-scaling-stroke; }
