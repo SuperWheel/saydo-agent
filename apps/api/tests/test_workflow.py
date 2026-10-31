@@ -46,6 +46,9 @@ def workflow(fake, monkeypatch):
     ("这个月的消费概况", ["bill_categories"]),
     ("这个月的消费总结", ["bill_report"]),
     ("帮我分析一下这个月的支出", ["bill_report"]),
+    ("给我最近七天的支出统计", ["bill_categories"]),
+    ("最近一周的消费汇总", ["bill_categories"]),
+    ("帮我统计最近一周的开销", ["bill_txns"]),
 ])
 def test_fixed_flows_skip_model(llm_client, workflow, words, cards):
     f = workflow(text("不该被调用"))
@@ -144,3 +147,10 @@ def test_reply_says_whether_workflow_and_how_long(llm_client, workflow):
     assert model["workflow"] is False and len(f.calls) == 1 and model["elapsed_ms"] >= 0
     replies = [e for e in llm_client.get("/admin/audit").json() if e["event"] == "assistant_reply"]
     assert {e["payload"]["workflow"] for e in replies} == {True, False}
+
+
+def test_spending_stats_period(llm_client, workflow):
+    """「最近七天的支出统计」：工作流出分类卡，区间是近 7 天，不是默认的本月。"""
+    f = workflow(text("不该被调用"))
+    card = say(llm_client, "给我最近七天的支出统计")["cards"][0]
+    assert f.calls == [] and card["type"] == "bill_categories" and card["period"] == "近7天"
