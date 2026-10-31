@@ -10,7 +10,7 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* 卡片：白底、大圆角、轻阴影，不加彩色顶条；风险靠徽章、理由框和状态头表达 */
+/* 卡片：白底、大圆角、轻阴影；第一行标题做成和卡片等宽的色块卡头 */
 .card {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -34,6 +34,35 @@ html, body {
 .card-title > span:first-child { min-width: 0; }
 .card-title .van-tag { flex-shrink: 0; }
 
+/* 色块卡头（设计系统「卡头方案 C」）：贴着卡片顶部圆角，和卡片同宽。
+   颜色跟「要不要你动手」走：确认、强验证、熔断用实色；回执、作废用浅色；查询浅灰，计划 / 购物 / 理财品牌浅红。
+   各卡片只靠根节点已有的 class 切换，模板不用改。 */
+.card > .card-title:first-child,
+.card > .status-head:first-child {
+  margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
+  padding: 11px var(--space-4);
+  border-bottom: 0;
+  background: var(--hd-bg, var(--surface-2));
+  color: var(--hd-ink, var(--ink));
+}
+.card.plan, .card.shop, .card.aa, .card.automation, .card.report,
+.card.rec, .card.cmp, .card.hold, .card.quiz { --hd-bg: var(--brand-soft); --hd-ink: var(--brand-strong); }
+.card.confirm { --hd-bg: var(--yellow-strong); --hd-ink: var(--on-brand); }
+.card.confirm.red, .card.auth { --hd-bg: var(--red); --hd-ink: var(--on-brand); }
+.card.breaker { --hd-bg: var(--red-ink); --hd-ink: var(--on-brand); }
+.card.breaker.released { --hd-bg: var(--green-tint); --hd-ink: var(--green-ink); }
+.card.confirm.closed, .card.auth.closed { --hd-bg: var(--void-tint); --hd-ink: var(--ink-2); }
+
+/* 实色卡头里：徽章白底、字取卡头色；图标垫白圆底 */
+.card.confirm:not(.closed) > .card-title .van-tag,
+.card.auth:not(.closed) > .card-title .van-tag,
+.card.breaker:not(.released) > .status-head .van-tag { background: var(--surface); color: var(--hd-bg); }
+/* 办完 / 作废的卡：徽章和图标一起退成灰色，只留卡头文字 */
+.card.closed > .card-title .van-tag { background: var(--surface); color: var(--muted); }
+.card.closed > .card-title .app-icon { filter: grayscale(1); opacity: 0.6; }
+.card.confirm:not(.closed) > .card-title .app-icon,
+.card.auth:not(.closed) > .card-title .app-icon { background: var(--surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--surface); }
+
 .row {
   display: flex;
   justify-content: space-between;
@@ -53,14 +82,14 @@ html, body {
 .btns { display: flex; gap: var(--space-2); margin-top: 14px; }
 .btns .van-button { flex: 1; }
 
-/* 办完 / 作废 / 过期：卡片主体变淡（.card.closed），底部一块虚线状态框 */
+/* 办完 / 作废 / 过期：卡头换成浅灰、不变淡；主体变淡（.card.closed），底部一块虚线状态框 */
 .done-mask {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   margin-top: var(--space-3); padding: 9px var(--space-3);
   border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--surface-2);
   color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; text-align: center;
 }
-.card.closed > :not(.done-mask) { opacity: 0.45; }
+.card.closed > :not(.done-mask):not(.card-title) { opacity: 0.45; }
 
 /* 状态头：圆形图标 + 标题 + 徽章（熔断、强验证） */
 .status-head {
@@ -76,6 +105,8 @@ html, body {
 }
 .status-icon.ok { background: var(--green-soft); color: var(--green); }
 .status-icon.img { background: none; }
+.card > .status-head:first-child .status-icon { width: 30px; height: 30px; }
+.card.breaker:not(.released) > .status-head .status-icon.img { background: var(--surface); }
 
 /* 底部弹层的公共标题 */
 .sheet-title { font-size: var(--fs-sheet); font-weight: 600; line-height: 24px; padding-right: 32px; }
