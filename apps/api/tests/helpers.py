@@ -66,9 +66,16 @@ def pass_face(client, auth_card: dict) -> dict:
     return verify(client, auth_card, "face", f"face-ok:{auth_card['digest']}")
 
 
+def factors(auth_card: dict) -> list[str]:
+    return [f["factor"] for f in auth_card["factors"]]
+
+
 def pass_auth(client, auth_card: dict) -> dict:
-    pass_face(client, auth_card)
-    return verify(client, auth_card, "sms", sms_code(auth_card["challenge_id"]))
+    """按验证卡的要求通过：小额只因额度升级的任选一种（这里用人脸），其余人脸 + 短信。"""
+    out = pass_face(client, auth_card)
+    if auth_card.get("mode") != "any" and "sms" in factors(auth_card):
+        out = verify(client, auth_card, "sms", sms_code(auth_card["challenge_id"]))
+    return out
 
 
 def red_auth_card(client, sentence="给赵磊转100", session_id=None) -> dict:

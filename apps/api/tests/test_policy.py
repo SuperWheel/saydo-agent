@@ -28,6 +28,31 @@ def test_new_payee_red_at_any_amount():
     assert d.required_factors == ["face", "sms"]
 
 
+@pytest.mark.parametrize("kw,mode", [
+    ({"outflow_today_fen": 50_000, "amount_fen": 80_000}, "any"),            # 累计 1300、单笔 800：只因额度 → 任选一种
+    ({"outflow_today_fen": 0, "amount_fen": 100_001}, "all"),                # 单笔超过 1000 元
+    ({"outflow_today_fen": 450_000, "amount_fen": 50_000}, "any"),           # 累计恰好 5000
+    ({"outflow_today_fen": 450_000, "amount_fen": 50_001}, "all"),           # 累计超过 5000
+    ({"outflow_today_fen": 50_000, "amount_fen": 80_000, "payee_known": False}, "all"),   # 加上新收款人
+    ({"outflow_today_fen": 50_000, "amount_fen": 80_000, "injection_flag": True}, "all"),  # 加上注入嫌疑
+    ({"recent_count": 2}, "all"),                                             # 频繁转账
+])
+def test_small_red_needs_one_factor(kw, mode):
+    """🔴 里小额、只因额度规则升级的人脸、短信任选一种（人脸不能是唯一可选方式）；其余人脸 + 短信都要。"""
+    d = evaluate(ctx(**kw))
+    assert d.level == Risk.RED and d.required_factors == ["face", "sms"] and d.factor_mode == mode
+
+
+def test_yellow_needs_no_factor():
+    assert evaluate(ctx(amount_fen=50_000)).required_factors == []
+
+
+def test_red_by_default_tool_keeps_two_factors():
+    """工具本身就是 🔴（如解锁、挂失、申购）的不降级，哪怕金额很小。"""
+    d = evaluate(ctx(tool="card.unlock", base_level=Risk.RED, moves_money=False, amount_fen=0))
+    assert d.level == Risk.RED and d.required_factors == ["face", "sms"] and d.factor_mode == "all"
+
+
 def test_risk_only_goes_up():
     d = evaluate(ctx(amount_fen=200_000, payee_known=False, injection_flag=True))
     assert d.level == Risk.RED

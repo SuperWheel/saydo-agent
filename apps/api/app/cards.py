@@ -54,7 +54,7 @@ def confirm_card(action) -> dict:
         "level": action.level,
         "level_label": {"YELLOW": "需要确认", "RED": "需要强验证"}[action.level],
         "reasons": action.reasons,
-        "auth_hint": "确认后需完成人脸识别 + 短信验证码（模拟）" if action.level == "RED" else "",
+        "auth_hint": auth_hint(action),
         "expires_at": action.expires_at.isoformat(),
         "expires_in_s": max(0, int((action.expires_at - now()).total_seconds())),  # 演示时钟快进后，前端按剩余秒数倒计时
         "status": action.status,
@@ -72,6 +72,16 @@ def confirm_card(action) -> dict:
 FACTOR_LABELS = {"face": "人脸识别（模拟）", "sms": "短信验证码（模拟）"}
 
 
+def auth_hint(action) -> str:
+    """确认卡上提示确认后要过哪些验证：小额只因额度升级的只要人脸，其余人脸 + 短信（policy 里算好存在 display）。"""
+    if action.level != "RED":
+        return ""
+    factors = action.display.get("auth_factors") or ["face", "sms"]
+    if action.display.get("auth_mode") == "any":
+        return "确认后完成人脸识别即可，也可改用短信验证码（模拟）"
+    return "确认后需完成" + " + ".join({"face": "人脸识别", "sms": "短信验证码"}[f] for f in factors) + "（模拟）"
+
+
 def auth_card(challenge, action, *, sms_preview: str | None, attempts_left: int) -> dict:
     return {
         "type": "auth",
@@ -83,6 +93,7 @@ def auth_card(challenge, action, *, sms_preview: str | None, attempts_left: int)
             {"factor": f, "label": FACTOR_LABELS[f], "passed": f in challenge.factors_passed}
             for f in challenge.factors_required
         ],
+        "mode": action.display.get("auth_mode") or "all",
         "sms_preview": sms_preview,
         "attempts_left": attempts_left,
         "status": challenge.status,

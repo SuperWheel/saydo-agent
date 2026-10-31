@@ -146,7 +146,8 @@ def create_action(db: Session, *, user_id: int, session_id: str | None, trace_id
     if not spec.side_effect:
         raise ValueError(f"{tool} 不是写工具")
     reserve = int(args["amount_fen"]) if spec.moves_money else 0
-    display = {**display, "injection_flag": injection_flag}
+    display = {**display, "injection_flag": injection_flag, "auth_factors": decision.required_factors,
+               "auth_mode": decision.factor_mode}
     if spec.moves_money:
         display["cumulative_after_fen"] = decision.cumulative_after_fen
     expires_at = now() + timedelta(seconds=get_settings().action_ttl_s)
@@ -204,7 +205,21 @@ def _revalidate(db: Session, a: PendingAction) -> Outcome | None:
         return _invalidate(db, a, decision.block_reason or "策略拒绝")
     if decision.level > Risk[a.level]:
         return _invalidate(db, a, "风险等级已变化：" + "；".join(decision.reasons))
+    stricter = decision.factor_mode == "all" and _mode_of(a) == "any"
+    if stricter or set(decision.required_factors) - set(_factors_of(a)):  # 等级没变但累计额度涨了：要求更严，不作废
+        a.display = {**a.display, "auth_mode": "all" if stricter else _mode_of(a),
+                     "auth_factors": [f for f in ("face", "sms") if f in {*_factors_of(a), *decision.required_factors}]}
     return None
+
+
+def _factors_of(a: PendingAction) -> list[str]:
+    """这张确认卡要的验证因子（出卡时按策略算好存在 display 里）；早先没存的按 🔴 的默认值。"""
+    return a.display.get("auth_factors") or list(load_rules()["auth"].get(a.level, []))
+
+
+def _mode_of(a: PendingAction) -> str:
+    """all：要过全部因子；any：任选一个。"""
+    return a.display.get("auth_mode") or "all"
 
 
 def _sms_preview(a: PendingAction, ch: AuthChallenge) -> str | None:
@@ -238,7 +253,7 @@ def confirm(db: Session, *, action_id: str, digest: str, user_id: int) -> Outcom
         return bad
     if a.level == Risk.RED.name:
         ch = AuthChallenge(id="C" + secrets.token_hex(8), action_id=a.id,
-                           factors_required=list(load_rules()["auth"]["RED"]), factors_passed=[], otp_issued_at=now())
+                           factors_required=_factors_of(a), factors_passed=[], otp_issued_at=now())
         db.add(ch)
         a.status = "awaiting_auth"
         a.expires_at = max(a.expires_at, now() + timedelta(seconds=get_settings().otp_window_s))
@@ -288,7 +303,7 @@ def verify_factor(db: Session, *, challenge_id: str, factor: str, value: str, us
     ch.factors_passed = [*ch.factors_passed, factor]
     audit.record(db, a.trace_id, "auth_passed", {"challenge_id": ch.id, "factor": factor}, a.session_id)
     breaker.on_auth_passed(db, a)  # 「连续失败」从这里重新计数
-    if set(ch.factors_passed) < set(ch.factors_required):
+    if _mode_of(a) == "all" and set(ch.factors_passed) < set(ch.factors_required):
         return _auth_outcome(a, ch)
     ch.status = "passed"
     if (bad := _revalidate(db, a)) is not None:
