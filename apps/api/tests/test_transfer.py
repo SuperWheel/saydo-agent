@@ -16,6 +16,7 @@ from app.policy import PolicyContext, Risk, evaluate
 from app.tools.transfer import plan_aa, split_aa
 
 from .conftest import confirm, say, text, tool
+from .helpers import after_travel
 from .test_flows import balance, ledger_ok, pass_auth
 
 ROLLING = "近 24 小时累计转出将超过 1000 元（跨零点累计，含待确认金额）"
@@ -225,12 +226,12 @@ def test_fraud_script_forces_red_and_cooling_off(client):
     assert 0 < audit_events(client, "cooling_off_reject")[0]["seconds_left"] <= 30
     clock.travel(timedelta(seconds=20))
     assert confirm(client, card).status_code == 409  # 还没到点，仍然拒绝
-    assert balance(client) == "28,650.32"
+    assert balance(client) == after_travel("28,650.32")
 
     clock.travel(timedelta(seconds=11))
     out = confirm(client, card).json()
     assert out["status"] == "awaiting_auth"  # 冷静期过后仍要人脸 + 短信
-    assert pass_auth(client, out["card"])["status"] == "succeeded" and balance(client) == "28,150.32"
+    assert pass_auth(client, out["card"])["status"] == "succeeded" and balance(client) == after_travel("28,150.32")
 
 
 def test_fraud_earlier_in_session_still_counts(client):
@@ -279,6 +280,8 @@ def test_cooling_off_from_policy_rule():
 # ---------- 滚动 24 小时 ----------
 
 def test_rolling_24h_across_midnight(client):
+    at = clock.now()
+    clock.travel(at.replace(hour=12, minute=0, second=0) - at)  # 下一天 00:01 必须仍在首笔的 24 小时内
     first = say(client, "给我妈转800")["cards"][0]
     assert confirm(client, first).json()["status"] == "succeeded"
     travel_to_next_day()

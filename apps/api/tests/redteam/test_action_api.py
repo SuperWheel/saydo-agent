@@ -16,7 +16,7 @@ from app.models import AuthChallenge, ChatSession, PendingAction, User
 from app.tools.gateway import GatewayError, execute_write
 
 from ..conftest import confirm, say
-from ..helpers import BALANCE, balance, events, pass_auth, pass_face, red_auth_card, sms_code, verify
+from ..helpers import BALANCE, after_travel, balance, events, pass_auth, pass_face, red_auth_card, sms_code, verify
 from .conftest import assert_no_red_bypass
 
 
@@ -67,6 +67,7 @@ def _replay_confirm_after_expiry(client):
     card = say(client, "给我妈转500")["cards"][0]
     clock.travel(timedelta(minutes=3))
     assert confirm(client, card).json()["status"] == "expired"
+    return after_travel(BALANCE)  # 深夜快进可能跨日，日历补账照常发生，但过期转账不能扣钱
 
 
 def _replay_confirm_after_invalidation(client):
@@ -192,7 +193,7 @@ def test_strong_auth_cannot_be_bypassed(client, attack):
     auth = red_auth_card(client)
     out = attack(client, auth)
     assert out["status"] != "succeeded"
-    assert_no_red_bypass(client)
+    assert_no_red_bypass(client, after_travel(BALANCE))
 
 
 # ---------- 执行令牌：绕过确认流程直接调网关 ----------
@@ -240,7 +241,7 @@ def test_forged_execution_token_rejected(client, make, error):
         with pytest.raises(GatewayError, match=error):
             execute_write(a, make(token, a), db)
         db.rollback()
-    assert balance(client) == BALANCE
+    assert balance(client) == after_travel(BALANCE)
 
 
 def test_execution_token_is_single_use(client):

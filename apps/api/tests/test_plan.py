@@ -284,7 +284,7 @@ def test_not_hijacked(client):
 
 def test_birthday_order_only(client):
     """只说「生日订花」也是计划：询价和下单放到临期执行。"""
-    r = say(client, "11月20号我爱人生日，帮我订一束花")
+    r = say(client, "下周五我爱人生日，帮我订一束花")  # 始终还没到临期，不受 11 月 20 日前后的日期影响
     plan = plan_of(r)
     assert [s["title"] for s in plan["steps"]] == ["询价：鲜花（花漾花艺）", "下单鲜花"]
     sid = r["session_id"]

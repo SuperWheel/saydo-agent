@@ -42,7 +42,7 @@ def test_recent_periods_list_spend_details(client, utterance, label):
     assert [c["type"] for c in r["cards"]] == ["bill_txns"]
     assert card["period"] == label and card["kind"] == "消费"
     assert "没识别" not in r["reply"]["text"] and r["reply"]["text"].startswith(label)
-    p = parse_period(utterance, at=now() + timedelta(seconds=1), default="近90天")
+    p = parse_period(utterance, at=now() + timedelta(microseconds=1), default="近90天")
     with new_session() as db:
         txns = [t for t in engine.load(db, 1, p.start, p.end) if t.kind in (engine.KIND_SPEND, engine.KIND_REFUND)]
     total = sum(t.amount_fen for t in txns if t.kind == engine.KIND_SPEND) - sum(

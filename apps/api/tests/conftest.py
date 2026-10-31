@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,20 @@ from app import clock, netinfo
 from app.agent import loop
 from app.agent.llm import LLMReply
 from app.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _fixed_clock(monkeypatch):
+    """每条测试从固定时刻开始；DEMO_DATE、reset 和 travel 照常生效，不随运行耗时跨秒 / 跨日。"""
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            at = datetime(2026, 10, 30, 12, tzinfo=clock.TZ)  # 日历种子覆盖 2026–2027 年
+            return at.astimezone(tz) if tz else at.replace(tzinfo=None)
+
+    monkeypatch.setattr(clock, "datetime", FrozenDateTime)
+    monkeypatch.setattr(clock, "_offset", clock._offset)  # 独立建库的测试也不能把快进留给下一条
+    clock.reset()
 
 
 def _make_client(tmp_path, monkeypatch, *, llm: bool):
