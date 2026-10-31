@@ -4,7 +4,7 @@
 - 条目向量：批量算一次存在内存，按「模型 + 文本」的哈希落盘到 data/kb_embeddings.json（不进仓库），重启和条目没改时不用重算。
   后端启动时在后台线程预热；还没算好时检索照常只走 BM25，不等它。
 - 查询向量：先 mask_pii 脱敏再发出去（Qwen3-Embedding 按官方建议在查询前加一句检索指令，条目不加）；超时（EMBEDDING_TIMEOUT_S，默认 2 秒）或任何报错都静默回到 BM25，
-  记一条日志（kb.search 工具另写一条审计），之后冷却 COOLDOWN_S 秒内不再调，免得接口挂了每一问都多等 2 秒。
+  记一条日志（kb.search 工具另写一条审计），之后冷却一会儿（报错 60 秒、超时 10 秒）不再调，免得接口挂了每一问都多等 2 秒。
 """
 
 import hashlib
@@ -16,6 +16,8 @@ import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
+import openai
+
 from ..config import REPO_ROOT, Settings, get_settings
 from ..security import mask_pii
 
@@ -24,7 +26,8 @@ log = logging.getLogger("saydo.kb")
 CACHE_FILE = REPO_ROOT / "data" / "kb_embeddings.json"
 BATCH = 32  # 一次请求最多送多少条（智谱 embedding-3 单次上限 64 条）
 INDEX_TIMEOUT_S = 15.0  # 条目批量算向量每批的时限（在后台跑，不卡检索）
-COOLDOWN_S = 60.0  # 出错后这么久内不再调接口
+COOLDOWN_S = 60.0  # 出错（鉴权失败、额度不足、网络断开……）后这么久内不再调接口
+TIMEOUT_COOLDOWN_S = 10.0  # 只是这一问超时：偶尔慢一下（实测中位 0.3 秒，偶尔 1.6 秒以上），短暂停一下就再试
 QUERY_CACHE = 256  # 查询向量的内存缓存条数
 
 Vector = list[float]
@@ -38,11 +41,9 @@ class Client:
     """OpenAI 兼容的 /embeddings。测试里换成假客户端（make_client）。"""
 
     def __init__(self, settings: Settings):
-        from openai import OpenAI
-
         self.model = settings.embedding_model
         self.dimensions = settings.embedding_dimensions
-        self._client = OpenAI(api_key=settings.embedding_api_key, base_url=settings.embedding_base_url, max_retries=0)
+        self._client = openai.OpenAI(api_key=settings.embedding_api_key, base_url=settings.embedding_base_url, max_retries=0)
 
     def embed(self, texts: list[str], timeout: float) -> list[Vector]:
         extra = {"dimensions": self.dimensions} if self.dimensions else {}
@@ -112,10 +113,11 @@ def reset() -> None:
 
 
 def _fail(st: _State, what: str, err: BaseException) -> None:
-    st.failed_until = time.monotonic() + COOLDOWN_S
+    cooldown = TIMEOUT_COOLDOWN_S if _is_timeout(err) else COOLDOWN_S
+    st.failed_until = time.monotonic() + cooldown
     reason = describe(err, st.settings.embedding_api_key)
     st.last_error = f"{what}：{reason}"
-    log.warning("知识库向量检索不可用（%s），回到纯 BM25，%d 秒内不再调用：%s", what, int(COOLDOWN_S), reason)
+    log.warning("知识库向量检索不可用（%s），回到纯 BM25，%d 秒内不再调用：%s", what, int(cooldown), reason)
 
 
 def describe(err: BaseException, api_key: str = "") -> str:
@@ -136,8 +138,12 @@ def runtime_status() -> dict:
             "retry_in_s": max(0, round(left)) if state == "failed" else 0}
 
 
+def _is_timeout(err: BaseException) -> bool:
+    return isinstance(err, (TimeoutError, openai.APITimeoutError))  # 前者是我们的 2 秒时限，后者是 SDK 自己的读超时
+
+
 def last_error_reason(err: BaseException) -> str:
-    return "timeout" if isinstance(err, TimeoutError) else type(err).__name__
+    return "timeout" if _is_timeout(err) else type(err).__name__
 
 
 # ---------- 条目向量（批量、落盘缓存） ----------

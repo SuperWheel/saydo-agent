@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 CASES = ROOT / "evals" / "kb.yaml"
 TARGET = 0.9
+MODES: dict[str, int] = {}  # 离线评测里每题实际用的检索方式：hybrid / bm25 / 回退原因
 
 
 def load_cases() -> list[dict]:
@@ -38,6 +39,8 @@ def offline_case(case: dict) -> tuple[bool, str]:
 
     found = search(case["ask"])
     ids = [e.id for e in found.entries]
+    mode = found.fallback and f"回退（{found.fallback}）" or found.mode
+    MODES[mode] = MODES.get(mode, 0) + 1
     sim = f"，相似度 {found.similarity:.2f}" if found.similarity is not None else ""
     note = f"命中 {ids or '无'}（覆盖率 {found.coverage:.2f}{sim}{'，向量没用上：' + found.fallback if found.fallback else ''}）"
     if case["kind"] == "hit":
@@ -122,6 +125,8 @@ def main() -> int:
     print(f"\n命中率 {hit[0]:.0%}（{hit[1]}/{hit[2]}，目标 ≥ {TARGET:.0%}）  "
           f"超范围拒答率 {oos[0]:.0%}（{oos[1]}/{oos[2]}，目标 ≥ {TARGET:.0%}）  "
           f"个人数据走工具 {route[1]}/{route[2]}  用时 {time.perf_counter() - t0:.1f} 秒")
+    if MODES.keys() - {"bm25"}:  # 配了向量通道：混合了几题、回退了几题（冷却期内的、没切出词的算 bm25）
+        print("检索方式：" + "，".join(f"{k} {v} 题" for k, v in sorted(MODES.items())))
     return 0 if hit[0] >= TARGET and oos[0] >= TARGET and route[0] == 1.0 else 1
 
 

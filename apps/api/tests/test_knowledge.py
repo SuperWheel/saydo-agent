@@ -485,3 +485,17 @@ def test_kb_tool_audits_embedding_fallback(client, monkeypatch, tmp_path):
     assert "knowledge" in kinds(r)
     events = client.get(f"/admin/audit?trace_id={r['trace_id']}").json()
     assert [e["payload"] for e in events if e["event"] == "kb_embedding_fallback"] == [{"reason": "RuntimeError"}]
+
+
+def test_sdk_timeout_counts_as_timeout_with_short_cooldown(embed_on):
+    """SDK 自己的读超时（APITimeoutError）也算超时：这一问回到 BM25，只冷却 10 秒；鉴权之类的报错冷却 60 秒。"""
+    import httpx
+    import openai
+
+    from app.knowledge import embedding
+
+    embed_on(FakeEmbedder(fail=openai.APITimeoutError(request=httpx.Request("POST", "https://x/v1/embeddings"))))
+    r = knowledge.search(QUERIES[0])
+    assert r.mode == "bm25" and r.fallback == "timeout"
+    left = embedding._get().failed_until - time.monotonic()
+    assert 0 < left <= embedding.TIMEOUT_COOLDOWN_S < embedding.COOLDOWN_S
