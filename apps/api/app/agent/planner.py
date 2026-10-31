@@ -912,6 +912,10 @@ def route(ctx: ToolContext, guard, llm: Callable | None = None) -> tuple[str, st
         result = auto.schedule_transfer_propose(ctx, **slots)
         _audit_tool(ctx, "schedule.transfer_propose", slots, result)
         return _reply_for(ctx, result), "rule"
+    if (slots := auto.cancel_slots(ctx, text)) is not None:  # 「帮我退款鞋子」：模型只拿到账单工具时会说没下过单
+        result = auto.order_cancel_propose(ctx, **slots)
+        _audit_tool(ctx, "order.cancel_propose", slots, result)
+        return _reply_for(ctx, result), "rule"
     if llm is None and (out := auto.rule_turn(ctx, text)) is not None:
         reply, calls = out
         for name, args, result in calls:

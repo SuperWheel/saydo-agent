@@ -894,7 +894,11 @@ _GOODS = (r"鲜花|花束|花(?!钱|了|费|在|销|多少|的|掉|光)|蛋糕|�
 _ORDER = re.compile(rf"(?:订|买|预订|定|下单|购买)(?!了|过|阅|单|的)[^，,。？?！!\s]{{0,4}}?(?P<what>{_GOODS})")
 # 问账（「上个月买衣服花了多少」「买书的记录」）不是要下单
 _NOT_ORDER = re.compile(r"花了|多少钱|花多少|消费|支出|账单|明细|记录|几次|多少次|上个?月|这个?月|本月|今年|去年|上周|这周|本周|订阅|退款")
-_ORDER_CANCEL = re.compile(rf"(取消|退掉|退了|不要).{{0,6}}(订单|{_GOODS})|(订单|{_GOODS})[^，,。]{{0,6}}(取消|退掉|不要了)")
+_REFUND = r"退款|退货|退钱|退单|退掉|退了|退回"
+_ORDER_CANCEL = re.compile(rf"(取消|不要|{_REFUND}).{{0,6}}(订单|{_GOODS})|(订单|{_GOODS})[^，,。]{{0,6}}(取消|不要了|{_REFUND})"
+                           rf"|^(我要|我想|帮我|申请|麻烦你?)?(退款|退货|退单)(吧|一下|了)?[。！!]?$")
+# 「上个月退款有多少」「鞋的退款记录」是查账，不是要退
+_REFUND_QUESTION = re.compile(r"多少|记录|明细|几笔|哪些|有没有|到账|查|统计|账单|上个?月|这个?月|本月|今年|去年|上周|这周|本周")
 _FOR_WHOM = re.compile(r"(给|送)(?P<who>我妈|妈妈|老妈|母亲|我爸|爸爸|老爸|爱人|老婆|媳妇|妻子|女朋友|老公|孩子|儿子|女儿)")
 # 候选卡之后「要第二个」「换第三款」：只认很短、不带其他业务词的话，免得把「锁第二张卡」「买第一个理财」认成选商品
 _PICK_OTHER = re.compile(r"理财|产品|基金|赎回|万|银行卡|信用卡|借记卡|锁|挂失|转账|转给|订阅|取消")
@@ -932,13 +936,19 @@ def rule_turn(ctx: ToolContext, text: str) -> tuple[str | None, list[tuple[str, 
         until = parse_date(text, now())
         slots["until"] = f"{until}" if until and until >= now().date() else None
         return None, [("pot.lock_propose", slots, pot_lock_propose(ctx, **slots))]
-    if _ORDER_CANCEL.search(text) and paid_orders(ctx.db, ctx.user_id):
-        args = {"order_hint": (m := re.search(_GOODS, text)) and m.group() or ""}
+    if (args := cancel_slots(ctx, text)) is not None:
         return None, [("order.cancel_propose", args, order_cancel_propose(ctx, **args))]
     if args := order_slots(text):
         r = merchant_options(ctx, **args)
         return r.data.get("message") if r.card is None else None, [("merchant.options", args, r)]
     return None
+
+
+def cancel_slots(ctx: ToolContext, text: str) -> dict | None:
+    """「帮我退款鞋子」「把蛋糕退了」「我要退货」→ 取消订单的参数；有已付款的订单才算，查账的说法不算。"""
+    if not _ORDER_CANCEL.search(text) or _REFUND_QUESTION.search(text) or not paid_orders(ctx.db, ctx.user_id):
+        return None
+    return {"order_hint": (m := re.search(_GOODS, text)) and m.group() or ""}
 
 
 def order_slots(text: str) -> dict | None:

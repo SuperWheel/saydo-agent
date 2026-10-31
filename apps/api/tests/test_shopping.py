@@ -182,6 +182,35 @@ def test_buy_shoes_end_to_end(client):
     assert cancel["title"] == "取消订单" and dict(cancel["rows"])["商户"] == "京东自营"
 
 
+def _paid_shoes(client) -> str:
+    r = order(client, "帮我买双鞋")
+    pass_auth(client, confirm(client, r["cards"][0]).json()["card"])
+    return r["session_id"]
+
+
+@pytest.mark.parametrize("sentence", ["帮我退款鞋子", "鞋子退款", "帮我把鞋子退了", "鞋退货", "我要退货", "申请退款",
+                                      "退掉刚才买的鞋", "把鞋的订单取消"])
+def test_refund_said_many_ways_gives_cancel_card(client, sentence):
+    """下单后「帮我退款鞋子」之类：出取消订单确认卡，不是「没有这个功能」。"""
+    c = say(client, sentence, _paid_shoes(client))["cards"][0]
+    assert c["title"] == "取消订单" and dict(c["rows"])["商品"] == "轻跑运动鞋（男女同款）"
+
+
+@pytest.mark.parametrize("sentence", ["上个月退款有多少", "鞋的退款到账了吗", "这个月的退款记录"])
+def test_refund_questions_are_not_cancels(client, sentence):
+    r = say(client, sentence, _paid_shoes(client))
+    assert not any(c.get("title") == "取消订单" for c in r["cards"])
+
+
+def test_llm_refund_is_deterministic(llm_client, fake):
+    """模型路径：「帮我退款鞋子」按规则会被裁成账单工具，模型看不到取消订单、会说没下过单，所以确定性处理、不调模型。"""
+    r = order(llm_client, "帮我买双鞋")
+    pass_auth(llm_client, confirm(llm_client, r["cards"][0]).json()["card"])
+    f = fake(text("你刚才的鞋子没有下单"))
+    c = say(llm_client, "帮我退款鞋子", r["session_id"])["cards"][0]
+    assert c["title"] == "取消订单" and not f.calls
+
+
 def test_giftcard_is_instant_and_edit_has_no_dates(client):
     r = order(client, "帮我买一张购物卡")
     c = r["cards"][0]
