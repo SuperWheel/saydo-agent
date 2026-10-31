@@ -44,6 +44,7 @@ const EVENTS = {
   auth_challenge: ['发起强验证', (p) => p.factors.map((f) => FACTOR[f] || f).join(' + ')],
   auth_failed: ['验证未通过', (p) => `${FACTOR[p.factor] || p.factor} · 第 ${p.attempts} 次`],
   auth_passed: ['验证通过', (p) => FACTOR[p.factor] || p.factor],
+  card_number_viewed: ['查看完整卡号', (p) => `尾号 ${p.card_tail} · 人脸验证通过后返回一次，卡号不入审计`],
   policy_revalidated: ['执行前重新校验', (p) => (p.block ? `拒绝：${p.block_reason}` : `${LEVEL[p.level]}，与出卡时一致`)],
   token_issued: ['签发执行令牌', (p) => `一次性 · 60 秒有效 · jti ${p.jti}`],
   execution: ['工具网关执行', (p) => [p.status === 'succeeded' ? '成功' : p.status, p.txn_no && `流水号 ${p.txn_no}`].filter(Boolean).join(' · ')],
@@ -59,7 +60,7 @@ const STAGES = [
   ['intent', '意图 / 工具', ['intent', 'llm_call', 'tool_call', 'llm_error', 'provenance_reject', 'grounding_failed', 'grounding_retry', 'assistant_reply']],
   ['policy', '策略定级', ['policy_decision', 'breaker_tripped', 'breaker_blocked']],
   ['confirm', '确认', ['action_created', 'action_confirmed', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated']],
-  ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed']],
+  ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed', 'card_number_viewed']],
   ['token', '令牌', ['policy_revalidated', 'token_issued']],
   ['exec', '执行', ['execution', 'execution_failed', 'circuit_open']],
 ]

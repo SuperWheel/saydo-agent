@@ -25,7 +25,7 @@ from ..tools import REGISTRY, ToolContext, ToolResult, by_llm_name, llm_tool_spe
 from ..tools.bank import get_balance
 from ..tools.bill import rule_turn as bill_rule_turn, workflow_args as bill_workflow_args
 from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
-from ..tools.card import rule_turn as card_rule_turn
+from ..tools.card import propose_bind, rule_turn as card_rule_turn
 from ..tools.knowledge import rule_turn as kb_rule_turn
 from ..tools.subscription import rule_turn as sub_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
@@ -318,7 +318,7 @@ def _brief(ctx: ToolContext, text: str) -> str:
 
 NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
 # 候选商品卡也结束这一轮：等用户自己挑，不让模型接着替用户下单
-ENDS_TURN = {"confirm", "clarify", "notice", "shop_options"}
+ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
@@ -360,7 +360,7 @@ WORKFLOW_TOOLS = {
     "bill_query": "bill.query",
     "card:list": "card.list", "card:lock": "card.lock_propose", "card:unlock": "card.unlock_propose",
     "card:report_loss": "card.report_loss_propose", "card:limit": "card.limit_propose",
-    "card:virtual_apply": "card.virtual_propose",
+    "card:virtual_apply": "card.virtual_propose", "card:bind": "card.bind_propose",
     "sub:list": "sub.list", "sub:upcoming": "sub.upcoming", "sub:cancel": "sub.cancel_propose",
     "wealth:assess": "wealth.assessment", "wealth:holdings": "wealth.holdings", "wealth:compare": "wealth.compare",
     "wealth:recommend": "wealth.recommend", "wealth:subscribe": "wealth.subscribe_propose",
@@ -540,6 +540,10 @@ def _selection_turn(ctx: ToolContext, selection: dict) -> str:
         return _apply(ctx, pick_option(ctx, str(selection.get("sku") or "")[:8]))
     if selection.get("type") == "wealth_buy":  # 理财产品详情卡上的「申购」：和说出来走同一个提议工具
         return buy_from_card(ctx, selection)
+    if selection.get("type") == "card_bind":  # 绑卡卡片上点选一张或输入后四位：和说「绑定尾号1234的卡」走同一个提议工具
+        tail = str(selection.get("tail") or "")[:8]
+        return _apply(ctx, propose_bind(ctx, tail, pool_id=selection.get("pool_id") and str(selection["pool_id"])[:4],
+                                        typed=True))
     if selection.get("type") == "plan":  # 计划卡的按钮（WS7）
         return planner.selection_turn(ctx, selection)
     pq = (ctx.session.state or {}).get("pending_question") or {}

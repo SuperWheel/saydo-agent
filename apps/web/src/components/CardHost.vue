@@ -5,6 +5,7 @@ import AACard from './cards/AACard.vue'
 import AnomalyCard from './cards/AnomalyCard.vue'
 import AuthCard from './cards/AuthCard.vue'
 import BalanceCard from './cards/BalanceCard.vue'
+import CardBindCard from './cards/CardBindCard.vue'
 import CardListCard from './cards/CardListCard.vue'
 import CategoryCard from './cards/CategoryCard.vue'
 import ClarifyCard from './cards/ClarifyCard.vue'
@@ -38,6 +39,7 @@ const CARDS = {
   bill_anomalies: AnomalyCard,
   bill_report: ReportCard,
   card_list: CardListCard,
+  card_bind: CardBindCard,
   plan: PlanCard,
   automation: AutomationCard,
   shop_options: ShopOptionsCard,

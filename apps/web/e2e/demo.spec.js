@@ -1,6 +1,6 @@
 // 演示主线（docs/09-演示视频脚本.md）的端到端用例，规则模式下跑。
 // 每个用例开头都重置演示数据：余额 28,650.32，当日还没有转出。
-import { cards, chip, expect, say, test } from './helpers'
+import { cards, chip, expect, say, settled, test } from './helpers'
 
 test('1 查余额：余额卡合计 28,650.32', async ({ page }) => {
   await chip(page, '我还有多少钱')
@@ -312,4 +312,90 @@ test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 强�
   await expect(receipt).toContainText('下单成功')
   await expect(receipt).toContainText('京东自营')
   await expect(receipt).toContainText('¥269.00')
+})
+
+test('11 查看银行卡 → 点开详情 → 小眼睛 → 人脸 → 完整卡号 → 再点隐藏', async ({ page }) => {
+  await page.setViewportSize({ width: 430, height: 640 }) // 屏幕矮一点，详情内容要滚动，验证顶栏固定
+  await say(page, '查看我的银行卡')
+  const list = cards(page, 'card-list-card')
+  await expect(list).toHaveCount(1)
+  await expect(page.getByText('确定性工作流').last()).toBeVisible() // 不调模型，直接出卡片列表
+  await list.getByTestId('bank-card').first().click()
+
+  const sheet = page.getByTestId('card-detail')
+  await expect(sheet).toContainText('言行银行北京朝阳支行')
+  await expect(sheet).toContainText('Ⅰ类借记卡')
+  await expect(sheet).toContainText('李*')
+  await expect(sheet).toContainText('¥28,650.32') // 余额是账务引擎的数
+  const no = sheet.getByTestId('card-number')
+  await expect(no).toHaveText('6230 **** **** 6688')
+
+  // 顶栏固定：内容区滚到底，顶栏位置不变
+  const bar = sheet.getByTestId('card-detail-bar')
+  const barY = async () => (await bar.boundingBox()).y
+  await expect.poll(async () => { const a = await barY(); await page.waitForTimeout(150); return a === await barY() })
+    .toBe(true) // 等弹层上滑动画结束
+  const top = await barY()
+  const scrolled = await sheet.locator('.body').evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollTop })
+  expect(scrolled).toBeGreaterThan(0)
+  expect((await bar.boundingBox()).y).toBe(top)
+  await sheet.locator('.body').evaluate((el) => { el.scrollTop = 0 })
+
+  // 第一次显示：先做模拟人脸，只要人脸、没有短信验证码输入框
+  await sheet.getByTestId('card-eye').click()
+  const face = sheet.getByTestId('card-face')
+  await expect(face).toContainText('人脸识别')
+  await expect(sheet.getByPlaceholder('输入 6 位验证码')).toHaveCount(0)
+  await expect(no).toHaveText('6230 **** **** 6688') // 验证前还是掩码
+  await sheet.getByTestId('card-face-btn').click()
+  await expect(no).toHaveText('6230 5810 0000 6688')
+  await expect(face).toHaveCount(0)
+
+  // 再点隐藏；本次打开期间再显示不用重新验证
+  await sheet.getByTestId('card-eye').click()
+  await expect(no).toHaveText('6230 **** **** 6688')
+  await sheet.getByTestId('card-eye').click()
+  await expect(no).toHaveText('6230 5810 0000 6688')
+  await expect(sheet.getByTestId('card-face')).toHaveCount(0)
+
+  // 关掉详情再打开：卡号回到掩码，再看要重新验证；对话里没有完整卡号
+  await sheet.getByLabel('关闭').click()
+  await expect(sheet).toBeHidden()
+  await expect(page.locator('body')).not.toContainText('6230 5810 0000 6688')
+  await list.getByTestId('bank-card').first().click()
+  await expect(no).toHaveText('6230 **** **** 6688')
+  await sheet.getByTestId('card-eye').click()
+  await expect(sheet.getByTestId('card-face')).toBeVisible()
+})
+
+test('12 绑卡：卡片列表点「绑定新卡」→ 输入后四位 → 🔴 人脸 + 短信 → 新卡出现在列表', async ({ page }) => {
+  await say(page, '查看我的银行卡')
+  await cards(page, 'card-list-card').getByTestId('card-bind-entry').click()
+  await settled(page)
+  const bind = cards(page, 'card-bind-card')
+  await expect(bind).toContainText('已绑定 2 / 20 张')
+  await expect(bind.getByTestId('card-bind-option')).toHaveCount(6) // 卡池 20 张，先显示 6 张
+  await bind.getByTestId('card-bind-tail').locator('input').fill('1554')
+  await bind.getByRole('button', { name: '查找' }).click()
+  await settled(page)
+
+  const confirm = cards(page, 'confirm-card')
+  await expect(confirm).toContainText('🔴')
+  await expect(confirm).toContainText('招商银行')
+  await expect(confirm).toContainText('6225 **** **** 1554')
+  await expect(confirm).toContainText('138****6688')
+  await confirm.getByRole('button', { name: '确认' }).click()
+  const auth = cards(page, 'auth-card')
+  await auth.getByRole('button', { name: '模拟人脸识别' }).click()
+  const sms = await auth.getByText(/验证码\d{6}/).textContent()
+  await auth.getByPlaceholder('输入 6 位验证码').fill(sms.match(/验证码(\d{6})/)[1])
+  await auth.getByRole('button', { name: '提交' }).click()
+  await expect(cards(page, 'receipt-card')).toContainText('绑卡成功')
+
+  await say(page, '查看我的银行卡')
+  const list = cards(page, 'card-list-card').nth(1)
+  await expect(list.getByTestId('bank-card')).toHaveCount(3)
+  await expect(list).toContainText('招商银行信用卡')
+  await list.getByTestId('bank-card').nth(2).click()
+  await expect(page.getByTestId('card-detail')).toContainText('招商银行信用卡中心')
 })

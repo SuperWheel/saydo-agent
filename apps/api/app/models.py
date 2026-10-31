@@ -426,3 +426,17 @@ class DebitAgreement(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")  # active / stopped
     signed_at: Mapped[datetime] = mapped_column(DateTime)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class CardReveal(Base):
+    """查看完整卡号的模拟人脸验证。一次一用：人脸通过后返回一次完整卡号，详情弹层关掉再看要重新验证。"""
+
+    __tablename__ = "card_reveals"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.id"))
+    digest: Mapped[str] = mapped_column(String(64))  # 人脸断言要绑定的摘要（卡片 + 随机数）
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / passed / failed
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
