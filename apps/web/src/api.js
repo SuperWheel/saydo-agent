@@ -83,4 +83,7 @@ export const api = {
   embeddingConfig: () => get('/admin/embedding-config'),
   saveEmbeddingConfig: (body) => post('/admin/embedding-config', body),
   testEmbedding: () => post('/admin/embedding-config/test'),
+  rerankConfig: () => get('/admin/rerank-config'),
+  saveRerankConfig: (body) => post('/admin/rerank-config', body),
+  testRerank: () => post('/admin/rerank-config/test'),
 }

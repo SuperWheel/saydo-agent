@@ -8,7 +8,7 @@ import CardHost from './components/CardHost.vue'
 import EntryFace from './components/EntryFace.vue'
 import ModelSettings from './components/ModelSettings.vue'
 import WecomSettings from './components/WecomSettings.vue'
-import EmbeddingSettings from './components/EmbeddingSettings.vue'
+import KnowledgeSettings from './components/KnowledgeSettings.vue'
 import RiskPanel from './components/RiskPanel.vue'
 
 const QUICK = ['我还有多少钱', '给我妈转500，备注生活费', '再给我妹转800', '给张伟转200', '给赵磊转300',
@@ -294,7 +294,7 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
           <WecomSettings v-if="settingsOpen && settingsTab === 'wecom'" />
         </van-tab>
         <van-tab title="知识检索" name="embedding">
-          <EmbeddingSettings v-if="settingsOpen && settingsTab === 'embedding'" />
+          <KnowledgeSettings v-if="settingsOpen && settingsTab === 'embedding'" />
         </van-tab>
       </van-tabs>
     </van-popup>

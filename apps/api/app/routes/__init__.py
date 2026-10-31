@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock, embedding_setup, llm_setup, wecom_setup
+from .. import audit, clock, embedding_setup, llm_setup, rerank_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions, entry
 from ..channels import take_handoff, wecom
@@ -297,6 +297,31 @@ def embedding_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)
 @admin.post("/embedding-config/test")
 def embedding_config_test():
     return embedding_setup.test_connection()
+
+
+@admin.get("/rerank-config")
+def rerank_config():
+    return rerank_setup.status()
+
+
+@admin.post("/rerank-config")
+def rerank_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)):
+    """字段和向量设置一样：provider / api_key / model / base_url / disable（停用 = 不重排，密钥保留）。"""
+    try:
+        out = rerank_setup.save(body.provider, body.api_key, body.model, body.base_url, body.disable)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    # 审计只记改了什么，不记密钥
+    audit.record(db, "admin", "rerank_config", {"provider": "" if body.disable else body.provider.strip().lower(),
+                                                "disable": body.disable, "key_updated": bool(body.api_key.strip()),
+                                                "model": body.model.strip(), "base_url": body.base_url.strip()})
+    db.commit()
+    return out
+
+
+@admin.post("/rerank-config/test")
+def rerank_config_test():
+    return rerank_setup.test_connection()
 
 
 @admin.get("/audit")

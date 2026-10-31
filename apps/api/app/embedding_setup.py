@@ -10,22 +10,23 @@ import time
 
 from . import config
 from .config import EMBEDDING_PROVIDERS, get_settings
-from .knowledge import embedding, warm_embeddings
+from .knowledge import embedding, rerank, warm_embeddings
 from .llm_setup import ConfigError, update_env
 
-LABELS = {"siliconflow": "硅基流动", "zhipu": "智谱", "openai": "其他 OpenAI 兼容接口"}
+LABELS = {"siliconflow": "硅基流动", "qwen": "千问（阿里云百炼）", "zhipu": "智谱", "openai": "其他 OpenAI 兼容接口"}
 NOTES = {
     "siliconflow": "推荐。Qwen3-Embedding-8B，取 1024 维；在 cloud.siliconflow.cn 的「API 密钥」页创建",
+    "qwen": "text-embedding-v4，取 1024 维；在阿里云百炼控制台创建 API Key（未实测）",
     "zhipu": "embedding-3；不填密钥就复用「模型」页的智谱密钥（需要账户有余额）",
     "openai": "任意兼容 /v1/embeddings 的服务，接口地址、模型名都要填",
 }
 # 供应商自带的密钥项：切换到它、又没填新密钥时，清掉 EMBEDDING_API_KEY 让它生效
-OWN_KEY = {"siliconflow": "siliconflow_api_key", "zhipu": "zhipuai_api_key"}
+OWN_KEY = {"siliconflow": "siliconflow_api_key", "qwen": "dashscope_api_key", "zhipu": "zhipuai_api_key"}
 _KEY_OK = re.compile(r"[A-Za-z0-9._\-]{16,200}")
 _MODEL_OK = re.compile(r"[A-Za-z0-9._\-/:]{2,100}")
 _URL_OK = re.compile(r"https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9_\-./]*)?")
-_WATCHED = ("EMBEDDING_PROVIDER", "EMBEDDING_API_KEY", "SILICONFLOW_API_KEY", "EMBEDDING_MODEL", "EMBEDDING_BASE_URL",
-            "EMBEDDING_DIMENSIONS")
+_WATCHED = ("EMBEDDING_PROVIDER", "EMBEDDING_API_KEY", "SILICONFLOW_API_KEY", "DASHSCOPE_API_KEY", "EMBEDDING_MODEL",
+            "EMBEDDING_BASE_URL", "EMBEDDING_DIMENSIONS")
 _MARK = "# 以下由知识检索设置页写入"
 
 STATE_TEXT = {
@@ -107,10 +108,16 @@ def save(provider: str = "", api_key: str = "", model: str = "", base_url: str =
     return _reload()
 
 
-def _reload() -> dict:
+def reload_settings() -> None:
+    """改了 .env 之后：重新读配置，丢掉向量和重排的内存状态，后台重新加载条目向量（多半来自落盘缓存）。"""
     get_settings.cache_clear()
     embedding.reset()
+    rerank.reset()
     warm_embeddings()  # 没配置时什么都不做；配了在后台算，页面轮询状态
+
+
+def _reload() -> dict:
+    reload_settings()
     return status()
 
 

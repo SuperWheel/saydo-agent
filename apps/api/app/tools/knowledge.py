@@ -28,6 +28,8 @@ def lookup(query: str, ctx: ToolContext | None = None) -> ToolResult:
     found = knowledge.search(query)
     if found.fallback and ctx is not None:  # 配了向量通道但这一问超时 / 出错，只用了 BM25
         audit.record(ctx.db, ctx.trace_id, "kb_embedding_fallback", {"reason": found.fallback})
+    if found.rerank_fallback and ctx is not None:  # 配了重排但这一问超时 / 出错，没重排
+        audit.record(ctx.db, ctx.trace_id, "kb_rerank_fallback", {"reason": found.rerank_fallback})
     if not found.hits:
         return ToolResult({"status": "no_hit", "message": NO_HIT}, {**notice_card(NO_HIT), "kb_no_hit": True})
     items = [e.view() for e in found.entries]

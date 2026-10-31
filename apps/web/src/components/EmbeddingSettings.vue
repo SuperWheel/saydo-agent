@@ -1,11 +1,14 @@
 <script setup>
-// 知识检索设置：可选的向量通道（硅基流动 / 智谱 / 其他 OpenAI 兼容接口），密钥写进仓库根目录的 .env，保存后立即生效，
+// 知识检索 · 向量检索卡片（可选）：硅基流动 / 千问 / 智谱 / 其他 OpenAI 兼容接口，密钥写进仓库根目录的 .env，保存后立即生效，
 // 后端在后台算知识库条目向量。不配置或停用时只用关键词检索（BM25）。密钥不会从后端回传，这里只显示「已填写 · 尾号 ab12」。
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+// 状态变了就 emit('changed')，外层卡片头部跟着更新。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import { api } from '../api'
 
+const emit = defineEmits(['changed'])
 const cfg = ref(null)
+watch(cfg, (c) => c && emit('changed', c))
 const provider = ref('siliconflow')
 const apiKey = ref('')
 const model = ref('')
@@ -87,7 +90,7 @@ async function test() {
       <span v-if="cfg.state === 'failed' && cfg.last_error" class="err">{{ cfg.last_error }}{{ cfg.retry_in_s ? `（${cfg.retry_in_s} 秒后重试）` : '' }}</span>
     </div>
 
-    <div class="section">向量模型（三选一）</div>
+    <div class="section">向量模型（选一个）</div>
     <van-radio-group v-model="provider">
       <van-cell-group inset>
         <van-cell v-for="p in cfg.providers" :key="p.id" clickable @click="provider = p.id">
@@ -108,8 +111,9 @@ async function test() {
                  :placeholder="current?.has_key ? '留空则沿用已填写的密钥' : `粘贴${current?.label}的 API Key`" />
       <van-field v-model="model" label="模型" autocomplete="off" clearable
                  :placeholder="provider === cfg.provider && cfg.model ? `当前 ${cfg.model}；填写则替换` : (current?.model || '如 text-embedding-3-small')" />
-      <van-field v-if="provider === 'openai'" v-model="baseUrl" label="接口地址" autocomplete="off" clearable :label-width="70"
-                 :placeholder="provider === cfg.provider && cfg.base_url ? `当前 ${cfg.base_url}` : 'https://api.example.com/v1'" />
+      <van-field v-if="provider === 'openai' || provider === 'qwen'" v-model="baseUrl" label="接口地址" autocomplete="off" clearable
+                 :label-width="70"
+                 :placeholder="provider === cfg.provider && cfg.base_url ? `当前 ${cfg.base_url}` : (current?.base_url ? `留空用 ${current.base_url}` : 'https://api.example.com/v1')" />
     </van-cell-group>
 
     <div class="actions">

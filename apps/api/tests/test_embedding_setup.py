@@ -31,7 +31,7 @@ def env_file(client, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ENV_FILE", path)
     monkeypatch.setattr(embedding, "CACHE_FILE", tmp_path / "kb_embeddings.json")
     for k in ("EMBEDDING_PROVIDER", "EMBEDDING_API_KEY", "SILICONFLOW_API_KEY", "EMBEDDING_MODEL", "EMBEDDING_BASE_URL",
-              "EMBEDDING_DIMENSIONS", "ZHIPUAI_API_KEY", "GLM_API_KEY", "ADMIN_PASSWORD"):
+              "EMBEDDING_DIMENSIONS", "ZHIPUAI_API_KEY", "GLM_API_KEY", "DASHSCOPE_API_KEY", "QWEN_API_KEY", "ADMIN_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
     fake = Fake()
     monkeypatch.setattr(embedding, "make_client", lambda settings: fake)
@@ -54,7 +54,7 @@ def _wait_ready(client) -> dict:
 def test_default_is_bm25_only(client, env_file):
     c = client.get("/admin/embedding-config").json()
     assert c["provider"] == "" and not c["ready"] and c["state"] == "off" and c["state_text"].startswith("只用关键词")
-    assert [p["id"] for p in c["providers"]] == ["siliconflow", "zhipu", "openai"]
+    assert [p["id"] for p in c["providers"]] == ["siliconflow", "qwen", "zhipu", "openai"]
     assert knowledge.search("跨行转账多久到账").mode == "bm25"
 
 

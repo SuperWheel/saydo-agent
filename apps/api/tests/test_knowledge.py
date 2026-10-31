@@ -303,7 +303,8 @@ class FakeEmbedder:
         self.targets, self.fail, self.delay = targets or {}, fail, delay
         self.batches: list[list[str]] = []
         self.docs = {t: i for i, t in enumerate(knowledge.doc_texts())}
-        self.n = len(self.docs) + 1
+        self.n = 1024  # 和硅基流动预设的维度一致：落盘缓存加载时要核对维度
+        assert len(self.docs) < self.n
 
     def _vec(self, t: str) -> list[float]:
         v = [0.0] * self.n
@@ -467,6 +468,47 @@ def test_doc_vectors_not_ready_uses_bm25_and_cache_survives_restart(embed_on, mo
     embedding.reset()
     assert knowledge.warm_embeddings(block=True) and again.batches == []  # 全部来自落盘缓存
     assert len(fake.batches) >= 2
+
+
+def test_background_build_writes_cache_path_captured_at_start(embed_on, monkeypatch, tmp_path):
+    """后台算条目向量的线程在 CACHE_FILE 被改回去（测试夹具还原）之后才写完，也只写到发起时的路径，
+    不会把假向量写进开发者本机的 data/kb_embeddings.json（真实发生过）。"""
+    from app.knowledge import embedding
+
+    embed_on(FakeEmbedder())
+    gate = threading.Event()
+    slow = FakeEmbedder()
+    slow.embed = lambda texts, timeout: (gate.wait(5), FakeEmbedder.embed(slow, texts, timeout))[1]
+    start, later = tmp_path / "start" / "kb_embeddings.json", tmp_path / "later" / "kb_embeddings.json"
+    monkeypatch.setattr(embedding, "CACHE_FILE", start)
+    monkeypatch.setattr(embedding, "make_client", lambda settings: slow)
+    embedding.reset()
+    assert not knowledge.warm_embeddings()  # 后台开始算
+    monkeypatch.setattr(embedding, "CACHE_FILE", later)  # 相当于夹具已经还原
+    gate.set()
+    for _ in range(100):
+        if embedding.runtime_status()["state"] == "ready":
+            break
+        time.sleep(0.02)
+    assert embedding.runtime_status()["state"] == "ready"
+    assert start.exists() and not later.exists()
+
+
+def test_cache_with_wrong_dimensions_is_ignored(embed_on, monkeypatch, tmp_path):
+    """缓存文件的模型键对得上、向量维度却和配置不符（被写坏了）：不用它，重新算并覆盖。"""
+    import json
+
+    from app.knowledge import embedding
+
+    path = tmp_path / "bad.json"
+    model = "Qwen/Qwen3-Embedding-8B@1024"
+    path.write_text(json.dumps({"model": model, "vectors": {embedding._key(model, t): [1.0] * 102
+                                                             for t in knowledge.doc_texts()}}), encoding="utf-8")
+    monkeypatch.setattr(embedding, "CACHE_FILE", path)
+    fake = embed_on(FakeEmbedder())
+    assert fake.batches, "维度不对的缓存不能用，要重新算"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert {len(v) for v in doc["vectors"].values()} == {1024}
 
 
 def test_kb_tool_audits_embedding_fallback(client, monkeypatch, tmp_path):

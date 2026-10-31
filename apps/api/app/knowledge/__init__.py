@@ -12,6 +12,8 @@
   否则返回空结果，由上层如实说没查到，不让模型用常识补充。
 - 可选的向量通道（embedding.py）：配了 EMBEDDING_PROVIDER 时，BM25 和余弦相似度按 RRF 混合排序，「查到」要同时过
   BM25 门槛和向量相似度下限（或覆盖率过宽松门槛、相似度很高）；没配置、向量没就绪、超时或出错时和纯 BM25 一字不差。
+- 可选的重排模型（rerank.py）：配了 RERANK_PROVIDER 时，把 BM25 和向量名次融合的前 10 条（没向量时 BM25 前 10）送去重排，
+  按重排分数排序，「查到」改由最高重排分数决定；没配置、超时或出错时回到上面的路径，结果一字不差。
 """
 
 import math
@@ -26,7 +28,7 @@ import yaml
 
 from ..core_mock.wealth import PRODUCTS, RISK_LABEL, pct
 from ..security import inspect
-from . import embedding
+from . import embedding, rerank
 
 KB_DIR = Path(__file__).parent / "kb"
 SOURCE_PREFIX = "演示知识库"
@@ -52,6 +54,9 @@ LOOSE_COVERAGE = 0.1  # 低于 MIN_COVERAGE；超范围题有几道在 0.10–0.
 SIM_MARGIN = 0.05  # 向量侧候选：相似度和第一名相差不超过这个数
 RRF_K = 60  # 倒数排名融合：1 / (RRF_K + BM25 名次) + 1 / (RRF_K + 向量名次)
 DOC_SUMMARY = 200  # 条目向量用标题 + 问法 + 正文前这么多字
+# 重排（可选）：「查到」门槛是最高重排分数过 RERANK_MIN_SCORE（按模型预设，见 config.RERANK_MIN_SCORES）
+RERANK_POOL = 10  # 送去重排的候选条数；换说法难题集上前 10 条召回 152 / 153
+RERANK_KEEP = 0.3  # 第二、三条的重排分数至少是第一条的这个比例：两套评测题里真正相关的次条有 29 / 33 在这之上，0.002 这类无关条目不带
 
 
 @dataclass(frozen=True)
@@ -86,9 +91,11 @@ class Entry:
 class SearchResult:
     hits: list[tuple[Entry, float]] = field(default_factory=list)
     coverage: float = 0.0  # 最佳条目对查询词的覆盖率（0–1）
-    mode: str = "bm25"  # bm25 / hybrid（这一问用上了向量）
+    mode: str = "bm25"  # bm25 / hybrid（这一问用上了向量）/ rerank（用上了重排模型）
     similarity: float | None = None  # 混合模式下最相近条目的余弦相似度
     fallback: str = ""  # 配了向量通道但这一问没用上的原因（timeout / 异常类名），写审计用
+    rerank_score: float | None = None  # 重排模式下最高的重排分数（0–1）
+    rerank_fallback: str = ""  # 配了重排但这一问没用上的原因，写审计用
 
     @property
     def entries(self) -> list[Entry]:
@@ -287,22 +294,64 @@ def search(query: str, top_k: int = 3) -> SearchResult:
         scores.append(s)
     order = sorted(range(len(scores)), key=lambda i: -scores[i])
     best = order[0]
-    if scores[best] <= 0:
+    reranking = rerank.enabled()
+    if scores[best] <= 0 and not reranking:  # 配了重排时关键词一个没对上也继续：向量候选还可能查到
         return SearchResult()
     total = sum(idx.idf(t) for t in q)
-    coverage = round(sum(idx.idf(t) for t in q if t in idx.tfs[best]) / total, 3)
-    lexical_ok = (scores[best] >= MIN_SCORE and coverage >= MIN_COVERAGE) or coverage >= SURE_COVERAGE
+    coverage = round(sum(idx.idf(t) for t in q if t in idx.tfs[best]) / total, 3) if scores[best] > 0 else 0.0
+    lexical_ok = scores[best] > 0 and (
+        (scores[best] >= MIN_SCORE and coverage >= MIN_COVERAGE) or coverage >= SURE_COVERAGE)
 
-    fallback = ""
+    fallback, sims = "", None
     if embedding.enabled() and (vecs := embedding.doc_vectors(doc_texts())) is not None:
         qv, fallback = embedding.query_vector(query)
         if qv is not None:
-            return _hybrid(idx, scores, order, coverage, lexical_ok, [embedding.cosine(qv, v) for v in vecs], top_k)
-
+            sims = [embedding.cosine(qv, v) for v in vecs]
+    rerank_fallback = ""
+    if reranking:
+        found, rerank_fallback = _reranked(idx, query, scores, order, sims, coverage, top_k)
+        if found is not None:
+            found.fallback = fallback
+            return found
+    # 没配重排，或这一问重排没用上：下面和不配重排时一字不差
+    if scores[best] <= 0:
+        return SearchResult(fallback=fallback, rerank_fallback=rerank_fallback)
+    if sims is not None:
+        found = _hybrid(idx, scores, order, coverage, lexical_ok, sims, top_k)
+        found.rerank_fallback = rerank_fallback
+        return found
     if not lexical_ok:
-        return SearchResult(coverage=coverage, fallback=fallback)
+        return SearchResult(coverage=coverage, fallback=fallback, rerank_fallback=rerank_fallback)
     hits = [(idx.docs[i], round(scores[i], 3)) for i in order[:top_k] if scores[i] >= scores[best] * RELATIVE_CUTOFF]
-    return SearchResult(hits=hits, coverage=coverage, fallback=fallback)
+    return SearchResult(hits=hits, coverage=coverage, fallback=fallback, rerank_fallback=rerank_fallback)
+
+
+def _reranked(idx: _Index, query: str, scores: list[float], order: list[int], sims: list[float] | None,
+              coverage: float, top_k: int) -> tuple[SearchResult | None, str]:
+    """重排：(结果, 没用上的原因)。结果为 None 表示这一问重排没用上（超时、出错、冷却中），由调用方走原来的路径。
+    候选：有向量时取 BM25 名次和向量名次 RRF 融合的前 RERANK_POOL 条，没有时取 BM25 前 RERANK_POOL 条（得分 > 0）。
+    BM25 得 0 分的条目不算 BM25 名次：它们之间的先后只是条目顺序，不能把向量排在前面的条目挤出候选。"""
+    if sims is not None:
+        brank = {i: r for r, i in enumerate(order, 1)}
+        vrank = {i: r for r, i in enumerate(sorted(range(len(sims)), key=lambda i: -sims[i]), 1)}
+        fused = {i: (1 / (RRF_K + brank[i]) if scores[i] > 0 else 0.0) + 1 / (RRF_K + vrank[i]) for i in vrank}
+        cands = sorted(fused, key=lambda i: -fused[i])[:RERANK_POOL]
+    else:
+        cands = [i for i in order[:RERANK_POOL] if scores[i] > 0]
+    if not cands:
+        return None, ""
+    texts = doc_texts()
+    rs, reason = rerank.scores(query, [texts[i] for i in cands])
+    if rs is None:
+        return None, reason
+    ranked = sorted(range(len(cands)), key=lambda j: -rs[j])
+    top = rs[ranked[0]]
+    found = SearchResult(coverage=coverage, mode="rerank", rerank_score=round(top, 4),
+                         similarity=round(max(sims), 4) if sims is not None else None)
+    if top < rerank.min_score():
+        return found, ""
+    found.hits = [(idx.docs[cands[j]], round(rs[j], 4)) for j in ranked[:top_k] if rs[j] >= top * RERANK_KEEP]
+    return found, ""
 
 
 def _hybrid(idx: _Index, scores: list[float], order: list[int], coverage: float, lexical_ok: bool,

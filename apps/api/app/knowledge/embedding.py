@@ -15,16 +15,17 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import openai
 
-from ..config import REPO_ROOT, Settings, get_settings
+from ..config import EMBEDDING_PROVIDERS, REPO_ROOT, Settings, get_settings
 from ..security import mask_pii
 
 log = logging.getLogger("saydo.kb")
 
 CACHE_FILE = REPO_ROOT / "data" / "kb_embeddings.json"
-BATCH = 32  # 一次请求最多送多少条（智谱 embedding-3 单次上限 64 条）
+BATCH = 32  # 一次请求最多送多少条（智谱 embedding-3 单次上限 64 条；千问 text-embedding-v4 是 10 条，见预设里的 batch）
 INDEX_TIMEOUT_S = 15.0  # 条目批量算向量每批的时限（在后台跑，不卡检索）
 COOLDOWN_S = 60.0  # 出错（鉴权失败、额度不足、网络断开……）后这么久内不再调接口
 TIMEOUT_COOLDOWN_S = 10.0  # 只是这一问超时：偶尔慢一下（实测中位 0.3 秒，偶尔 1.6 秒以上），短暂停一下就再试
@@ -152,38 +153,49 @@ def _key(model: str, text: str) -> str:
     return hashlib.sha256(f"{model}\n{text}".encode()).hexdigest()
 
 
-def _load_cache(model: str) -> dict[str, Vector]:
+def _load_cache(path: Path, model: str, dims: int | None) -> dict[str, Vector]:
+    """落盘的条目向量。模型键不同、各条长度不一、或和配置的维度不符（被别处写坏了）都当没有缓存，重新算。"""
     try:
-        doc = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-        return doc["vectors"] if doc.get("model") == model else {}
-    except (OSError, ValueError, KeyError, TypeError):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if doc.get("model") != model:
+            return {}
+        vectors = doc["vectors"]
+        lens = {len(v) for v in vectors.values()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
+    if len(lens) > 1 or (dims and lens and lens != {dims}):
+        log.warning("知识库向量缓存 %s 的维度不对（%s，应为 %s），不用它、重新算", path, sorted(lens), dims or "各条一致")
+        return {}
+    return vectors
 
 
-def _save_cache(model: str, vectors: dict[str, Vector]) -> None:
+def _save_cache(path: Path, model: str, vectors: dict[str, Vector]) -> None:
     try:
-        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = CACHE_FILE.with_suffix(".tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"model": model, "vectors": vectors}), encoding="utf-8")
-        tmp.replace(CACHE_FILE)
+        tmp.replace(path)
     except OSError as e:  # 只读目录之类：内存里照样能用
-        log.warning("知识库向量缓存写不进 %s：%s", CACHE_FILE, e)
+        log.warning("知识库向量缓存写不进 %s：%s", path, e)
 
 
-def _build(st: _State, texts: tuple[str, ...]) -> None:
+def _build(st: _State, texts: tuple[str, ...], path: Path) -> None:
+    """算条目向量。缓存路径由发起方定好传进来：后台线程跑完时模块里的 CACHE_FILE 可能已经变了（测试夹具还原），
+    不能那时再去读它，否则会写到别处（曾经把测试的假向量写进了开发者本机的 data/kb_embeddings.json）。"""
     try:
-        cached = _load_cache(st.model)
+        cached = _load_cache(path, st.model, st.settings.embedding_dimensions)
         keys = [_key(st.model, t) for t in texts]
         todo = [i for i, k in enumerate(keys) if k not in cached]
-        for start in range(0, len(todo), BATCH):
-            part = todo[start:start + BATCH]
+        batch = EMBEDDING_PROVIDERS.get(st.settings.embedding_provider, {}).get("batch", BATCH)
+        for start in range(0, len(todo), batch):
+            part = todo[start:start + batch]
             vecs = st.client.embed([texts[i] for i in part], INDEX_TIMEOUT_S)
             if len(vecs) != len(part):
                 raise EmbeddingError(f"返回 {len(vecs)} 条向量，送了 {len(part)} 条")
             for i, v in zip(part, vecs):
                 cached[keys[i]] = v
         if todo:
-            _save_cache(st.model, {k: cached[k] for k in keys})  # 只留当前条目的，改过的旧条目顺手清掉
+            _save_cache(path, st.model, {k: cached[k] for k in keys})  # 只留当前条目的，改过的旧条目顺手清掉
         with st.lock:
             st.docs, st.doc_vecs = texts, [_unit(cached[k]) for k in keys]
             st.last_error = ""
@@ -206,9 +218,9 @@ def doc_vectors(texts: tuple[str, ...], block: bool = False) -> list[Vector] | N
             return None
         st.building = True
     if block:
-        _build(st, texts)
+        _build(st, texts, CACHE_FILE)
         return st.doc_vecs if st.docs == texts else None
-    threading.Thread(target=_build, args=(st, texts), name="kb-embed-index", daemon=True).start()
+    threading.Thread(target=_build, args=(st, texts, CACHE_FILE), name="kb-embed-index", daemon=True).start()
     return None
 
 
