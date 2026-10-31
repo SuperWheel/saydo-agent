@@ -2,12 +2,14 @@
 // 知识问答（knowledge，WS9）：知识库检索到的条文，每条附出处（类别 · 文档 · 条款 · 依据 · 版本 · 生效日期）。
 // 监管类条目另带官方原文链接（urls），只在卡片上显示。
 // 知识库回答「规则是什么」；条文只是参考资料，不触发任何办理。
+// rewritten：原话没查到、让模型换了个书面说法才查到（agentic 重查），卡片上注明按哪句查到的。
 defineProps({ card: { type: Object, required: true } })
 </script>
 
 <template>
   <div class="card" data-testid="knowledge-card">
     <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary"><IconText text="📖 知识库" /></van-tag></div>
+    <div v-if="card.rewritten" class="rewritten">原话没查到，换个说法查：「{{ card.rewritten }}」</div>
     <div v-for="(it, i) in card.items" :key="it.id" class="item" :class="{ first: i === 0 }">
       <div class="q">{{ it.title }}</div>
       <div class="text">{{ it.text }}</div>
@@ -21,6 +23,8 @@ defineProps({ card: { type: Object, required: true } })
 </template>
 
 <style scoped>
+.rewritten { font-size: var(--fs-xs); color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 4px 8px; margin-bottom: 6px; }
 .item { padding: 8px 0; border-top: 1px solid var(--line); }
 .item.first { border-top: none; padding-top: 2px; }
 .q { font-weight: 600; font-size: var(--fs-body); margin-bottom: 4px; }

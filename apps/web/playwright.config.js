@@ -50,6 +50,7 @@ export default defineConfig({
         GLM_API_KEY: '',
         ADMIN_PASSWORD: '',
         DEMO_MODE: 'true',
+        DEMO_DATE: '2026-10-30', // 和一键启动一样按演示日期跑：月初那天「这个月」还没有流水，报告卡用例会失败
       },
     },
     {

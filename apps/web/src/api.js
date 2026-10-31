@@ -80,4 +80,12 @@ export const api = {
   testLlm: () => post('/admin/llm-config/test'),
   wecomConfig: () => get('/admin/wecom-config'),
   saveWecomConfig: (body) => post('/admin/wecom-config', body),
+  embeddingConfig: () => get('/admin/embedding-config'),
+  saveEmbeddingConfig: (body) => post('/admin/embedding-config', body),
+  testEmbedding: () => post('/admin/embedding-config/test'),
+  rerankConfig: () => get('/admin/rerank-config'),
+  saveRerankConfig: (body) => post('/admin/rerank-config', body),
+  testRerank: () => post('/admin/rerank-config/test'),
+  agenticConfig: () => get('/admin/agentic-config'),
+  saveAgenticConfig: (enabled) => post('/admin/agentic-config', { enabled }),
 }

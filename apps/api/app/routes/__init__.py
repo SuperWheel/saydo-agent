@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock, llm_setup, wecom_setup
+from .. import agentic_setup, audit, clock, embedding_setup, llm_setup, rerank_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions, entry
 from ..channels import take_handoff, wecom
@@ -265,6 +265,81 @@ async def wecom_config_save(body: WecomConfigIn):
                                                    "app_h5_url": body.app_h5_url.strip()})
         db.commit()
     return wecom_setup.status()
+
+
+class EmbeddingConfigIn(BaseModel):
+    provider: str = Field(default="", max_length=32)
+    api_key: str = Field(default="", max_length=200)  # 留空 = 沿用已有密钥
+    model: str = Field(default="", max_length=100)  # 留空 = 用供应商预设
+    base_url: str = Field(default="", max_length=200)
+    disable: bool = False  # 停用向量检索，只用 BM25（密钥保留）
+
+
+@admin.get("/embedding-config")
+def embedding_config():
+    return embedding_setup.status()
+
+
+@admin.post("/embedding-config")
+def embedding_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)):
+    try:
+        out = embedding_setup.save(body.provider, body.api_key, body.model, body.base_url, body.disable)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    # 审计只记改了什么，不记密钥
+    audit.record(db, "admin", "embedding_config", {"provider": "" if body.disable else body.provider.strip().lower(),
+                                                   "disable": body.disable, "key_updated": bool(body.api_key.strip()),
+                                                   "model": body.model.strip(), "base_url": body.base_url.strip()})
+    db.commit()
+    return out
+
+
+@admin.post("/embedding-config/test")
+def embedding_config_test():
+    return embedding_setup.test_connection()
+
+
+@admin.get("/rerank-config")
+def rerank_config():
+    return rerank_setup.status()
+
+
+@admin.post("/rerank-config")
+def rerank_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)):
+    """字段和向量设置一样：provider / api_key / model / base_url / disable（停用 = 不重排，密钥保留）。"""
+    try:
+        out = rerank_setup.save(body.provider, body.api_key, body.model, body.base_url, body.disable)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    # 审计只记改了什么，不记密钥
+    audit.record(db, "admin", "rerank_config", {"provider": "" if body.disable else body.provider.strip().lower(),
+                                                "disable": body.disable, "key_updated": bool(body.api_key.strip()),
+                                                "model": body.model.strip(), "base_url": body.base_url.strip()})
+    db.commit()
+    return out
+
+
+@admin.post("/rerank-config/test")
+def rerank_config_test():
+    return rerank_setup.test_connection()
+
+
+class AgenticIn(BaseModel):
+    enabled: bool
+
+
+@admin.get("/agentic-config")
+def agentic_config():
+    return agentic_setup.status()
+
+
+@admin.post("/agentic-config")
+def agentic_config_save(body: AgenticIn, db: Session = Depends(get_db)):
+    """知识库 agentic 重查开关（没查到时让对话模型改写问题再查一次）。"""
+    out = agentic_setup.save(body.enabled)
+    audit.record(db, "admin", "kb_agentic_config", {"enabled": body.enabled})
+    db.commit()
+    return out
 
 
 @admin.get("/audit")

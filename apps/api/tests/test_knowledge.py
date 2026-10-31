@@ -2,6 +2,8 @@
 规则意图分流、事实校验收集条文数字，以及规则模式和假模型的端到端对话。"""
 
 import json
+import threading
+import time
 import sys
 from pathlib import Path
 
@@ -348,3 +350,252 @@ def test_rule_mode_rule_questions_answer_from_kb(client, t, want):
     """规则模式：这些问句原来被赎回、订阅、解绑、下单、账单异常接走，现在出知识卡，不出确认卡。"""
     r = say(client, t)
     assert kinds(r) == ["knowledge"] and want in [i["id"] for i in r["cards"][0]["items"]]
+
+
+# ---------- 可选的向量通道（embedding）：混合排序、门槛、静默回退 ----------
+
+class FakeEmbedder:
+    """假的 /embeddings：条目各给一个正交方向；查询按 targets 指到某个条目（相似度 1），没登记的查询和谁都不像。"""
+
+    def __init__(self, targets=None, fail=None, delay=0.0):
+        self.targets, self.fail, self.delay = targets or {}, fail, delay
+        self.batches: list[list[str]] = []
+        self.docs = {t: i for i, t in enumerate(knowledge.doc_texts())}
+        self.n = 1024  # 和硅基流动预设的维度一致：落盘缓存加载时要核对维度
+        assert len(self.docs) < self.n
+
+    def _vec(self, t: str) -> list[float]:
+        v = [0.0] * self.n
+        if t in self.docs:
+            v[self.docs[t]] = 1.0
+            return v
+        target = next((eid for q, eid in self.targets.items() if t.endswith(q)), None)
+        if target is None:
+            return [1.0] * self.n  # 和每个条目的相似度都只有 1/√n
+        v[[e.id for e in knowledge._index().docs].index(target)] = 1.0
+        return v
+
+    def embed(self, texts, timeout):
+        self.batches.append(list(texts))
+        is_query = len(texts) == 1 and texts[0] not in self.docs
+        if is_query and self.delay:
+            time.sleep(self.delay)
+        if is_query and self.fail:
+            raise self.fail
+        return [self._vec(t) for t in texts]
+
+
+@pytest.fixture
+def embed_on(monkeypatch, tmp_path):
+    """install(fake)：打开向量通道（硅基流动预设）并换成假客户端，算好条目向量；缓存文件放临时目录。"""
+    from app.config import get_settings
+    from app.knowledge import embedding
+
+    monkeypatch.setattr(embedding, "CACHE_FILE", tmp_path / "kb_embeddings.json")
+
+    def install(fake):
+        monkeypatch.setenv("EMBEDDING_PROVIDER", "siliconflow")
+        monkeypatch.setenv("EMBEDDING_API_KEY", "")
+        monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-test")
+        monkeypatch.setattr(embedding, "make_client", lambda settings: fake)
+        get_settings.cache_clear()
+        embedding.reset()
+        assert knowledge.warm_embeddings(block=True)
+        return fake
+
+    return install
+
+
+def _ids(r):
+    return [e.id for e in r.entries]
+
+
+def test_embedding_off_by_default_even_with_zhipu_key(monkeypatch):
+    """没配 EMBEDDING_PROVIDER：即使有智谱 / 硅基流动密钥也不开，检索不碰向量客户端，结果和纯 BM25 一样。"""
+    from app.config import Settings
+    from app.knowledge import embedding
+
+    s = Settings(_env_file=None, zhipuai_api_key="k1", siliconflow_api_key="k2")
+    assert not s.embedding_ready and s.embedding_provider == ""
+    monkeypatch.setattr(embedding, "make_client", lambda settings: pytest.fail("没配置时不应该创建向量客户端"))
+    r = knowledge.search("跨行转账多久到账")
+    assert _ids(r)[0] == "faq-transfer-interbank" and (r.mode, r.similarity, r.fallback) == ("bm25", None, "")
+    assert not knowledge.warm_embeddings(block=True)
+
+
+def test_embedding_provider_presets():
+    from app.config import Settings
+
+    sf = Settings(_env_file=None, embedding_provider="SiliconFlow", siliconflow_api_key="k")
+    assert sf.embedding_ready and sf.embedding_model == "Qwen/Qwen3-Embedding-8B"
+    assert sf.embedding_base_url == "https://api.siliconflow.cn/v1" and sf.embedding_dimensions == 1024
+    assert sf.embedding_query_instruction.startswith("Instruct:")
+    zp = Settings(_env_file=None, embedding_provider="glm", zhipuai_api_key="k")
+    assert zp.embedding_ready and zp.embedding_model == "embedding-3" and zp.embedding_api_key == "k"
+    assert not Settings(_env_file=None, embedding_provider="openai", embedding_api_key="k").embedding_ready  # 地址、模型要自己填
+    assert not Settings(_env_file=None, embedding_provider="off").embedding_ready
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, embedding_provider="bge-local")
+
+
+def test_hybrid_search_fuses_vector_rank(embed_on):
+    """配置后走混合：向量指向的条目进前三；查询先脱敏、带检索指令再发出去；条目向量批量算一次。"""
+    fake = embed_on(FakeEmbedder({"转账多久到账": "faq-transfer-interbank", "能不能退": "reg-seven-day-return"}))
+    assert len(fake.batches) >= 2 and all(len(b) <= 32 for b in fake.batches)  # 101 条分批送
+    r = knowledge.search("给6222021234567890123转账多久到账")
+    assert r.mode == "hybrid" and r.similarity == pytest.approx(1.0) and r.fallback == ""
+    assert _ids(r)[0] == "faq-transfer-interbank"  # BM25 原来排第二，向量把它提到第一
+    sent = fake.batches[-1][0]
+    assert sent.startswith("Instruct:") and "6222021234567890123" not in sent and sent.endswith("***************0123转账多久到账")
+    calls = len(fake.batches)
+    knowledge.search("给6222021234567890123转账多久到账")
+    assert len(fake.batches) == calls  # 同一个查询的向量走内存缓存
+
+
+def test_hybrid_vector_floor_vetoes_lexical_false_hit(embed_on):
+    """「信用卡分期提额」BM25 会误命中信用卡还款；向量和哪条都不像（低于下限），混合模式拒答。"""
+    assert _ids(knowledge.search("信用卡分期提额"))  # 前提：纯 BM25 下这句会误命中
+    embed_on(FakeEmbedder())
+    r = knowledge.search("信用卡分期提额")
+    assert r.hits == [] and r.mode == "hybrid" and r.similarity < knowledge.SIM_FLOOR
+
+
+def test_hybrid_rescues_paraphrase_only_with_high_similarity(embed_on):
+    """BM25 覆盖率不够（0.1–0.15）时，只有相似度过 SIM_SURE 才算查到；相似度不够照样拒答。"""
+    q = "怎么申请信用卡分期提额到十万"
+    r0 = knowledge.search(q)
+    assert r0.hits == [] and knowledge.LOOSE_COVERAGE <= r0.coverage < knowledge.MIN_COVERAGE
+    embed_on(FakeEmbedder({q: "faq-credit-repay"}))
+    assert _ids(knowledge.search(q))[0] == "faq-credit-repay"
+    embed_on(FakeEmbedder())
+    assert knowledge.search(q).hits == []
+    assert knowledge.search("今天天气怎么样").hits == []  # 覆盖率为 0 的不管相似度多高都不查
+
+
+def _bm25_baseline(queries):
+    return {q: (_ids(r), r.coverage) for q in queries if (r := knowledge.search(q))}
+
+
+QUERIES = ["跨行转账多久到账", "信用卡挂失要钱吗", "R2 是什么意思", "信用卡分期提额", "比特币现在多少钱"]
+
+
+@pytest.mark.parametrize("fail", [RuntimeError("boom"), ConnectionError("down")])
+def test_embedding_error_falls_back_to_bm25(embed_on, caplog, fail):
+    """查询取向量报错：这一问的结果和纯 BM25 一字不差，记日志；冷却期内后面的查询不再调接口。"""
+    base = _bm25_baseline(QUERIES)
+    fake = embed_on(FakeEmbedder(fail=fail))
+    calls = len(fake.batches)
+    first = knowledge.search(QUERIES[0])
+    assert (_ids(first), first.coverage, first.mode, first.fallback) == (*base[QUERIES[0]], "bm25", type(fail).__name__)
+    assert "回到纯 BM25" in caplog.text
+    for q in QUERIES[1:]:
+        r = knowledge.search(q)
+        assert (_ids(r), r.coverage, r.mode, r.fallback) == (*base[q], "bm25", "")
+    assert len(fake.batches) == calls + 1  # 只有第一问真的去调了
+
+
+def test_embedding_timeout_falls_back_within_limit(embed_on, monkeypatch):
+    monkeypatch.setenv("EMBEDDING_TIMEOUT_S", "0.2")
+    base = _bm25_baseline(QUERIES[:1])
+    embed_on(FakeEmbedder(delay=1.0))
+    t0 = time.perf_counter()
+    r = knowledge.search(QUERIES[0])
+    assert time.perf_counter() - t0 < 0.8
+    assert (_ids(r), r.coverage, r.mode, r.fallback) == (*base[QUERIES[0]], "bm25", "timeout")
+
+
+def test_doc_vectors_not_ready_uses_bm25_and_cache_survives_restart(embed_on, monkeypatch):
+    """条目向量还没算好时不等，直接 BM25；算好后落盘，重启（新进程状态）不再重算。"""
+    from app.knowledge import embedding
+
+    fake = embed_on(FakeEmbedder())
+    assert embedding.CACHE_FILE.exists()
+    gate = threading.Event()
+    slow = FakeEmbedder()
+    slow.embed = lambda texts, timeout: (gate.wait(5), FakeEmbedder.embed(slow, texts, timeout))[1]
+    monkeypatch.setattr(embedding, "CACHE_FILE", embedding.CACHE_FILE.with_name("other.json"))  # 没有缓存，要现算
+    monkeypatch.setattr(embedding, "make_client", lambda settings: slow)
+    embedding.reset()
+    r = knowledge.search("跨行转账多久到账")
+    assert r.mode == "bm25" and r.fallback == "" and _ids(r)[0] == "faq-transfer-interbank"
+    gate.set()
+
+    again = FakeEmbedder()
+    monkeypatch.setattr(embedding, "CACHE_FILE", embedding.CACHE_FILE.with_name("kb_embeddings.json"))
+    monkeypatch.setattr(embedding, "make_client", lambda settings: again)
+    embedding.reset()
+    assert knowledge.warm_embeddings(block=True) and again.batches == []  # 全部来自落盘缓存
+    assert len(fake.batches) >= 2
+
+
+def test_background_build_writes_cache_path_captured_at_start(embed_on, monkeypatch, tmp_path):
+    """后台算条目向量的线程在 CACHE_FILE 被改回去（测试夹具还原）之后才写完，也只写到发起时的路径，
+    不会把假向量写进开发者本机的 data/kb_embeddings.json（真实发生过）。"""
+    from app.knowledge import embedding
+
+    embed_on(FakeEmbedder())
+    gate = threading.Event()
+    slow = FakeEmbedder()
+    slow.embed = lambda texts, timeout: (gate.wait(5), FakeEmbedder.embed(slow, texts, timeout))[1]
+    start, later = tmp_path / "start" / "kb_embeddings.json", tmp_path / "later" / "kb_embeddings.json"
+    monkeypatch.setattr(embedding, "CACHE_FILE", start)
+    monkeypatch.setattr(embedding, "make_client", lambda settings: slow)
+    embedding.reset()
+    assert not knowledge.warm_embeddings()  # 后台开始算
+    monkeypatch.setattr(embedding, "CACHE_FILE", later)  # 相当于夹具已经还原
+    gate.set()
+    for _ in range(100):
+        if embedding.runtime_status()["state"] == "ready":
+            break
+        time.sleep(0.02)
+    assert embedding.runtime_status()["state"] == "ready"
+    assert start.exists() and not later.exists()
+
+
+def test_cache_with_wrong_dimensions_is_ignored(embed_on, monkeypatch, tmp_path):
+    """缓存文件的模型键对得上、向量维度却和配置不符（被写坏了）：不用它，重新算并覆盖。"""
+    import json
+
+    from app.knowledge import embedding
+
+    path = tmp_path / "bad.json"
+    model = "Qwen/Qwen3-Embedding-8B@1024"
+    path.write_text(json.dumps({"model": model, "vectors": {embedding._key(model, t): [1.0] * 102
+                                                             for t in knowledge.doc_texts()}}), encoding="utf-8")
+    monkeypatch.setattr(embedding, "CACHE_FILE", path)
+    fake = embed_on(FakeEmbedder())
+    assert fake.batches, "维度不对的缓存不能用，要重新算"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert {len(v) for v in doc["vectors"].values()} == {1024}
+
+
+def test_kb_tool_audits_embedding_fallback(client, monkeypatch, tmp_path):
+    """规则模式走 kb.search：向量通道出错时照常出知识卡，审计里留一条 kb_embedding_fallback。"""
+    from app.config import get_settings
+    from app.knowledge import embedding
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "siliconflow")
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-test")
+    monkeypatch.setattr(embedding, "CACHE_FILE", tmp_path / "kb_embeddings.json")
+    monkeypatch.setattr(embedding, "make_client", lambda settings: FakeEmbedder(fail=RuntimeError("boom")))
+    get_settings.cache_clear()
+    embedding.reset()
+    assert knowledge.warm_embeddings(block=True)
+    r = say(client, "跨行转账多久到账")
+    assert "knowledge" in kinds(r)
+    events = client.get(f"/admin/audit?trace_id={r['trace_id']}").json()
+    assert [e["payload"] for e in events if e["event"] == "kb_embedding_fallback"] == [{"reason": "RuntimeError"}]
+
+
+def test_sdk_timeout_counts_as_timeout_with_short_cooldown(embed_on):
+    """SDK 自己的读超时（APITimeoutError）也算超时：这一问回到 BM25，只冷却 10 秒；鉴权之类的报错冷却 60 秒。"""
+    import httpx
+    import openai
+
+    from app.knowledge import embedding
+
+    embed_on(FakeEmbedder(fail=openai.APITimeoutError(request=httpx.Request("POST", "https://x/v1/embeddings"))))
+    r = knowledge.search(QUERIES[0])
+    assert r.mode == "bm25" and r.fallback == "timeout"
+    left = embedding._get().failed_until - time.monotonic()
+    assert 0 < left <= embedding.TIMEOUT_COOLDOWN_S < embedding.COOLDOWN_S
