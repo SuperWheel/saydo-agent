@@ -15,7 +15,7 @@ from app.tools.gateway import GatewayError, execute_write
 from .conftest import confirm, say, text, tool
 from .helpers import (
     BALANCE, balance, broken, calls, events, install_demo_tools, is_breaker, ledger_ok, partial, pass_auth, pass_face,
-    propose_via_llm, red_auth_card, transfer_via_llm, verify, written,
+    order, propose_via_llm, red_auth_card, transfer_via_llm, verify, written,
 )
 
 
@@ -188,10 +188,10 @@ def test_unconfirmed_money_cards_do_not_count(client):
         if i == 0:
             assert client.post(f"/api/actions/{r['cards'][0]['action_id']}/cancel").json()["status"] == "cancelled"
     clock.travel(timedelta(minutes=16))  # 前面几张过期
-    for _ in range(3):
-        assert say(client, "帮我订个蛋糕", sid)["cards"][0]["type"] == "confirm"
+    for _ in range(3):  # 先出候选卡，选第一款才出订单确认卡
+        assert order(client, "帮我订个蛋糕", sid)["cards"][0]["type"] == "confirm"
     from .test_automation import edit
-    old = say(client, "帮我订个蛋糕", sid)["cards"][0]
+    old = order(client, "帮我订个蛋糕", sid)["cards"][0]
     for sku in ("C202", "C201", "C202"):  # 同一张订单卡改 3 次参数重出
         old = edit(client, sid, old, sku)["cards"][0]
         assert old["type"] == "confirm"
