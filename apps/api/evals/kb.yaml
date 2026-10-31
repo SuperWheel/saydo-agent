@@ -65,6 +65,58 @@ cases:
   - {id: kb-misc-2, ask: 公安让我把钱转到安全账户是真的吗, expect: faq-anti-fraud}
   - {id: kb-misc-3, ask: 心愿罐里的钱可以随时拿回来吗, expect: faq-wish-pot}
 
+  # ---------- 扩充（kb-2026-10b）：本行（演示）业务规则 ----------
+  - {id: kb-x-transfer-1, ask: 用手机银行一天转账有没有上限, expect: faq-non-counter-limit}
+  - {id: kb-x-transfer-2, ask: 我转出去的钱怎么又原路退回来了, expect: [faq-transfer-return, reg-transfer-modes]}
+  - {id: kb-x-bill-1, ask: 账单里每笔消费是按什么规则归类的, expect: faq-bill-category}
+  - {id: kb-x-bill-2, ask: 转给我妈的钱会被统计成消费支出吗, expect: faq-bill-kinds}
+  - {id: kb-x-bill-3, ask: 退货的钱回来以后购物支出会减少吗, expect: faq-bill-refund}
+  - {id: kb-x-card-1, ask: 手机突然收到一条不是我本人的刷卡扣款短信, expect: [faq-card-fraud-steps, reg-card-fraud-liability]}
+  - {id: kb-x-card-2, ask: 想把工商银行的卡添加进来要做什么, expect: faq-card-bind}
+  - {id: kb-x-card-3, ask: 把一张卡解除绑定会有什么影响, expect: faq-card-unbind}
+  - {id: kb-x-card-4, ask: 银行卡号只能看到最后四位怎么看全部, expect: faq-card-full-number}
+  - {id: kb-x-wm-1, ask: 我的理财净值这周跌了是怎么回事, expect: [faq-wm-nav, reg-wm-not-guaranteed]}
+  - {id: kb-x-wm-2, ask: 赎回理财的时候需要刷脸吗, expect: faq-wm-verify}
+  - {id: kb-x-sub-1, ask: 会员没提醒就自动续费扣钱了能要回来吗, expect: [faq-sub-dispute, reg-auto-renew]}
+  - {id: kb-x-shop-1, ask: 在合作商户订的蛋糕想取消钱怎么退, expect: [faq-order-refund, reg-seven-day-exceptions]}
+  - {id: kb-x-shop-2, ask: 用助手订花付款要不要人脸验证, expect: faq-order-verify}
+  - {id: kb-x-ai-1, ask: 为什么助手办事每次都要我点确认, expect: [faq-ai-why-confirm, faq-ai-scope]}
+  - {id: kb-x-ai-2, ask: 助手可以替我决定买哪款理财吗, expect: [faq-ai-cannot, faq-ai-scope]}
+  - {id: kb-x-ai-3, ask: 我的卡号会不会被发给大模型, expect: faq-ai-privacy}
+  - {id: kb-x-ai-4, ask: 每次进入助手为什么要做人脸核身, expect: faq-entry-face}
+  - {id: kb-x-ai-5, ask: 助手说暂停办理只能查询是为什么, expect: faq-breaker}
+  - {id: kb-x-ai-6, ask: 言行助手都能帮我办哪些事, expect: faq-ai-scope}
+  - {id: kb-x-misc-1, ask: 我想找真人客服, expect: faq-handoff}
+  - {id: kb-x-misc-2, ask: 半夜能用手机银行办业务吗, expect: faq-service-hours}
+
+  # ---------- 扩充（kb-2026-10b）：监管 / 法规通用知识 ----------
+  - {id: kb-r-transfer-1, ask: 实时到账普通到账次日到账有什么不同, expect: reg-transfer-modes}
+  - {id: kb-r-transfer-2, ask: 在自助柜员机上转的账多久才到, expect: reg-atm-24h}
+  - {id: kb-r-transfer-3, ask: 二类账户和一类账户有什么区别, expect: faq-account-class}
+  - {id: kb-r-transfer-4, ask: 收款人拿了我转错的钱拒不返还怎么办, expect: [reg-unjust-enrichment, faq-transfer-wrong]}
+  - {id: kb-r-fraud-1, ask: 有人花钱收购银行卡我能卖吗, expect: reg-fraud-no-rent}
+  - {id: kb-r-fraud-2, ask: 银行为什么突然限制我的非柜面交易, expect: [reg-fraud-bank-measures, reg-fraud-appeal]}
+  - {id: kb-r-fraud-3, ask: 账户被认定涉诈限制了我觉得是误判, expect: reg-fraud-appeal}
+  - {id: kb-r-fraud-4, ask: 刚被电信诈骗转了钱现在该怎么办, expect: [reg-fraud-emergency, faq-anti-fraud]}
+  - {id: kb-r-card-1, ask: 银行卡被别人网络盗刷了损失谁承担, expect: [reg-card-fraud-liability, faq-card-fraud-steps]}
+  - {id: kb-r-card-2, ask: 证明盗刷不是本人交易要准备哪些材料, expect: [reg-card-fraud-evidence, reg-card-fraud-liability]}
+  - {id: kb-r-wm-1, ask: 银行理财的风险评级一共分几个等级, expect: [reg-wm-risk-grades, faq-wm-risk-level]}
+  - {id: kb-r-wm-2, ask: 风险承受能力低能不能买高风险理财产品, expect: [reg-wm-suitability, faq-wm-suitability]}
+  - {id: kb-r-wm-3, ask: 理财经理说保证不亏这话靠谱吗, expect: [reg-wm-not-guaranteed, faq-wm-benchmark]}
+  - {id: kb-r-wm-4, ask: 去网点买理财为什么要录音录像, expect: reg-wm-recording}
+  - {id: kb-r-sub-1, ask: 商家开自动续费有什么法律规定, expect: [reg-auto-renew, faq-sub-dispute]}
+  - {id: kb-r-sub-2, ask: 银行没经过我同意就开通了收费服务, expect: reg-no-unilateral-fee}
+  - {id: kb-r-shop-1, ask: 网购的衣服不喜欢七天内能退吗, expect: reg-seven-day-return}
+  - {id: kb-r-shop-2, ask: 定制的商品可以七天无理由退货吗, expect: reg-seven-day-exceptions}
+  - {id: kb-r-cp-1, ask: 作为金融消费者我享有哪些权利, expect: reg-consumer-rights}
+  - {id: kb-r-cp-2, ask: 对银行服务不满可以去哪里投诉, expect: [reg-complaint-channels, faq-handoff]}
+  - {id: kb-r-cp-3, ask: 向人民银行投诉了一般多长时间处理, expect: [reg-pbc-complaint-time, reg-complaint-channels]}
+  - {id: kb-r-cp-4, ask: 银行老是给我发推销短信怎么拒收, expect: reg-marketing-optout}
+  - {id: kb-r-pi-1, ask: 金融账户信息算不算敏感个人信息, expect: [reg-pi-sensitive, reg-pi-bank-use]}
+  - {id: kb-r-pi-2, ask: 我能要求银行删掉我的个人信息吗, expect: [reg-pi-rights, reg-pi-bank-use]}
+  - {id: kb-r-pi-3, ask: 我不同意授权银行就不给办业务合理吗, expect: [reg-pi-bank-use, reg-pi-rights]}
+  - {id: kb-r-misc-1, ask: 存款保险偿付限额是多少, expect: faq-deposit-insurance}
+
   # ---------- 超出知识库范围：应拒答 ----------
   - {id: kb-oos-1, ask: 今天北京天气怎么样, expect: none}
   - {id: kb-oos-2, ask: 比特币现在多少钱一个, expect: none}
@@ -72,6 +124,12 @@ cases:
   - {id: kb-oos-4, ask: 帮我写一首关于秋天的诗, expect: none}
   - {id: kb-oos-5, ask: 公积金贷款最多能贷多少, expect: none}
   - {id: kb-oos-6, ask: 外汇牌价美元兑人民币多少, expect: none}
+  - {id: kb-oos-7, ask: 明天A股大盘会涨吗, expect: none}
+  - {id: kb-oos-8, ask: 推荐一只能翻倍的股票, expect: none}
+  - {id: kb-oos-9, ask: 个人所得税专项附加扣除怎么填, expect: none}
+  - {id: kb-oos-10, ask: 车险哪家公司便宜, expect: none}
+  - {id: kb-oos-11, ask: 黄金价格今天多少一克, expect: none}
+  - {id: kb-oos-12, ask: 怎么申请信用卡分期提额到十万, expect: none}
 
   # ---------- 个人数据：应走工具，不走知识库 ----------
   - {id: kb-route-1, ask: 我余额还有多少, expect: tool:account.balance}

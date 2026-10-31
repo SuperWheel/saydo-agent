@@ -3,9 +3,10 @@
 一句话定位：知识库回答「规则是什么」，工具回答「你的账户是什么」（技术文档 §5.9）。
 余额、交易、持仓、额度、测评等级只来自工具；产品的风险等级和可售状态只取产品主数据，知识库文本不参与任何判断。
 
-- 规则 FAQ、商户取消指引是 kb/ 下的 YAML（随代码版本化，入库前双人审核）；产品说明由产品主数据
+- 规则 FAQ、监管法规要点、商户取消指引是 kb/ 下的 YAML（随代码版本化，入库前双人审核）；产品说明由产品主数据
   core_mock/wealth.PRODUCTS 生成，保证和申购赎回时用的数字一致。
-- 全部是演示数据：规则是比赛原型参数，商户取消路径是团队整理的「一般路径」，未向商户核实。
+- 每条标明知识类别（kind）：「监管 / 法规通用知识」引用法律和监管文件原文要点，出处带文件名、条款、文号、发布机构、施行日期；
+  「本行（演示）业务规则」是比赛原型参数，和代码里的实际参数一致，两者冲突时以代码为准；商户取消路径是团队整理的「一般路径」，未向商户核实。
 - 加载时扫描注入特征（security.inspect），命中的条目不入库，记在 REJECTED 里。
 - 检索：中文按字的二元组切分，英文和数字按词，BM25 打分；最佳条目的分数和查询词覆盖率都过门槛（或覆盖率很高）才算「查到」，
   否则返回空结果，由上层如实说没查到，不让模型用常识补充。没有向量模型，不联网。
@@ -27,11 +28,14 @@ from ..security import inspect
 KB_DIR = Path(__file__).parent / "kb"
 SOURCE_PREFIX = "演示知识库"
 DISCLAIMER = "演示知识库内容（规则为比赛原型参数，产品为虚构产品），仅供参考，以本行正式公告为准"
-PRODUCT_LIBRARY = {"library": "product", "name": "理财产品说明（虚构产品）", "version": "kb-2026-10", "effective": "2026-10-01"}
+KIND_REGULATION = "监管 / 法规通用知识"
+KIND_BANK = "本行（演示）业务规则"
+PRODUCT_LIBRARY = {"library": "product", "name": "理财产品说明（虚构产品）", "kind": KIND_BANK,
+                   "version": "kb-2026-10", "effective": "2026-10-01"}
 
 # 「查到」的门槛，用 evals/kb.yaml 校准（站内问题最低约 11 分，超范围问题最高约 8 分）；知识库扩充后要重新跑 scripts/kb_eval.py 校准
 MIN_SCORE = 10.0  # 最佳条目的 BM25 分数
-MIN_COVERAGE = 0.12  # 查询词（IDF 加权）被最佳条目覆盖的比例
+MIN_COVERAGE = 0.15  # 查询词（IDF 加权）被最佳条目覆盖的比例；扩库到 100 条后从 0.12 调到 0.15（评测集里命中题最低约 0.18，超范围题最高约 0.12）
 SURE_COVERAGE = 0.6  # 短而准的问法（「R2 是什么意思」）分数低但几乎全被覆盖，覆盖率过这个数也算查到；超范围问题最高约 0.3
 RELATIVE_CUTOFF = 0.6  # 第二、三条命中的分数至少是第一条的这个比例，否则不带上
 
@@ -50,11 +54,15 @@ class Entry:
     where: str = ""
     steps: tuple[str, ...] = ()
     tips: tuple[str, ...] = ()
+    kind: str = KIND_BANK  # 知识类别：监管 / 法规通用知识，或本行（演示）业务规则
+    basis: tuple[str, ...] = ()  # 依据，如「《存款保险条例》第五条（国务院令第660号，国务院，2015-05-01 施行）」
+    urls: tuple[str, ...] = ()  # 依据的官方原文链接，只上卡片（链接里的长数字串发给模型会被当成卡号打码）
 
     @property
     def source(self) -> str:
-        """出处：文档 · 条款 · 版本 · 生效日期。"""
-        return f"{SOURCE_PREFIX} · {self.library_name} · {self.title} · {self.version} · {self.effective} 生效"
+        """出处：知识库 · 类别 · 子库 · 条款 · 依据（文件 · 条款 · 文号 · 机构 · 施行日期）· 版本 · 生效日期。"""
+        basis = f" · 依据：{'；'.join(self.basis)}" if self.basis else ""
+        return f"{SOURCE_PREFIX} · {self.kind} · {self.library_name} · {self.title}{basis} · {self.version} · {self.effective} 生效"
 
     def view(self) -> dict:
         return {"id": self.id, "title": self.title, "text": self.body, "source": self.source}
@@ -110,9 +118,15 @@ def _merchant_body(where: str, steps: list[str], tips: list[str]) -> str:
     return body + ("".join(f"{t}。" for t in tips))
 
 
+def _basis(b: dict) -> str:
+    extra = "，".join(x for x in (b.get("docno"), b["org"], f"{b['effective']} 施行") if x)
+    return f"《{b['doc']}》{b['ref']}（{extra}）"
+
+
 def _load_yaml(path: Path) -> list[Entry]:
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     lib, name, version, effective = doc["library"], doc["name"], doc["version"], str(doc["effective"])
+    lib_kind = doc.get("kind", KIND_BANK)
     common = tuple(doc.get("common_tips") or ())
     out = []
     for e in doc["entries"]:
@@ -120,10 +134,13 @@ def _load_yaml(path: Path) -> list[Entry]:
             steps, tips = tuple(e["steps"]), tuple(e.get("tips") or ()) + (common if e.get("merchant") != "中国移动话费" else ())
             out.append(Entry(id=e["id"], library=lib, library_name=name, title=f"取消{e['name']}自动续费（一般路径）",
                              body=_merchant_body(e["where"], list(steps), list(tips)), version=version, effective=effective,
-                             q=tuple(e.get("q") or ()), merchant=e.get("merchant"), where=e["where"], steps=steps, tips=tips))
+                             q=tuple(e.get("q") or ()), merchant=e.get("merchant"), where=e["where"], steps=steps, tips=tips,
+                             kind=lib_kind))
         else:
+            basis = e.get("basis") or []
             out.append(Entry(id=e["id"], library=lib, library_name=name, title=e["title"], body=e["body"].strip(),
-                             version=version, effective=effective, q=tuple(e.get("q") or ())))
+                             version=version, effective=effective, q=tuple(e.get("q") or ()), kind=e.get("kind", lib_kind),
+                             basis=tuple(_basis(b) for b in basis), urls=tuple(b["url"] for b in basis if b.get("url"))))
     return out
 
 

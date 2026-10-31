@@ -47,6 +47,8 @@ def offline_case(case: dict) -> tuple[bool, str]:
 
 def llm_case(client, case: dict) -> tuple[bool, str]:
     client.post("/dev/seed")
+    # 进入前人脸核身（模拟）：重置演示数据后旧的进入凭证失效，要重新拿
+    client.headers["X-Entry-Token"] = client.post("/api/auth/entry-face", json={"value": "face-ok:entry"}).json()["token"]
     r = client.post("/api/chat", json={"text": case["ask"]}).json()
     events = client.get(f"/admin/audit?trace_id={r['trace_id']}").json()
     tools = [e["payload"]["tool"] for e in events if e["event"] == "tool_call"]
@@ -61,7 +63,9 @@ def llm_case(client, case: dict) -> tuple[bool, str]:
         return bool(alt) or ("kb.search" in tools and any(w in ids for w in case["want"])), note
     if case["kind"] == "oos":
         return kb is None, note
-    return case["want"][0].removeprefix("tool:") in tools and "kb.search" not in tools, note
+    # 确定性工作流（回复来源 rule）不调模型、不产生 tool_call 事件：没出知识卡就说明没走知识库
+    routed = case["want"][0].removeprefix("tool:") in tools or r["reply"]["source"] == "rule"
+    return routed and kb is None and "kb.search" not in tools, note
 
 
 def main() -> int:
