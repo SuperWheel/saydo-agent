@@ -29,7 +29,7 @@ function trend(change) {
 
 <template>
   <div class="card" :class="{ tap: hasDetail }" data-testid="category-card" @click="open('cats')">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success"><IconText text="🟢 自动查询" /></van-tag></div>
     <div class="period">{{ card.period }} · 消费合计 <b>¥{{ card.total }}</b>
       <span v-if="card.total_change" class="chg" :class="trend(card.total_change)">较{{ card.compare_to }} {{ card.total_change }}</span>
     </div>
@@ -77,36 +77,36 @@ function trend(change) {
 
 <style scoped>
 .tap { cursor: pointer; }
-.period { font-size: 13px; color: var(--muted); }
-.period b { color: var(--text); font-variant-numeric: tabular-nums; }
+.period { font-size: var(--fs-sm); color: var(--muted); }
+.period b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .share { color: var(--muted); margin-left: 4px; }
-.chg { margin-left: 4px; font-size: 12px; color: var(--muted); }
+.chg { margin-left: 4px; font-size: var(--fs-xs); color: var(--muted); }
 .chg.up { color: var(--red); }
-.chg.down { color: var(--green); }
+.chg.down { color: var(--green-ink); }
 .v { font-variant-numeric: tabular-nums; }
-.empty { color: var(--muted); font-size: 13px; text-align: center; padding: 10px 0; }
+.empty { color: var(--muted); font-size: var(--fs-sm); text-align: center; padding: 10px 0; }
 .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px;
   border-top: 1px dashed var(--line); }
-.more { font-size: 12px; color: var(--brand); }
+.more { font-size: var(--fs-xs); color: var(--brand); }
 
 .sheet { padding: 4px 16px 24px; }
-.title { font-size: 17px; font-weight: 600; padding-right: 32px; }
-.sum { display: flex; justify-content: space-between; align-items: baseline; background: #f6f7fa; border-radius: 10px;
+.title { font-size: var(--fs-sheet); font-weight: 600; padding-right: 32px; }
+.sum { display: flex; justify-content: space-between; align-items: baseline; background: var(--surface-2); border-radius: var(--radius-md);
   padding: 8px 10px; margin: 10px 0 2px; }
-.sum .k { color: var(--muted); font-size: 13px; }
-.sum .money { font-size: 20px; }
-.vs { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-.cat { padding: 10px 0; border-bottom: 1px solid #f3f4f7; cursor: pointer; }
-.cat .top { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.sum .k { color: var(--muted); font-size: var(--fs-sm); }
+.sum .money { font-size: var(--fs-money-md); }
+.vs { font-size: var(--fs-xs); color: var(--muted); margin-bottom: 6px; }
+.cat { padding: 10px 0; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.cat .top { display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-body); }
 .cat .name { display: flex; align-items: center; gap: 6px; }
-.cat .name i { width: 10px; height: 10px; border-radius: 3px; }
-.cat .name small { color: var(--muted); font-size: 12px; }
+.cat .name i { width: 10px; height: 10px; border-radius: var(--radius-xs); }
+.cat .name small { color: var(--muted); font-size: var(--fs-xs); }
 .cat .amt { font-weight: 600; font-variant-numeric: tabular-nums; }
 .cat .go { color: var(--muted); margin-left: 6px; font-weight: 400; }
-.bar { height: 6px; background: #f1f2f5; border-radius: 3px; margin: 6px 0 4px; overflow: hidden; }
-.bar div { height: 100%; border-radius: 3px; }
-.cat .sub { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.bar { height: 6px; background: var(--surface-2); border-radius: var(--radius-xs); margin: 6px 0 4px; overflow: hidden; }
+.bar div { height: 100%; border-radius: var(--radius-xs); }
+.cat .sub { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--muted); }
 .all { margin-top: 14px; }
-.back { font-size: 13px; color: var(--brand); padding: 6px 16px 0; cursor: pointer; }
-.meta { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.back { font-size: var(--fs-sm); color: var(--brand); padding: 6px 16px 0; cursor: pointer; }
+.meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 8px; }
 </style>

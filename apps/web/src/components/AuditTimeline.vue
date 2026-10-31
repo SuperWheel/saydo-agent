@@ -155,7 +155,7 @@ defineExpose({ refresh: () => loadTraces() })
         <div class="t-text">{{ t.text || '（选项 / 无文字）' }}</div>
         <div class="t-meta">
           <span>{{ t.started_at.slice(11, 19) }}</span>
-          <span v-if="t.level">{{ LEVEL[t.level]?.slice(0, 2) }}</span>
+          <span v-if="t.level"><IconText :text="LEVEL[t.level]?.slice(0, 2)" /></span>
           <span :class="['out', OUTCOME[t.outcome]?.[1]]">{{ OUTCOME[t.outcome]?.[0] || t.outcome }}</span>
           <span v-if="t.breaker" class="out danger">熔断</span>
         </div>
@@ -176,10 +176,10 @@ defineExpose({ refresh: () => loadTraces() })
         <li v-for="(s, i) in stages" :key="s.key" class="stage" :class="s.state">
           <div class="dot">{{ s.state === 'skip' ? '·' : s.state === 'warn' ? '!' : i + 1 }}</div>
           <div class="body">
-            <div class="s-label">{{ s.label }}<span v-if="!s.events.length" class="skip-hint">{{ emptyHint(s.key) }}</span></div>
+            <div class="s-label">{{ s.label }}<span v-if="!s.events.length" class="skip-hint"><IconText :text="emptyHint(s.key)" /></span></div>
             <div v-for="e in s.events" :key="e.id" class="ev" :class="{ bad: bad(e) }" @click="toggle(e.id)">
               <div class="ev-line"><span class="ev-title">{{ title(e) }}</span><span class="ev-at">{{ e.at.slice(11, 19) }}</span></div>
-              <div v-if="detail(e)" class="ev-detail">{{ detail(e) }}</div>
+              <div v-if="detail(e)" class="ev-detail"><IconText :text="detail(e)" /></div>
               <div v-if="open.has(e.id)" class="ev-raw">{{ JSON.stringify(e.payload, null, 1) }}</div>
               <div class="ev-hash">{{ e.event }} · hash {{ e.hash }}</div>
             </div>
@@ -192,25 +192,25 @@ defineExpose({ refresh: () => loadTraces() })
 
 <style scoped>
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.hint { font-size: 12px; color: var(--muted); }
+.hint { font-size: var(--fs-xs); color: var(--muted); }
 .actions { display: flex; gap: 6px; }
-.chain { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--green-soft); color: var(--green); font-size: 13px; }
+.chain { margin: 10px 0 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--green-soft); color: var(--green-ink); font-size: var(--fs-sm); }
 .chain.bad { background: var(--red-soft); color: var(--red); }
 .traces { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 4px; scrollbar-width: thin; }
 .trace {
-  flex: 0 0 150px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--surface);
-  cursor: pointer; font-size: 12px;
+  flex: 0 0 150px; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px; background: var(--surface);
+  cursor: pointer; font-size: var(--fs-xs);
 }
 .trace.on { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
-.t-text { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-text { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-meta { display: flex; gap: 6px; flex-wrap: wrap; color: var(--muted); margin-top: 4px; }
-.out.success { color: var(--green); }
+.out.success { color: var(--green-ink); }
 .out.danger { color: var(--red); }
-.out.warning { color: var(--yellow); }
-.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
-.summary { margin: 8px 0 4px; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; }
-.s-text { font-size: 14px; font-weight: 600; word-break: break-all; }
-.s-meta { font-size: 11px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+.out.warning { color: var(--yellow-ink); }
+.empty { color: var(--muted); font-size: var(--fs-sm); padding: 8px 0; }
+.summary { margin: 8px 0 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.s-text { font-size: var(--fs-body); font-weight: 600; word-break: break-all; }
+.s-meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 3px; word-break: break-all; }
 .flag { color: var(--red); margin-left: 4px; }
 .stages { list-style: none; margin: 8px 0 0; padding: 0; }
 .stage { display: flex; gap: 10px; position: relative; padding-bottom: 12px; }
@@ -219,24 +219,24 @@ defineExpose({ refresh: () => loadTraces() })
 }
 .dot {
   flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700; color: #fff; background: var(--green); z-index: 1;
+  font-size: var(--fs-xs); font-weight: 700; color: var(--on-brand); background: var(--green); z-index: 1;
 }
 .warn .dot { background: var(--red); }
-.skip .dot { background: #c9ced8; }
+.skip .dot { background: var(--faint); }
 .body { flex: 1; min-width: 0; }
-.s-label { font-size: 14px; font-weight: 600; line-height: 22px; }
+.s-label { font-size: var(--fs-body); font-weight: 600; line-height: 22px; }
 .skip .s-label { color: var(--muted); font-weight: 400; }
-.skip-hint { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 8px; }
-.ev { margin-top: 6px; padding: 7px 9px; border-radius: 8px; background: #f7f8fa; cursor: pointer; }
+.skip-hint { font-size: var(--fs-xs); color: var(--muted); font-weight: 400; margin-left: 8px; }
+.ev { margin-top: 6px; padding: 7px 9px; border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; }
 .ev.bad { background: var(--red-soft); }
-.ev-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.ev-line { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-sm); }
 .ev-title { font-weight: 600; }
 .ev.bad .ev-title { color: var(--red); }
-.ev-at { color: var(--muted); font-size: 11px; flex-shrink: 0; }
-.ev-detail { font-size: 12px; color: #4a5160; margin-top: 2px; word-break: break-all; line-height: 1.5; }
+.ev-at { color: var(--muted); font-size: var(--fs-2xs); flex-shrink: 0; }
+.ev-detail { font-size: var(--fs-xs); color: var(--ink-2); margin-top: 2px; word-break: break-all; line-height: 1.5; }
 .ev-raw {
-  font-size: 11px; white-space: pre-wrap; word-break: break-all; margin-top: 4px; padding: 6px; border-radius: 6px;
-  background: #fff; font-family: ui-monospace, Menlo, monospace; color: #4a5160;
+  font-size: var(--fs-2xs); white-space: pre-wrap; word-break: break-all; margin-top: 4px; padding: 6px; border-radius: var(--radius-sm);
+  background: var(--surface); font-family: var(--font-mono); color: var(--ink-2);
 }
-.ev-hash { font-size: 10px; color: var(--muted); margin-top: 3px; font-family: ui-monospace, Menlo, monospace; }
+.ev-hash { font-size: var(--fs-2xs); color: var(--faint); margin-top: 3px; font-family: var(--font-mono); }
 </style>

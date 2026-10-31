@@ -113,7 +113,7 @@ function preview(i) {
       <van-button v-if="cfg.configured" round block plain :loading="saving" @click="save(true)">停用企业微信渠道</van-button>
     </div>
 
-    <div v-for="w in cfg.warnings" :key="w" class="warn">⚠️ {{ w }}</div>
+    <div v-for="w in cfg.warnings" :key="w" class="warn"><IconText :text="`⚠️ ${w}`" /></div>
     <div class="foot">保存位置：{{ cfg.env_file }}。Secret 只保存在本机，不会显示、不进审计日志。同一个机器人只能有一个连接，别在两台电脑上同时用同一套凭证。</div>
   </div>
   <van-loading v-else class="loading" />
@@ -121,30 +121,30 @@ function preview(i) {
 
 <style scoped>
 .settings { padding-bottom: 8px; }
-.status { margin: 0 16px 6px; padding: 10px 12px; border-radius: 10px; display: flex; flex-direction: column; gap: 2px; }
-.status span { font-size: 12px; color: var(--muted); word-break: break-all; }
+.status { margin: 0 16px 6px; padding: 10px 12px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 2px; }
+.status span { font-size: var(--fs-xs); color: var(--muted); word-break: break-all; }
 .status.on { background: var(--green-soft); }
-.status.on b { color: var(--green); }
+.status.on b { color: var(--green-ink); }
 .status.idle, .status.wait { background: var(--yellow-soft); }
-.status.idle b, .status.wait b { color: var(--yellow); }
-.status.bad { background: #fdecee; }
+.status.idle b, .status.wait b { color: var(--yellow-ink); }
+.status.bad { background: var(--red-soft); }
 .status.bad b, .status .err { color: var(--red); }
 .step { margin-bottom: 14px; }
-.step-title { font-weight: 600; font-size: 14px; color: var(--text, #222); display: flex; align-items: center; gap: 6px; }
-.no { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: #c8102e; color: #fff;
-  font-size: 11px; align-items: center; justify-content: center; }
-.step-text { font-size: 12.5px; line-height: 1.6; margin: 4px 0 6px; color: #444; }
+.step-title { font-weight: 600; font-size: var(--fs-body); color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.no { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--brand); color: var(--on-brand);
+  font-size: var(--fs-2xs); align-items: center; justify-content: center; }
+.step-text { font-size: var(--fs-xs); line-height: 1.6; margin: 4px 0 6px; color: var(--ink-2); }
 .muted { color: var(--muted); }
-.shot { width: 100%; border-radius: 8px; border: 1px solid #eee; cursor: zoom-in; display: block; }
+.shot { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line); cursor: zoom-in; display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.chip { font-size: 12px; padding: 3px 9px; border-radius: 12px; background: #f4f5f7; color: #333; }
-.section { font-size: 13px; color: var(--muted); margin: 14px 16px 6px; }
-.link { margin: 8px 16px 0; font-size: 12px; color: var(--muted); word-break: break-all; }
-.link b { color: var(--text, #222); font-weight: 600; }
-.hint code { font-size: 11px; background: #f4f5f7; padding: 0 3px; border-radius: 3px; }
-.hint { margin: 6px 16px 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.chip { font-size: var(--fs-xs); padding: 3px 9px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink); }
+.section { font-size: var(--fs-sm); color: var(--muted); margin: 14px 16px 6px; }
+.link { margin: 8px 16px 0; font-size: var(--fs-xs); color: var(--muted); word-break: break-all; }
+.link b { color: var(--ink); font-weight: 600; }
+.hint code { font-size: var(--fs-2xs); background: var(--surface-2); padding: 0 3px; border-radius: var(--radius-xs); }
+.hint { margin: 6px 16px 0; font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
 .actions { display: flex; flex-direction: column; gap: 8px; margin: 14px 16px 0; }
-.warn { margin: 10px 16px 0; font-size: 12px; color: var(--yellow); }
-.foot { margin: 12px 16px 0; font-size: 11px; color: var(--muted); line-height: 1.5; word-break: break-all; }
+.warn { margin: 10px 16px 0; font-size: var(--fs-xs); color: var(--yellow-ink); }
+.foot { margin: 12px 16px 0; font-size: var(--fs-2xs); color: var(--muted); line-height: 1.5; word-break: break-all; }
 .loading { display: flex; justify-content: center; padding: 24px; }
 </style>

@@ -5,7 +5,7 @@ defineProps({ card: { type: Object, required: true } })
 
 <template>
   <div class="card">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary">ℹ️ 只提供指引</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary"><IconText text="ℹ️ 只提供指引" /></van-tag></div>
     <div class="merchant">{{ card.merchant }}</div>
     <div class="part">
       <div class="label">本行代扣授权</div>
@@ -22,10 +22,10 @@ defineProps({ card: { type: Object, required: true } })
 </template>
 
 <style scoped>
-.merchant { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
-.part { font-size: 13px; line-height: 1.6; padding: 6px 0; border-top: 1px solid var(--line); }
-.label { color: var(--muted); font-size: 12px; }
+.merchant { font-weight: 600; font-size: var(--fs-title); margin-bottom: 6px; }
+.part { font-size: var(--fs-sm); line-height: 1.6; padding: 6px 0; border-top: 1px solid var(--line); }
+.label { color: var(--muted); font-size: var(--fs-xs); }
 .steps { margin: 2px 0 0; padding-left: 18px; }
-.tip { color: var(--muted); font-size: 12px; }
-.warn { background: var(--yellow-soft); color: #874d00; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.5; margin-top: 6px; }
+.tip { color: var(--muted); font-size: var(--fs-xs); }
+.warn { background: var(--yellow-soft); color: var(--yellow-ink); border-radius: var(--radius-sm); padding: 8px 10px; font-size: var(--fs-sm); line-height: 1.5; margin-top: 6px; }
 </style>

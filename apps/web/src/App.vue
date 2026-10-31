@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { showToast } from 'vant'
 import { adminPassword, api } from './api'
+import { icon } from './icons'
 import AuditTimeline from './components/AuditTimeline.vue'
 import CardHost from './components/CardHost.vue'
 import ModelSettings from './components/ModelSettings.vue'
@@ -179,29 +180,29 @@ function tagText(m) {
   if (m.ms == null) return how
   return `${how} · ${m.ms < 1000 ? (m.ms / 1000).toFixed(2) : (m.ms / 1000).toFixed(1)} 秒`
 }
+// 标签前的小圆点：确定性工作流 / 规则为绿，模型生成为蓝，系统回复为灰
+const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source === 'llm' ? 'ai' : 'sys')
 </script>
 
 <template>
   <div class="phone">
     <header class="top">
-      <div class="brand">
-        <div class="name">言行 <small>AI 银行助手</small></div>
-        <div class="sub">
-          <van-tag type="danger" plain size="mini">演示环境 · 模拟数据</van-tag>
-          <span v-if="llm" class="model" @click="openSettings">{{ llm.ready ? `模型 ${llm.model}` : '未配置模型 · 去设置' }}</span>
-        </div>
+      <div class="name">言行 <small>AI 银行助手</small></div>
+      <div class="sub">
+        <van-tag type="danger" plain size="mini">演示环境 · 模拟数据</van-tag>
+        <span v-if="llm" class="model" @click="openSettings">{{ llm.ready ? `模型 ${llm.model}` : '未配置模型 · 去设置' }}</span>
       </div>
       <div class="tools">
-        <van-button size="mini" plain icon="setting-o" @click="openSettings">设置</van-button>
-        <van-button size="mini" plain icon="records-o" @click="openAudit()">运营后台</van-button>
+        <van-button size="mini" plain :icon="icon('settings', 'setting-o')" @click="openSettings">设置</van-button>
+        <van-button size="mini" plain :icon="icon('console', 'records-o')" @click="openAudit()">运营后台</van-button>
       </div>
     </header>
 
     <main ref="scroller" class="chat">
       <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
         <div v-if="m.text" class="bubble">{{ m.text }}</div>
-        <div v-if="m.role === 'assistant' && m.text && m.id" class="tag">
-          {{ tagText(m) }}<span v-if="m.trace" class="replay" @click="openAudit(m.trace)"> · 回放</span>
+        <div v-if="m.role === 'assistant' && m.text && m.id" class="tag" :class="tagKind(m)">
+          <i class="dot" />{{ tagText(m) }}<span v-if="m.trace" class="replay" @click="openAudit(m.trace)"> · 回放</span>
         </div>
         <CardHost v-for="(c, i) in m.cards" :key="i" :card="c"
                   @outcome="onOutcome" @modify="onModify" @select="onSelect" @say="send" />
@@ -223,7 +224,7 @@ function tagText(m) {
     <van-popup v-model:show="auditOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
       <div class="audit">
         <div class="audit-head">
-          <b>运营后台（演示）</b>
+          <b class="sheet-title">运营后台（演示）</b>
           <van-button size="mini" plain @click="resetDemo">重置演示数据</van-button>
         </div>
         <van-tabs v-model:active="auditTab" shrink>
@@ -237,9 +238,9 @@ function tagText(m) {
       </div>
     </van-popup>
 
-    <van-popup v-model:show="settingsOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
-      <div class="audit-head settings-head"><b>设置</b></div>
-      <van-tabs v-model:active="settingsTab" shrink>
+    <van-popup v-model:show="settingsOpen" position="bottom" round :style="{ height: '82%', background: 'var(--bg)' }" teleport="body">
+      <div class="audit-head settings-head"><b class="sheet-title">设置</b></div>
+      <van-tabs v-model:active="settingsTab" shrink class="settings-tabs">
         <van-tab title="模型" name="model">
           <ModelSettings v-if="settingsOpen && settingsTab === 'model'" @changed="onSettingsChanged" />
         </van-tab>
@@ -258,42 +259,60 @@ function tagText(m) {
 <style scoped>
 .phone {
   max-width: 430px; height: 100vh; height: 100dvh; margin: 0 auto; background: var(--bg);
-  display: flex; flex-direction: column; box-shadow: 0 0 24px rgba(0, 0, 0, 0.08);
+  display: flex; flex-direction: column; box-shadow: var(--shadow-float);
 }
 .top {
-  display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
-  background: var(--surface); border-bottom: 1px solid var(--line);
+  position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name tools" "sub sub";
+  align-items: center; column-gap: var(--space-2); row-gap: 4px;
+  padding: calc(10px + env(safe-area-inset-top)) var(--space-4) 10px;
+  background: var(--surface); box-shadow: 0 1px 0 var(--line);
 }
-.name { font-size: 18px; font-weight: 700; color: var(--brand); }
-.name small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 4px; }
-.sub { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-.model { font-size: 11px; color: var(--muted); cursor: pointer; }
-.tools { display: flex; gap: 6px; }
-.chat { flex: 1; overflow-y: auto; padding: 12px 16px 16px; }
-.msg { margin-bottom: 14px; display: flex; flex-direction: column; }
+.name { grid-area: name; min-width: 0; font-size: 19px; font-weight: 700; color: var(--brand); line-height: 26px; letter-spacing: 0.5px; }
+.name small { font-size: var(--fs-xs); color: var(--muted); font-weight: 400; margin-left: 6px; letter-spacing: 0; }
+.sub { grid-area: sub; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sub .van-tag { flex-shrink: 0; }
+.model { font-size: var(--fs-2xs); color: var(--muted); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tools { grid-area: tools; display: flex; gap: 6px; }
+.tools .van-button { height: 30px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink-2); font-size: var(--fs-xs); }
+.chat { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-4) var(--space-5); }
+.msg { margin-bottom: var(--space-4); display: flex; flex-direction: column; }
 .msg.user { align-items: flex-end; }
 .bubble {
-  max-width: 85%; padding: 9px 12px; border-radius: 14px; font-size: 15px; line-height: 1.5;
-  background: var(--surface); white-space: pre-wrap; word-break: break-word;
+  max-width: 85%; padding: 10px 14px; border-radius: var(--radius-bubble); font-size: var(--fs-title); line-height: 1.55;
+  background: var(--surface); box-shadow: var(--shadow-card); white-space: pre-wrap; word-break: break-word;
 }
-.user .bubble { background: var(--user-bubble); color: #fff; border-bottom-right-radius: 4px; }
-.assistant .bubble { border-bottom-left-radius: 4px; }
-.typing { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-.tag { font-size: 11px; color: var(--muted); margin: 3px 0 0 4px; }
-.bottom { background: var(--surface); border-top: 1px solid var(--line); padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); }
-.quick { display: flex; gap: 6px; overflow-x: auto; padding: 0 16px 8px; scrollbar-width: none; }
+.user .bubble { background: var(--brand); color: var(--on-brand); border-bottom-right-radius: 6px; box-shadow: none; }
+.assistant .bubble { border-bottom-left-radius: 6px; align-self: flex-start; }
+.typing { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--fs-body); }
+.tag { display: flex; align-items: center; flex-wrap: wrap; font-size: var(--fs-2xs); line-height: 16px; color: var(--muted); margin: 5px 0 0 6px; }
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; background: var(--faint); }
+.tag.det .dot { background: var(--green); }
+.tag.ai .dot { background: var(--info); }
+.replay { color: var(--brand); cursor: pointer; white-space: pre; }
+.bottom {
+  background: var(--surface); box-shadow: 0 -1px 0 var(--line);
+  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+}
+.quick { display: flex; gap: 6px; overflow-x: auto; padding: 0 var(--space-4) 10px; scrollbar-width: none; }
+.quick::-webkit-scrollbar { display: none; }
 .chip {
-  flex-shrink: 0; font-size: 12px; padding: 5px 10px; border-radius: 14px; background: var(--brand-soft);
-  color: var(--brand); cursor: pointer;
+  flex-shrink: 0; font-size: var(--fs-xs); line-height: 18px; padding: 6px 12px; border-radius: var(--radius-pill);
+  background: var(--brand-soft); color: var(--brand); cursor: pointer;
 }
-.bar { display: flex; gap: 8px; align-items: center; padding: 0 16px; }
+.chip:active { background: var(--brand); color: var(--on-brand); }
+.bar { display: flex; gap: var(--space-2); align-items: center; padding: 0 var(--space-4); }
 .input {
-  flex: 1; border: 1px solid var(--line); background: #f7f8fa; border-radius: 18px; padding: 9px 14px;
-  font-size: 15px; outline: none; min-width: 0;
+  flex: 1; height: 40px; border: 1px solid transparent; background: var(--surface-2); border-radius: var(--radius-pill); padding: 0 var(--space-4);
+  font-size: var(--fs-title); color: var(--ink); outline: none; min-width: 0; font-family: inherit;
 }
-.audit { padding: 14px 16px 24px; }
-.audit-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
-.audit :deep(.van-tabs__content) { padding-top: 10px; }
-.replay { color: var(--brand); cursor: pointer; }
-.settings-head { padding: 14px 16px 10px; }
+.input::placeholder { color: var(--faint); }
+.input:focus { border-color: var(--line); background: var(--surface); }
+.bar .van-button { height: 40px; padding: 0 18px; font-size: var(--fs-title); }
+.audit { padding: var(--space-4) var(--space-4) var(--space-6); }
+.audit-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+.audit-head .sheet-title { padding-right: 0; }
+.audit :deep(.van-tabs__content) { padding-top: var(--space-3); }
+.settings-head { padding: var(--space-4) var(--space-4) 10px; }
+.settings-tabs :deep(.van-tabs__nav) { background: transparent; }
+.settings-tabs :deep(.van-tabs__content) { padding-top: var(--space-2); }
 </style>

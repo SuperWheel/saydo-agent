@@ -46,13 +46,12 @@ function submit() {
 </template>
 
 <style scoped>
-.quiz { border-top: 3px solid var(--brand); }
-.reason { background: var(--yellow-soft); color: #874d00; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
-.profile { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+.reason { background: var(--yellow-soft); color: var(--yellow-ink); border-radius: var(--radius-sm); padding: 8px 10px; font-size: var(--fs-sm); line-height: 1.5; margin-bottom: 8px; }
+.profile { color: var(--muted); font-size: var(--fs-sm); margin-bottom: 6px; }
 .q + .q { margin-top: 10px; }
-.qt { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.qt { font-size: var(--fs-body); font-weight: 600; margin-bottom: 6px; }
 .opts { display: flex; flex-wrap: wrap; gap: 6px; }
-.opt { border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 16px; padding: 5px 11px; font-size: 13px; cursor: pointer; }
+.opt { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius-pill); padding: 6px 12px; font-size: var(--fs-sm); cursor: pointer; }
 .opt.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .opt:disabled { cursor: default; }
 .submit { margin-top: 12px; }

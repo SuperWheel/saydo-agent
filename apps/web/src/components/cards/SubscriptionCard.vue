@@ -9,7 +9,7 @@ const STATE_TAG = { active: 'success', billing_stopped: 'default', overdue: 'war
 
 <template>
   <div class="card">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success"><IconText text="🟢 自动查询" /></van-tag></div>
 
     <div v-if="!upcoming" class="totals">
       <div><div class="k">预计每月</div><div class="money">¥{{ card.monthly_total }}</div></div>
@@ -51,21 +51,21 @@ const STATE_TAG = { active: 'success', billing_stopped: 'default', overdue: 'war
 
 <style scoped>
 .totals { display: grid; grid-template-columns: 1.3fr 1fr 0.8fr; gap: 8px; align-items: end; margin-bottom: 4px; }
-.totals .k { color: var(--muted); font-size: 12px; }
-.year { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.totals .k { color: var(--muted); font-size: var(--fs-xs); }
+.year { font-size: var(--fs-title); font-weight: 600; font-variant-numeric: tabular-nums; }
 .year.short { color: var(--red); }
-.item { border-left: 3px solid var(--green); background: var(--green-soft); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
-.item.billing_stopped { border-left-color: var(--muted); background: #f5f6f8; }
-.item.overdue { border-left-color: var(--yellow); background: var(--yellow-soft); }
-.top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 14px; }
+.item { background: var(--surface-2); border-radius: var(--radius-md); padding: 10px 12px; margin-top: 8px; }
+.item.billing_stopped { opacity: 0.7; }
+.item.overdue { background: var(--yellow-soft); }
+.top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: var(--fs-body); }
 .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .amt small { font-weight: 400; color: var(--muted); }
-.sub { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--muted); }
-.tag { background: var(--yellow-soft); color: #874d00; border-radius: 3px; padding: 0 4px; }
-.next { font-size: 13px; margin-top: 4px; }
-.conf { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.empty { color: var(--muted); font-size: 14px; text-align: center; padding: 10px 0; }
-.extra { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
-.extra-title { color: var(--text); font-weight: 600; }
+.sub { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: var(--fs-xs); color: var(--muted); }
+.tag { background: var(--yellow-soft); color: var(--yellow-ink); border-radius: var(--radius-xs); padding: 0 4px; }
+.next { font-size: var(--fs-sm); margin-top: 4px; }
+.conf { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; }
+.empty { color: var(--muted); font-size: var(--fs-body); text-align: center; padding: 10px 0; }
+.extra { margin-top: 10px; font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; }
+.extra-title { color: var(--ink); font-weight: 600; }
 </style>

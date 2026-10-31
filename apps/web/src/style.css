@@ -1,36 +1,22 @@
-:root {
-  --bg: #f3f5f8;
-  --surface: #ffffff;
-  --text: #1d2330;
-  --muted: #7a8291;
-  --line: #e7eaf0;
-  --brand: #c8102e;
-  --brand-soft: #fbe9ec;
-  --user-bubble: #c8102e;
-  --yellow: #d48806;
-  --yellow-soft: #fff7e6;
-  --red: #cf1322;
-  --red-soft: #fff1f0;
-  --green: #389e0d;
-  --green-soft: #f6ffed;
-}
-
+/* 全局与卡片公共结构。变量都在 theme.css */
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0;
-  background: #dfe3ea;
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: var(--backdrop);
+  color: var(--ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
 }
 
+/* 卡片：白底、大圆角、轻阴影，不加彩色顶条；风险靠徽章、理由框和状态头表达 */
 .card {
   background: var(--surface);
-  border-radius: 12px;
-  padding: 14px 14px 12px;
-  margin-top: 8px;
-  box-shadow: 0 1px 2px rgba(20, 30, 50, 0.06);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-4) 14px;
+  margin-top: var(--space-2);
+  box-shadow: var(--shadow-card);
   position: relative;
   overflow: hidden;
 }
@@ -39,27 +25,64 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-title);
+  line-height: 22px;
   margin-bottom: 10px;
 }
+.card-title > span:first-child { min-width: 0; }
+.card-title .van-tag { flex-shrink: 0; }
 
 .row {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  font-size: 14px;
+  gap: var(--space-3);
+  font-size: var(--fs-body);
+  line-height: 21px;
   padding: 5px 0;
 }
 
 .row .k { color: var(--muted); flex-shrink: 0; }
 .row .v { text-align: right; word-break: break-all; }
 
-.money { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.capital { color: var(--muted); font-size: 12px; }
-.meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.money { font-size: var(--fs-money); line-height: 34px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.3px; }
+.capital { color: var(--muted); font-size: var(--fs-xs); }
+.meta { color: var(--muted); font-size: var(--fs-xs); line-height: 18px; margin-top: var(--space-2); }
 
-.btns { display: flex; gap: 8px; margin-top: 12px; }
+.btns { display: flex; gap: var(--space-2); margin-top: 14px; }
 .btns .van-button { flex: 1; }
 
-.done-mask { color: var(--muted); font-size: 13px; text-align: center; margin-top: 10px; }
+/* 办完 / 作废 / 过期：卡片主体变淡（.card.closed），底部一块虚线状态框 */
+.done-mask {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin-top: var(--space-3); padding: 9px var(--space-3);
+  border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--surface-2);
+  color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; text-align: center;
+}
+.card.closed > :not(.done-mask) { opacity: 0.45; }
+
+/* 状态头：圆形图标 + 标题 + 徽章（熔断、强验证） */
+.status-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding-bottom: var(--space-3); margin-bottom: var(--space-1); border-bottom: 1px solid var(--line);
+  font-size: var(--fs-title); font-weight: 600;
+}
+.status-head .title { flex: 1; min-width: 0; }
+.status-icon {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--red-soft); color: var(--red);
+}
+.status-icon.ok { background: var(--green-soft); color: var(--green); }
+.status-icon.img { background: none; }
+
+/* 底部弹层的公共标题 */
+.sheet-title { font-size: var(--fs-sheet); font-weight: 600; line-height: 24px; padding-right: 32px; }
+
+/* 定制图标：跟着文字大小走 */
+.app-icon { width: 1.15em; height: 1.15em; flex-shrink: 0; object-fit: contain; }
+.icon-text .app-icon { display: inline-block; vertical-align: -0.2em; margin-right: 0.25em; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* 实心红徽章上的图标垫一圈白底，不然红色图标和底色糊在一起 */
+.van-tag--danger:not(.van-tag--plain) .app-icon { background: var(--surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--surface); }

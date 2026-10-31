@@ -4,7 +4,7 @@ defineProps({ card: { type: Object, required: true } })
 
 <template>
   <div class="card" data-testid="balance-card">
-    <div class="card-title"><span>账户余额</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
+    <div class="card-title"><span>账户余额</span><van-tag plain type="success"><IconText text="🟢 自动查询" /></van-tag></div>
     <div v-for="a in card.accounts" :key="a.tail" class="row">
       <span class="k">{{ a.name }}（尾号 {{ a.tail }}）</span><span class="v">¥{{ a.balance }}</span>
     </div>

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { showToast } from 'vant'
 import { api } from '../../api'
+import { icon } from '../../icons'
 
 const props = defineProps({ card: { type: Object, required: true } })
 const emit = defineEmits(['outcome'])
@@ -37,10 +38,10 @@ async function verify(factor) {
 </script>
 
 <template>
-  <div class="card auth" data-testid="auth-card">
+  <div class="card auth" :class="{ closed: done }" data-testid="auth-card">
     <div class="card-title">
       <span>强验证（模拟）</span>
-      <van-tag type="danger" size="medium">🔴 两步验证</van-tag>
+      <van-tag type="danger" size="medium"><IconText text="🔴 两步验证" /></van-tag>
     </div>
     <div class="summary">{{ cur.summary }}</div>
     <div v-for="f in cur.factors" :key="f.factor" class="row step">
@@ -49,7 +50,7 @@ async function verify(factor) {
     </div>
     <template v-if="!done">
       <van-button v-if="!faceDone" block size="small" type="danger" plain :loading="busy === 'face'"
-                  icon="contact" @click="verify('face')">模拟人脸识别</van-button>
+                  :icon="icon('face-id', 'contact')" @click="verify('face')">模拟人脸识别</van-button>
       <template v-else>
         <div v-if="cur.sms_preview" class="sms">
           <div class="sms-label">模拟短信（演示环境直接显示）</div>
@@ -68,12 +69,11 @@ async function verify(factor) {
 </template>
 
 <style scoped>
-.auth { border-top: 3px solid var(--red); }
-.summary { font-size: 14px; margin-bottom: 6px; }
-.step .ok { color: var(--green); font-weight: 600; }
+.summary { font-size: var(--fs-body); line-height: 1.55; margin-bottom: 6px; }
+.step .ok { color: var(--green-ink); font-weight: 600; }
 .auth .van-button--block { margin-top: 10px; }
-.sms { background: #f2f3f5; border-radius: 10px; padding: 10px; font-size: 13px; line-height: 1.6; margin-top: 10px; }
-.sms-label { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
-.sms-input { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.sms-input .van-field { flex: 1; background: #f7f8fa; border-radius: 8px; padding: 6px 10px; }
+.sms { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px var(--space-3); font-size: var(--fs-sm); line-height: 1.6; margin-top: 10px; }
+.sms-label { color: var(--muted); font-size: var(--fs-2xs); margin-bottom: var(--space-1); }
+.sms-input { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.sms-input .van-field { flex: 1; background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 10px; }
 </style>

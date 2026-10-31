@@ -12,7 +12,7 @@ function figures(r) {
 
 <template>
   <div class="card">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success">🟢 沙箱分析</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success"><IconText text="🟢 沙箱分析" /></van-tag></div>
     <div class="period">{{ card.period }} · 共 {{ card.txn_count }} 笔交易参与分析</div>
     <div v-if="card.question" class="question">「{{ card.question }}」</div>
     <div v-for="(r, i) in card.rows" :key="i" class="row-block">
@@ -29,11 +29,11 @@ function figures(r) {
 </template>
 
 <style scoped>
-.period { font-size: 13px; color: var(--muted); }
-.question { font-size: 13px; margin: 4px 0 6px; color: var(--text); }
+.period { font-size: var(--fs-sm); color: var(--muted); }
+.question { font-size: var(--fs-sm); margin: 4px 0 6px; color: var(--ink); }
 .row-block { padding: 4px 0; }
 .v { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fig { color: var(--muted); margin-left: 6px; }
-.bar { height: 4px; background: #f4f6fa; border-radius: 2px; overflow: hidden; margin-top: 3px; }
+.bar { height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden; margin-top: 3px; }
 .bar i { display: block; height: 100%; background: var(--brand); opacity: .55; }
 </style>
