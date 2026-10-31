@@ -13,6 +13,7 @@
 
 library: merchant_cancel
 name: 商户取消指引
+kind: 商户公开信息整理（一般路径，演示）
 version: kb-2026-10
 effective: 2026-10-01
 

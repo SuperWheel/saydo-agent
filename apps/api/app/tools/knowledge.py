@@ -31,7 +31,9 @@ def lookup(query: str) -> ToolResult:
     items = [e.view() for e in found.entries]
     first = found.entries[0]
     reply = f"根据知识库「{first.title}」：{_first_sentence(first.body)}详见卡片和出处。"
-    card = {"type": "knowledge", "title": "知识问答", "query": query, "items": items,
+    # 原文链接只上卡片：模型看到的 hits 里没有链接（链接里的长数字串会被当成卡号打码）
+    card_items = [{**v, "urls": list(e.urls)} if e.urls else v for v, e in zip(items, found.entries)]
+    card = {"type": "knowledge", "title": "知识问答", "query": query, "items": card_items,
             "disclaimer": knowledge.DISCLAIMER, "reply": reply}
     return ToolResult({"status": "ok", "hits": items, "note": MODEL_NOTE}, card)
 

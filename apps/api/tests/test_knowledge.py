@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app import knowledge
-from app.agent.grounding import check, collect_facts
+from app.agent.grounding import _PROMISE, check, collect_facts
 from app.core_mock.subscriptions import MERCHANT_SIDE, cancel_guide
 from app.core_mock.wealth import PRODUCTS
 from app.nlu import rule_intent
@@ -31,11 +31,26 @@ def kinds(r: dict) -> list[str]:
 def test_entries_load_clean_with_sources():
     es = knowledge.entries()
     assert len(es) >= 50 and knowledge.REJECTED == []
-    assert {e.library for e in es} == {"faq", "product", "merchant_cancel"}
+    assert {e.library for e in es} == {"faq", "regulation", "product", "merchant_cancel"}
     for e in es:
-        assert e.title and e.body and e.source.startswith("演示知识库 · ") and "生效" in e.source
+        assert e.title and e.body and e.source.startswith(f"演示知识库 · {e.kind} · ") and "生效" in e.source
         view = json.dumps(e.view(), ensure_ascii=False)
         assert mask_pii(view) == view  # 没有 8 位以上的连续数字：发给模型不会被当成卡号打码
+        assert "http" not in view  # 原文链接只上卡片
+        assert not _PROMISE.search(e.body), e.id  # 条文里没有保本、无风险这类承诺词，照条文作答不会被事实校验拦下
+
+
+def test_regulation_entries_cite_documents_and_bank_rules_are_marked():
+    """两类知识分开标：监管 / 法规条目每条都有依据（文件、条款、机构、施行日期）；本行规则标「本行（演示）业务规则」。"""
+    by_id = {e.id: e for e in knowledge.entries()}
+    regs = [e for e in by_id.values() if e.library == "regulation"]
+    assert len(regs) >= 20 and all(e.kind == knowledge.KIND_REGULATION and e.basis for e in regs)
+    for e in regs:
+        assert all(b.startswith("《") and "施行）" in b for b in e.basis) and all(u.startswith("https://") for u in e.urls)
+    assert {e.kind for e in by_id.values() if e.library in ("faq", "product")} == {knowledge.KIND_BANK}
+    src = by_id["faq-deposit-insurance"].source
+    assert "监管 / 法规通用知识" in src and "依据：《存款保险条例》" in src and "国务院令第660号" in src
+    assert "本行（演示）业务规则" in by_id["faq-non-counter-limit"].source
 
 
 def test_merchant_guides_cover_registered_subscriptions_as_general_paths():
@@ -93,10 +108,23 @@ def test_out_of_scope_returns_no_hit(q):
     assert knowledge.search(q).hits == []
 
 
+@pytest.mark.parametrize("q, want", [
+    ("手机银行一天最多能转多少钱", "faq-non-counter-limit"),
+    ("七天无理由退货的规定", "reg-seven-day-return"),
+    ("鲜花蛋糕能无理由退货吗", "reg-seven-day-exceptions"),
+    ("把银行卡借给别人用违法吗", "reg-fraud-no-rent"),
+    ("信用卡被盗刷还要还钱吗", "reg-card-fraud-liability"),
+    ("退款算收入吗", "faq-bill-refund"),
+    ("为什么要点确认卡", "faq-ai-why-confirm"),
+])
+def test_search_hits_expanded_topics(q, want):
+    assert want in [e.id for e in knowledge.search(q).entries]
+
+
 def test_eval_set_hit_rate_and_refusal():
     """evals/kb.yaml 的检索层指标：命中率（Hit@3）≥ 90%，超范围拒答率 ≥ 90%，问余额不走知识库。"""
     cases = kb_eval.load_cases()
-    assert len(cases) == 50
+    assert len(cases) == 104
     results = {c["id"]: (c["kind"], kb_eval.offline_case(c)[0]) for c in cases}
 
     def rate(kind):
@@ -109,8 +137,20 @@ def test_eval_set_hit_rate_and_refusal():
 def test_lookup_hit_gives_card_with_sources_and_model_note():
     r = lookup("跨行转账多久到账")
     assert r.data["status"] == "ok" and r.data["note"] == MODEL_NOTE
-    assert r.card["type"] == "knowledge" and r.card["items"][0]["source"].startswith("演示知识库 · 常见问题 · 跨行转账多久到账")
+    assert r.card["type"] == "knowledge" and r.card["items"][0]["source"].startswith(
+        "演示知识库 · 本行（演示）业务规则 · 常见问题 · 跨行转账多久到账")
     assert "演示" in r.card["disclaimer"] and r.card["reply"].startswith("根据知识库「跨行转账多久到账」")
+
+
+def test_lookup_regulation_card_has_links_model_data_does_not():
+    r = lookup("存款保险最多赔多少")
+    item = next(i for i in r.card["items"] if i["id"] == "faq-deposit-insurance")
+    assert "依据：《存款保险条例》" in item["source"] and "urls" not in item  # 存款保险条例没给链接
+    r = lookup("理财风险等级有几级")
+    item = next(i for i in r.card["items"] if i["id"] == "reg-wm-risk-grades")
+    assert "（中国银行保险监督管理委员会令2018年第6号，" in item["source"]
+    assert item["urls"] and all(u.startswith("https://www.gov.cn/") for u in item["urls"])
+    assert "http" not in json.dumps(r.data, ensure_ascii=False)
 
 
 def test_lookup_no_hit_is_notice():
@@ -178,6 +218,19 @@ def test_rule_mode_answers_with_knowledge_card(client):
     assert r["reply"]["text"].startswith("根据知识库「挂失和补卡收费吗」")
 
 
+@pytest.mark.parametrize("t, want", [
+    ("七天无理由退货的规定", "reg-seven-day-return"),
+    ("卡被盗刷银行赔吗", "reg-card-fraud-liability"),
+    ("被骗转账了怎么办", "reg-fraud-emergency"),
+])
+def test_rule_mode_answers_regulation_topics(client, t, want):
+    """规则模式（无模型）：监管类问题出知识卡，卡上带依据，不出任何确认卡。"""
+    r = say(client, t)
+    assert kinds(r) == ["knowledge"] and r["reply"]["source"] == "rule"
+    item = next(i for i in r["cards"][0]["items"] if i["id"] == want)
+    assert "监管 / 法规通用知识" in item["source"] and "依据：《" in item["source"]
+
+
 def test_rule_mode_no_hit_says_so(client):
     r = say(client, "比特币是什么")
     assert kinds(r) == ["notice"] and r["reply"]["text"] == NO_HIT
@@ -192,7 +245,7 @@ def test_rule_mode_faq_does_not_start_an_action(client):
 def test_rule_mode_sub_guide_card_cites_kb(client):
     r = say(client, "帮我取消爱奇艺会员")
     guide = r["cards"][0]
-    assert guide["type"] == "sub_guide" and guide["source"].startswith("演示知识库 · 商户取消指引")
+    assert guide["type"] == "sub_guide" and guide["source"].startswith("演示知识库 · 商户公开信息整理（一般路径，演示） · 商户取消指引")
     assert "占位" not in json.dumps(r, ensure_ascii=False)
 
 
