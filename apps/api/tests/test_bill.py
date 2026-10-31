@@ -4,7 +4,7 @@
 """
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select, update
@@ -94,8 +94,8 @@ def test_query_transfers_to_contact(client):
 # ---------- F-BA-03 分类统计 ----------
 
 def window(text: str):
-    """和工具同样的区间（截止时刻放宽 1 秒）。核对数字用「近30天」：任何日期都有完整数据，月初的「本月」可能还没有流水。"""
-    return parse_period(text, at=now() + timedelta(seconds=1), default=text)
+    """和工具同样的右开区间，包含当前这一秒；月初的「本月」可能还没有流水。"""
+    return parse_period(text, at=now() + timedelta(microseconds=1), default=text)
 
 
 def test_category_stats_add_up(client):
@@ -131,8 +131,9 @@ def test_planted_anomalies_are_recalled(client):
 
 
 @pytest.mark.parametrize("offset_days", [0, 41, 97, 160, 233, 301])
-def test_anomaly_recall_is_stable_across_seed_dates(tmp_path, offset_days):
+def test_anomaly_recall_is_stable_across_seed_dates(tmp_path, monkeypatch, offset_days):
     """种子数据随日期变化（周末、月初）：换不同的「今天」重新生成，全部 90 天里都只报两笔预埋异常。"""
+    monkeypatch.setenv("DEMO_DATE", "2026-10-30")  # 偏移后仍在日历种子的两年范围里
     clock.reset()
     clock.travel(timedelta(days=offset_days))
     try:
@@ -325,7 +326,7 @@ def test_rule_intents(utterance, intent):
 
 
 def test_period_parsing():
-    at = now().replace(year=2026, month=10, day=30, hour=12, minute=0)
+    at = datetime(2026, 10, 30, 12)
     p = parse_period("上个月", at=at, default="近30天")
     assert (p.start.month, p.end.month, p.prev_start.month, p.label) == (9, 10, 8, "2026年9月")
     p = parse_period("这个月", at=at, default="近30天")
@@ -338,6 +339,50 @@ def test_period_parsing():
     unknown = parse_period("随便看看", at=at, default="近30天")
     assert unknown.label == "近30天" and not unknown.recognized
     assert parse_period(None, at=at, default="近30天").recognized
+
+
+@pytest.mark.parametrize("at", [datetime(2026, 10, 31, 23, 59, 59), datetime(2026, 11, 30, 23, 59, 59),
+                               datetime(2026, 12, 31, 23, 59, 59), datetime(2027, 2, 28, 23, 59, 59),
+                               datetime(2028, 2, 29, 23, 59, 59)])
+def test_bill_window_does_not_change_calendar_at_last_second(monkeypatch, at):
+    from app.tools import bill
+
+    monkeypatch.setattr(bill, "now", lambda: at)
+    today = at.replace(hour=0, minute=0, second=0)
+    month = today.replace(day=1)
+    last_month = (month - timedelta(days=1)).replace(day=1)
+    end = at + timedelta(microseconds=1)
+    for word, start, stop in (("本月", month, end), ("上个月", last_month, month),
+                              ("今天", today, end), ("昨天", today - timedelta(days=1), today),
+                              ("本周", today - timedelta(days=today.weekday()), end),
+                              ("今年", today.replace(month=1, day=1), end),
+                              ("近7天", end - timedelta(days=7), end)):
+        p = bill._window(None, word, "近30天")
+        assert (p.start, p.end) == (start, stop), word
+    p = bill._window(None, "本月", "近30天")
+    assert p.prev_start == last_month and p.prev_end == min(last_month + (end - month), month)
+
+
+def test_last_second_report_includes_just_posted_spend(client, monkeypatch):
+    monkeypatch.setenv("DEMO_DATE", "2026-10-31")
+    assert client.post("/dev/seed").status_code == 200
+    enter(client)
+    clock.travel(datetime(2026, 10, 31, 23, 59, 59) - now())
+    with new_session() as db:
+        acct = db.scalars(select(Account).where(Account.kind == "debit")).one()
+        post(db, account=acct, direction="out", amount_fen=3200, counterparty="瑞幸咖啡", merchant="瑞幸咖啡",
+             mcc="5814", contra_code="CLEARING:UNIONPAY", at=now())
+        db.commit()
+    card = say(client, "这个月的账单报告")["cards"][0]
+    assert card["period"] == "2026年10月（截至31日）"
+    head, items = _detail(client, card["detail"])
+    assert head["total"] == next(k["value"] for k in card["kpis"] if k["label"] == "消费")
+    assert (items[0]["date"], items[0]["amount"]) == ("2026-10-31", "-32.00")
+    today = say(client, "今天花了多少钱")["cards"][0]
+    assert today["count"] == 1 and today["total"] == "32.00"
+    clock.travel(timedelta(seconds=1))
+    card = say(client, "这个月的账单报告")["cards"][0]
+    assert card["period"] == "2026年11月（截至1日）" and card["rows"] == []
 
 
 def test_bill_tools_are_read_only_and_listed_in_help(client):
@@ -404,7 +449,7 @@ def test_spending_phrases(utterance, kind):
 
 def test_month_start_has_no_data_yet_but_answers(client, monkeypatch):
     """月初（如 11 月 1 日）「本月」还没有流水：如实说没有记录，不报错、不编数字；「上个月」照常有完整数据。"""
-    first = (now().replace(day=1) + timedelta(days=32)).replace(day=1)
+    first = datetime(2026, 11, 1)  # 上月要有完整日历流水，不能随真实年份跑出种子范围
     monkeypatch.setenv("DEMO_DATE", f"{first:%Y-%m-%d}")
     assert client.post("/dev/seed").status_code == 200  # 在那一天重新生成演示数据
     enter(client)  # 重置后进入凭证作废，重新过一次人脸
@@ -453,14 +498,11 @@ def test_category_card_detail_matches_card(client):
 @pytest.mark.parametrize("ask,period", [("这个月的消费总结", "本月"), ("最近30天的账单报告", "近30天")])
 def test_report_card_detail_matches_card(client, ask, period):
     """报告卡点开：分类构成和消费分类卡同口径，「查看消费明细」的笔数、合计和报告里的消费一致。"""
-    before = window(period)
+    p = window(period)
     r = say(client, ask)
     card = r["cards"][0]
     assert card["type"] == "bill_report" and r["reply"].get("workflow")  # 工作流出卡，不调模型
-    # 「近30天」按当前时刻滚动，出卡途中可能跨过一秒：和出卡前、后算的区间之一一致即可
-    p = next((w for w in (before, window(period))
-              if card["detail"] == {"start": w.start.isoformat(), "end": w.end.isoformat(), "kind": "消费"}), None)
-    assert p, card["detail"]
+    assert card["detail"] == {"start": p.start.isoformat(), "end": p.end.isoformat(), "kind": "消费"}
     spend = next(k["value"] for k in card["kpis"] if k["label"] == "消费")
     head, items = _detail(client, card["detail"])
     assert head["total"] == spend and len(items) == head["count"] == len(_spends(p.start, p.end))
@@ -470,6 +512,9 @@ def test_report_card_detail_matches_card(client, ask, period):
 
 
 def test_report_card_from_model_has_detail(llm_client, monkeypatch):
+    monkeypatch.setenv("DEMO_DATE", "2026-10-15")  # 本例要求有明细；月初无数据由专门用例覆盖
+    assert llm_client.post("/dev/seed").status_code == 200
+    enter(llm_client)
     f = _Restater(tool("bill_report", period="本月"), lambda d: f"本月消费 {d['spend_yuan']} 元。")
     monkeypatch.setattr(loop, "get_llm", lambda: f)
     monkeypatch.setattr(loop, "FAST_INTENTS", {"balance"})  # 走模型路径，不让工作流截走
@@ -515,6 +560,8 @@ def test_detail_shows_refund_offset(client):
 
 def test_detail_does_not_include_later_txns(client):
     """详情按出卡那一刻的区间取数：之后新入账的不算进来，合计和卡片一致。"""
+    at = now()
+    clock.travel(at.replace(hour=12, minute=0, second=0) - at)  # 只测新增交易，五分钟内不触发跨日补账
     card = say(client, "最近7天花了多少")["cards"][0]
     clock.travel(timedelta(minutes=5))
     with new_session() as db:

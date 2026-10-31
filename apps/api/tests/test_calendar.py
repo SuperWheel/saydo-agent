@@ -91,6 +91,23 @@ def test_next_day_request_catches_up_without_fast_forward(client):
     assert balance(client) == after_travel(BALANCE) and len(rows()) > n
 
 
+@pytest.mark.parametrize("day", ["2026-10-31", "2026-11-30", "2026-12-31", "2027-02-28"])
+def test_midnight_catches_up_once(client, monkeypatch, day):
+    """从月末最后一秒跨到下月：只补昨天，余额和账本一起变，第二次请求不重复补。"""
+    at_date(client, monkeypatch, day)
+    at = now()
+    clock.travel(at.replace(hour=23, minute=59, second=59) - at)
+    before = rows()
+    assert balance(client) == BALANCE
+    assert clock.travel(timedelta(seconds=1)) == datetime.combine(at.date() + timedelta(days=1), time())
+    with new_session() as db:
+        expected = [e for e in calendar(now().date(), _mom(db)) if e["at"].date() == at.date()]
+    assert balance(client) == after_travel(BALANCE) and ledger_ok(client)
+    added = rows()[len(before):]
+    assert sorted((t.created_at, t.amount_fen) for t in added) == sorted((e["at"], e["amount_fen"]) for e in expected)
+    assert balance(client) == after_travel(BALANCE) and len(rows()) == len(before) + len(added)
+
+
 def test_subscriptions_charge_after_fast_forward(client):
     seeded = now().date()
     clock.travel(timedelta(days=31))

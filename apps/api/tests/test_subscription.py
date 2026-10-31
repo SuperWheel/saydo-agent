@@ -69,8 +69,9 @@ def test_transfers_and_daily_spending_are_not_subscriptions(client):
 
 
 @pytest.mark.parametrize("days", [0, 17, 45, 101, 200, 333])
-def test_detection_stable_whatever_the_seed_date(tmp_path, days):
-    """种子流水按「今天」往前 90 天生成：换一天生成，6 个订阅照样全部识别、照样没有误报。"""
+def test_detection_stable_whatever_the_seed_date(tmp_path, monkeypatch, days):
+    """在日历覆盖范围里换一天生成，6 个订阅照样全部识别、照样没有误报。"""
+    monkeypatch.setenv("DEMO_DATE", "2026-10-30")
     clock.reset()
     clock.travel(timedelta(days=days))
     try:

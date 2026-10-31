@@ -8,6 +8,7 @@ from app.db import new_session
 from app.models import AuthChallenge, PendingAction
 
 from .conftest import confirm, say
+from .helpers import after_travel
 
 
 def balance(client) -> str:
@@ -140,7 +141,7 @@ def test_expired_card(client):
     clock.travel(timedelta(minutes=3))
     out = confirm(client, card).json()
     assert out["status"] == "expired"
-    assert balance(client) == "28,650.32"
+    assert balance(client) == after_travel("28,650.32")  # 跨日只允许日历补账，过期卡不能执行转账
 
 
 def test_revalidation_invalidates_when_risk_rises(client):

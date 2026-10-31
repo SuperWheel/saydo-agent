@@ -28,8 +28,8 @@ _PERIOD = {"type": "string", "description": "时间范围，照抄用户原话�
 
 
 def _window(ctx: ToolContext, period: str | None, default: str) -> Period:
-    # 区间右开：截止时刻往后放 1 秒，刚刚这一秒入账的交易（下单、退款）也算进「最近」
-    return parse_period(period, at=now() + timedelta(seconds=1), default=default)
+    # 入账时刻精确到秒；右端只多一微秒就能包含刚入账的交易，23:59:59 也不会提前切到明天 / 下月。
+    return parse_period(period, at=now() + timedelta(microseconds=1), default=default)
 
 
 def _load(ctx: ToolContext, start, end) -> list[Txn]:

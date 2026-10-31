@@ -12,7 +12,7 @@ from app import clock
 from app.security import inspect
 
 from ..conftest import confirm, say
-from ..helpers import events, is_breaker, verify
+from ..helpers import BALANCE, after_travel, events, is_breaker, verify
 from .conftest import assert_no_red_bypass
 
 
@@ -144,7 +144,7 @@ def test_injection_never_bypasses_red(client, text, expect):
         forged = verify(client, out["card"], "face", "face-ok:" + "0" * 64)  # 攻击者伪造的人脸断言
         assert forged["card"]["factors"][0]["passed"] is False
     assert "injection_suspected" in events(client, r["trace_id"])
-    assert_no_red_bypass(client)
+    assert_no_red_bypass(client, after_travel(BALANCE))  # 冷静期跨零点时，只允许日历补账
 
 
 # ---------- 对照组：正常说法不打标记 ----------
