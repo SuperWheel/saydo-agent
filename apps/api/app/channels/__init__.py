@@ -32,7 +32,7 @@ MORE = "完整明细请在言行 App 查看。"
 NOT_BOUND = "你的企业微信账号还没有绑定言行，请先在言行 App 内完成绑定。"
 TEXT_ONLY = "目前只支持文字消息，可以问我余额、账单、卡片状态、订阅、理财持仓和业务规则。"
 
-# IM 里能展示的卡片：都是只读查询的结果。确认卡、验证卡、回执、计划卡、收款人选择、理财推荐 / 问卷、订花订蛋糕等一律不展示
+# IM 里能展示的卡片：都是只读查询的结果。确认卡、验证卡、回执、计划卡、收款人选择、理财推荐 / 问卷、候选商品等一律不展示
 READ_CARDS = {"balance", "bill_report", "bill_txns", "bill_categories", "bill_anomalies", "bill_analysis", "card_list",
               "sub_overview", "sub_upcoming", "wealth_holdings", "knowledge", "notice"}
 _CLAUSE = re.compile(r"[，,。.？?！!；;\n]|再|另外|然后|顺便")
@@ -71,7 +71,7 @@ def take_handoff(db: Session, code: str, user_id: int) -> str | None:
 
 def wants_write(text: str) -> bool:
     """规则能认出来的写操作。认不出来的照常进 agent，由 im_turn 的事后检查兜底。"""
-    if planner.action_kinds(text):  # 订花订蛋糕、心愿罐、定时转账、（多笔）转账
+    if planner.action_kinds(text) or planner.auto.order_slots(text):  # 订花订蛋糕、买东西、心愿罐、定时转账、（多笔）转账
         return True
     for part in [text, *_CLAUSE.split(text)]:
         if not part.strip():
