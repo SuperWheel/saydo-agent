@@ -2,13 +2,14 @@
 // 银行卡详情（卡片列表上点一张卡打开）：开户行、卡种、户名、状态、余额或额度、限额，全部来自服务端。
 // 卡号默认只显示前 4 后 4。点小眼睛先做模拟人脸验证，通过后服务端才返回完整卡号；本次打开期间可以来回显示 / 隐藏，
 // 关掉详情就清掉，再看要重新验证。完整卡号只放在这个组件的内存里，不进对话、不进本地存储。
+// 绑定进来的卡底部有「解绑此卡」：发出 unbind，由卡片列表转成 selection 回到对话，出解绑确认卡（和说「解绑尾号1554的卡」同一条路）。
 import { ref, watch } from 'vue'
 import { showToast } from 'vant'
 import { api } from '../../api'
 import { icon } from '../../icons'
 
 const props = defineProps({ cardId: { type: Number, default: 0 } })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'unbind'])
 
 const d = ref(null)
 const err = ref('')
@@ -101,6 +102,11 @@ async function verifyFace() {
           <span class="k">{{ k }}</span><span class="v" :class="{ off: v === '已关闭' }">{{ v }}</span>
         </div>
 
+        <div v-if="d.unbind" class="unbind">
+          <van-button v-if="d.unbind.allowed" block plain type="danger" size="small" data-testid="card-unbind"
+                      @click="emit('unbind', d)">解绑此卡</van-button>
+          <div v-else class="unbind-why" data-testid="card-unbind-why">{{ d.unbind.reason }}</div>
+        </div>
         <div class="meta">{{ d.reveal.note }} · 锁卡、挂失、调整限额直接在对话里说</div>
         <div class="meta">数据来源：{{ d.source }} · {{ d.as_of }}</div>
       </template>
@@ -145,4 +151,6 @@ async function verifyFace() {
 .m b { display: block; margin-top: 2px; font-size: var(--fs-money-md); color: var(--ink); font-variant-numeric: tabular-nums; }
 .sec { font-size: var(--fs-sm); font-weight: 600; margin: 16px 0 4px; }
 .row .v.off { color: var(--muted); }
+.unbind { margin-top: var(--space-4); }
+.unbind-why { font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
 </style>

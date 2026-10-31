@@ -510,3 +510,57 @@ test('12 绑卡：卡片列表点「绑定新卡」→ 输入后四位 → 🔴 
   await list.getByTestId('bank-card').nth(2).click()
   await expect(page.getByTestId('card-detail')).toContainText('招商银行信用卡中心')
 })
+
+test('13 解绑：绑一张卡 → 详情里「解绑此卡」→ 🔴 验证 → 列表里没了；主账户卡不能解绑', async ({ page }) => {
+  // 先绑一张没有欠款的中信信用卡（尾号 0608）
+  await say(page, '绑定尾号0608的卡')
+  const bindConfirm = cards(page, 'confirm-card')
+  await expect(bindConfirm).toContainText('中信银行')
+  await bindConfirm.getByRole('button', { name: '确认' }).click()
+  await passStrongAuth(cards(page, 'auth-card'))
+  await expect(cards(page, 'receipt-card')).toContainText('绑卡成功')
+
+  // 主账户卡的详情里没有解绑按钮，写明原因
+  await say(page, '查看我的银行卡')
+  const list = cards(page, 'card-list-card')
+  await expect(list.getByTestId('bank-card')).toHaveCount(3)
+  await list.getByTestId('bank-card').first().click()
+  const sheet = page.getByTestId('card-detail')
+  await expect(sheet.getByTestId('card-unbind-why')).toContainText('主账户卡')
+  await expect(sheet.getByTestId('card-unbind')).toHaveCount(0)
+  await sheet.getByLabel('关闭').click()
+
+  // 绑上的那张：详情里点「解绑此卡」→ 对话里出 🔴 解绑确认卡
+  await list.getByTestId('bank-card').nth(2).click()
+  await expect(sheet).toContainText('中信银行信用卡中心')
+  await sheet.getByTestId('card-unbind').click()
+  await expect(sheet).toBeHidden()
+  await settled(page)
+  await expect(page.getByText('选择：解绑中信银行信用卡（尾号0608）')).toBeVisible()
+  const confirm = cards(page, 'confirm-card').nth(1)
+  await expect(confirm).toContainText('解绑确认')
+  await expect(confirm).toContainText('🔴')
+  await expect(confirm).toContainText('6226 **** **** 0608')
+  await expect(confirm).toContainText('3 张 → 2 张')
+  await confirm.getByRole('button', { name: '确认' }).click()
+  await passStrongAuth(cards(page, 'auth-card').nth(1))
+  await expect(cards(page, 'receipt-card').nth(1)).toContainText('解绑成功')
+
+  await say(page, '查看我的银行卡')
+  const after = cards(page, 'card-list-card').nth(1)
+  await expect(after.getByTestId('bank-card')).toHaveCount(2)
+  await expect(after).not.toContainText('0608')
+})
+
+// 🔴 验证卡：按卡上要求的因子依次通过（人脸；要短信时从模拟短信里取验证码）
+async function passStrongAuth(auth) {
+  await auth.getByRole('button', { name: '模拟人脸识别' }).click()
+  const code = auth.getByPlaceholder('输入 6 位验证码')
+  await expect(code.or(auth.getByText('验证流程已结束'))).toBeVisible()
+  if (await code.isVisible()) {
+    const sms = await auth.getByText(/验证码\d{6}/).textContent()
+    await code.fill(sms.match(/验证码(\d{6})/)[1])
+    await auth.getByRole('button', { name: '提交' }).click()
+  }
+  await expect(auth).toContainText('验证流程已结束')
+}

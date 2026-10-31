@@ -1,12 +1,18 @@
 <script setup>
 // 卡片列表（查卡结果，以及「锁哪张卡」追问时的候选）。卡号只有尾号，内容全部来自服务端。
-// 点一张卡打开详情（CardDetailSheet）；查卡结果底部有「绑定新卡」，替用户说一句「我要绑一张新卡」，走对话里的绑卡流程
+// 点一张卡打开详情（CardDetailSheet）；查卡结果底部有「绑定新卡」，替用户说一句「我要绑一张新卡」，走对话里的绑卡流程。
+// 详情里点「解绑此卡」：关掉详情，转成 selection 回到对话，后端出解绑确认卡
 import { ref } from 'vue'
 import CardDetailSheet from './CardDetailSheet.vue'
 
 defineProps({ card: { type: Object, required: true } })
-const emit = defineEmits(['say'])
+const emit = defineEmits(['say', 'select'])
 const open = ref(0)
+
+function unbind(d) {
+  open.value = 0
+  emit('select', { label: `解绑${d.name}`, detail: `尾号${d.tail}`, selection: { type: 'card_unbind', card_id: d.id } })
+}
 
 const STATUS_TAG = { active: 'success', locked: 'warning', lost: 'danger' }
 </script>
@@ -37,7 +43,7 @@ const STATUS_TAG = { active: 'success', locked: 'warning', lost: 'danger' }
     <div class="meta">数据来源：{{ card.source }} · {{ card.as_of }} · 点卡片看详情，锁卡、挂失、调整限额直接告诉我</div>
     <van-popup :show="!!open" position="bottom" round teleport="body" :style="{ maxHeight: '86%', overflow: 'hidden' }"
                @update:show="(v) => { if (!v) open = 0 }">
-      <CardDetailSheet :card-id="open" @close="open = 0" />
+      <CardDetailSheet :card-id="open" @close="open = 0" @unbind="unbind" />
     </van-popup>
   </div>
 </template>
