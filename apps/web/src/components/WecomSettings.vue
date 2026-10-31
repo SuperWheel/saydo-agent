@@ -106,7 +106,7 @@ function preview(i) {
     </van-cell-group>
     <div class="link">企业微信里发出的链接：<b>{{ cfg.link_url }}</b></div>
     <div class="hint">「App 地址」保持默认的 127.0.0.1 时，链接会自动换成电脑当前的局域网地址，换网络也跟着变。
-      手机要打得开：手机开热点、电脑连上这个热点，前端用 <code>make dev-lan</code> 启动。部署到服务器后再把这里改成正式地址。</div>
+      手机要打得开：手机和电脑连同一网络（最稳的是手机开热点、电脑连上），照常 <code>make dev</code> 启动。部署到服务器后再把这里改成正式地址。</div>
 
     <div class="actions">
       <van-button type="danger" round block :loading="saving" :disabled="!dirty" @click="save()">保存并连接</van-button>

@@ -1,4 +1,4 @@
-.PHONY: install api web dev web-lan dev-lan test smoke-llm eval-llm seed
+.PHONY: install api web dev dev-lan test smoke-llm eval-llm seed
 
 install:
 	cd apps/api && uv sync
@@ -10,16 +10,12 @@ api:
 web:
 	cd apps/web && npm run dev
 
-# 同时启动前后端
+# 同时启动前后端。前端对局域网开放，同一网络的手机能打开 App；后端只监听本机，由前端代理
 dev:
 	$(MAKE) -j2 api web
 
-# 同上，但前端对局域网开放（手机和电脑在同一网络时，手机能打开 App；企业微信演示用）。后端仍只监听本机，由前端代理
-web-lan:
-	cd apps/web && WEB_HOST=0.0.0.0 npm run dev
-
-dev-lan:
-	$(MAKE) -j2 api web-lan
+# 旧名字，和 make dev 一样
+dev-lan: dev
 
 test:
 	cd apps/api && uv run pytest -q
