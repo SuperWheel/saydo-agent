@@ -57,7 +57,7 @@ def chat(body: ChatIn, db: Session = Depends(get_db), user_id: int = Depends(cur
         raise HTTPException(400, "消息不能为空")
     r = handle_turn(db, user_id=user_id, session_id=body.session_id, text=body.text, selection=body.selection)
     return {"session_id": r.session_id, "trace_id": r.trace_id, "reply": {"text": r.text, "source": r.source,
-            "ai_generated": r.ai_generated}, "cards": r.cards}
+            "ai_generated": r.ai_generated, "workflow": r.workflow, "elapsed_ms": r.elapsed_ms}, "cards": r.cards}
 
 
 def _outcome(fn, db: Session, **kwargs):
@@ -147,6 +147,7 @@ class LLMConfigIn(BaseModel):
     provider: Literal["deepseek", "glm"]
     api_key: str = Field(default="", max_length=200)  # 留空 = 沿用已有密钥，只切换供应商
     enabled: bool | None = None
+    workflow: bool | None = None
     admin_password: str = Field(default="", max_length=64)
 
 
@@ -158,12 +159,13 @@ def llm_config():
 @admin.post("/llm-config")
 def llm_config_save(body: LLMConfigIn, db: Session = Depends(get_db)):
     try:
-        out = llm_setup.save(body.provider, body.api_key, body.enabled, body.admin_password)
+        out = llm_setup.save(body.provider, body.api_key, body.enabled, body.admin_password, body.workflow)
     except llm_setup.ConfigError as e:
         raise HTTPException(400, str(e)) from e
     # 审计只记改了什么，不记密钥和口令本身
     audit.record(db, "admin", "llm_config", {"provider": body.provider, "key_updated": bool(body.api_key.strip()),
-                                             "enabled": body.enabled, "admin_password_set": bool(body.admin_password)})
+                                             "enabled": body.enabled, "workflow": body.workflow,
+                                             "admin_password_set": bool(body.admin_password)})
     db.commit()
     return out
 

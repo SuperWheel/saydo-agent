@@ -12,7 +12,7 @@ from .. import audit
 from ..agent import quarantine
 from ..analytics import engine, recurring
 from ..analytics.engine import KIND_INCOME, KIND_REFUND, KIND_SPEND, KIND_TRANSFER, Txn
-from ..analytics.periods import Period, has_period, parse_period
+from ..analytics.periods import Period, has_period, parse_period, strip_period
 from ..cards import SOURCE_CORE
 from ..clock import now
 from ..core_mock.merchants import MERCHANTS, RULES_VERSION, SPEND_CATEGORIES, merchant_by_alias
@@ -485,6 +485,34 @@ def _rule_query_args(text: str) -> dict:
     elif re.search(r"(最近|上|最后)一笔", text):
         args["limit"] = 1
     return args
+
+
+# 查询用语：去掉时间、商户、分类、收款人、金额条件之后，剩下的只能是这些词
+_ASKING = re.compile(r"帮我|给我|麻烦|请|查一?查|查询|查|看一?看|看|列出|列|一下|所有|全部|我|的|在|上|里|这|了|都|是|有|发"
+                     r"|一共|总共|共|多少|几|笔|条|钱|块|元|花费|花销|花|消费|支出|开销|支付|付款|付|刷卡|刷|交易|收支|转账|转出|转"
+                     r"|收入|工资|进账|入账|收到|赚|记录|明细|流水|账单|情况|详情|列表|清单|哪些|什么|啥|买"
+                     r"|最大|最贵|最多|金额最高|一|最后|吗|呢|吧|呀|啊|[？?。！!，,、~\s]")
+
+
+def workflow_args(ctx: ToolContext, text: str) -> dict | None:
+    """明细查询能不能走确定性工作流（agent/loop.py）：规则把整句话都变成了 bill.query 的参数时返回参数，否则 None。
+
+    办法是把认出来的时间、商户、分类、收款人、金额条件和查询用语从原话里去掉，看还剩不剩东西。剩下的
+    （「周末」「平均」「比上个月」、规则不认识的商户「喜茶」、备注内容……）交给模型。收款人要唯一确定：
+    两个张伟时交给模型问清楚是哪位，不把两人合在一起算。"""
+    args = _rule_query_args(text)
+    rest = text.lower()
+    if args.get("kind") == KIND_TRANSFER and (m := _PAYEE.search(text)):
+        if len(resolve_payee(ctx.db, ctx.user_id, m.group("who"))) != 1:
+            return None
+        rest = rest.replace(m.group(0).lower(), "")
+    for word in (args.get("keyword"), args.get("category")):
+        if word:
+            rest = rest.replace(word.lower(), "")
+    for pat in (*_MIN, *_MAX):
+        rest = pat.sub("", rest)
+    rest = _ASKING.sub("", strip_period(rest))
+    return args if not rest else None
 
 
 RULE_TOOLS = {"bill_query": query, "bill_categories": categories, "bill_anomalies": anomalies, "bill_report": report}

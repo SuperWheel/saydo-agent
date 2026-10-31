@@ -33,6 +33,19 @@ def workflow(fake, monkeypatch):
     ("我的理财赚了多少", ["wealth_holdings"]),
     ("赎回活钱宝1000元", ["confirm"]),
     ("昨晚火锅856，我和小王、小李、小张AA", ["confirm"]),
+    # 明细查询：规则接得住整句话（时间、商户、分类、收款人、金额条件）时不调模型
+    ("近30天的消费记录", ["bill_txns"]),
+    ("最近3个月花了哪些钱", ["bill_txns"]),
+    ("上个月在美团花了多少", ["bill_txns"]),
+    ("这个月给我妈转了多少", ["bill_txns"]),
+    ("这个月交通花了多少", ["bill_txns"]),
+    ("上个月500元以下的消费", ["bill_txns"]),
+    ("帮我查一下近30天的消费明细", ["bill_txns"]),
+    # 支出总览、消费总结
+    ("我的支出总览", ["bill_categories"]),
+    ("这个月的消费概况", ["bill_categories"]),
+    ("这个月的消费总结", ["bill_report"]),
+    ("帮我分析一下这个月的支出", ["bill_report"]),
 ])
 def test_fixed_flows_skip_model(llm_client, workflow, words, cards):
     f = workflow(text("不该被调用"))
@@ -42,6 +55,12 @@ def test_fixed_flows_skip_model(llm_client, workflow, words, cards):
 
 @pytest.mark.parametrize("words", [
     "周末打车比工作日多花多少",  # 明细查询：规则只会算总额，答偏题
+    "这个月比上个月多花了多少",  # 比较
+    "在喜茶花了多少",  # 规则不认识的商户：规则会把全部消费当成答案
+    "美团和星巴克一共花了多少",  # 两个商户，规则只认一个
+    "给张伟转了多少",  # 两个张伟：不能合在一起算
+    "最近有什么大额消费",  # 「大额」要模型判断
+    "帮我分析外卖支出",  # 说了具体对象的分析，不是整体的消费总结
     "我还有多少钱？这个月钱怎么花这么快？",  # 一句话问两件事
     "给我妈转500，不对，是300",  # 有规则不认识的分句
     "给客服转500",  # 收款人里没有
@@ -114,3 +133,14 @@ def test_vague_answer_to_namesake_question_goes_to_model(llm_client, workflow):
     first = say(llm_client, "给张伟转200")
     say(llm_client, "就那个吧", first["session_id"])
     assert len(f.calls) == 1
+
+
+def test_reply_says_whether_workflow_and_how_long(llm_client, workflow):
+    """气泡下方的「确定性工作流 · 0.05 秒」：接口返回这一轮是不是走了工作流、服务端用了多少毫秒，审计里也记一份。"""
+    f = workflow(text("好的。"))
+    wf = say(llm_client, "近30天的消费记录")["reply"]
+    assert wf["workflow"] is True and f.calls == [] and 0 <= wf["elapsed_ms"] < 5000
+    model = say(llm_client, "周末打车比工作日多花多少")["reply"]
+    assert model["workflow"] is False and len(f.calls) == 1 and model["elapsed_ms"] >= 0
+    replies = [e for e in llm_client.get("/admin/audit").json() if e["event"] == "assistant_reply"]
+    assert {e["payload"]["workflow"] for e in replies} == {True, False}

@@ -1,4 +1,4 @@
-.PHONY: install api web dev dev-lan test smoke-llm eval-llm seed
+.PHONY: install api web dev dev-lan test smoke-llm eval-llm workflow-vs-llm seed
 
 install:
 	cd apps/api && uv sync
@@ -27,6 +27,10 @@ smoke-llm:
 # 真实模型回归集（apps/api/evals/regression.yaml），意图准确率低于 90% 时失败
 eval-llm:
 	cd apps/api && uv run python scripts/llm_eval.py
+
+# 同一批账单问题：确定性工作流 vs 全部交给模型，各问 3 遍，比准确率、一致性、耗时（需要真实模型，约 36 次调用）
+workflow-vs-llm:
+	cd apps/api && uv run python scripts/workflow_vs_llm.py
 
 # 重置演示数据（后端需在运行）
 seed:

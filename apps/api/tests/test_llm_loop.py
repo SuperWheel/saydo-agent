@@ -19,7 +19,7 @@ def test_llm_proposes_transfer(llm_client, fake):
     f = fake(tool("transfer_propose", payee_hint="我妈", amount_text="500"))
     r = say(llm_client, "给我妈转500")
     # 出了确认卡：卡片就是答复，不再调一次模型写「请核对确认卡」
-    assert r["reply"] == {"text": "请核对确认卡，无误后点击确认。", "source": "template", "ai_generated": False}
+    assert r["reply"].items() >= {"text": "请核对确认卡，无误后点击确认。", "source": "template", "ai_generated": False}.items()
     assert len(f.calls) == 1
     assert r["cards"][0]["type"] == "confirm" and r["cards"][0]["level"] == "YELLOW"
     tool_names = {t["function"]["name"] for t in f.calls[0]["tools"]}
@@ -252,5 +252,5 @@ def test_plain_balance_question_skips_model(llm_client, fake):
     """只问余额：走规则快速通道，不调模型；有注入嫌疑或问了别的就照常走模型。"""
     f = fake(text("不该被调用"))
     r = say(llm_client, "我还有多少钱")
-    assert r["reply"] == {"text": "你名下账户余额合计 28,650.32 元。", "source": "rule", "ai_generated": False}
+    assert r["reply"].items() >= {"text": "你名下账户余额合计 28,650.32 元。", "source": "rule", "ai_generated": False}.items()
     assert [c["type"] for c in r["cards"]] == ["balance"] and f.calls == []

@@ -136,6 +136,18 @@ def has_period(text: str | None) -> bool:
     return _parse(text or "", datetime(9000, 6, 15)) is not None
 
 
+_WORDS = re.compile(r"上上个?月|上个?月|(本|这个?|当)月|上个?(周|星期|礼拜)|(本|这个?)(周|星期|礼拜)|昨天|昨日|今天|今日"
+                    r"|今年|本年|去年|最近|近期|这几天|这阵子|这段时间|以来")
+
+
+def strip_period(text: str) -> str:
+    """去掉 text 里所有的时间说法（明细查询判断「整句话规则都接得住」时用）。"""
+    t = text.replace(" ", "")
+    for pat in (_YM, _MONTH_RANGE, _QUARTER, _RECENT, _THIS_N, _WITHIN, _WORDS, _MONTH):
+        t = pat.sub("", t)
+    return t
+
+
 def _parse(text: str, at: datetime) -> Period | None:
     t = text.replace(" ", "")
     if m := _YM.search(t):

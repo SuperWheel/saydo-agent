@@ -22,7 +22,7 @@ _KEY_OK = re.compile(r"[A-Za-z0-9._\-]{16,200}")
 _PASSWORD_OK = re.compile(r"[\x21-\x7e]{6,64}")  # 可见 ASCII，不含空格
 # 进程环境变量比 .env 优先，页面要提示「这里改了也不生效」
 _WATCHED = ("LLM_PROVIDER", "LLM_API_KEY", "DEEPSEEK_API_KEY", "ZHIPUAI_API_KEY", "GLM_API_KEY", "LLM_ENABLED",
-            "ADMIN_PASSWORD")
+            "WORKFLOW_ENABLED", "ADMIN_PASSWORD")
 
 
 _MARK = "# 以下由模型配置页写入"
@@ -52,11 +52,13 @@ def status() -> dict:
     if file.get("LLM_API_KEY"):
         warnings.append("当前用的是 .env 里的 LLM_API_KEY；保存时会把它移到对应供应商那一项")
     return {"provider": s.llm_provider, "model": s.llm_model, "enabled": s.llm_enabled, "ready": s.llm_ready,
+            "workflow": s.workflow_enabled,
             "providers": providers, "env_file": str(_env_path()), "env_file_exists": _env_path().exists(),
             "admin_protected": bool(s.admin_password), "warnings": warnings}
 
 
-def save(provider: str, api_key: str = "", enabled: bool | None = None, admin_password: str = "") -> dict:
+def save(provider: str, api_key: str = "", enabled: bool | None = None, admin_password: str = "",
+         workflow: bool | None = None) -> dict:
     """写入 .env 并重新加载配置。api_key 留空表示沿用已有的密钥（只切换供应商）。"""
     provider = provider.strip().lower()
     if provider not in KEY_ENV:
@@ -81,6 +83,8 @@ def save(provider: str, api_key: str = "", enabled: bool | None = None, admin_pa
         raise ConfigError(f"还没有 {LABELS[provider]} 的密钥，请先填写")
     if enabled is not None:
         updates["LLM_ENABLED"] = "true" if enabled else "false"
+    if workflow is not None:  # 关掉后固定流程也交给模型，演示时现场对比耗时和结果
+        updates["WORKFLOW_ENABLED"] = "true" if workflow else "false"
     if admin_password:
         updates["ADMIN_PASSWORD"] = admin_password
     update_env(_env_path(), updates)

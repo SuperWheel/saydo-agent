@@ -202,7 +202,7 @@ def test_llm_answers_from_kb_with_trimmed_tools(llm_client, fake):
     answer = "跨行转账 5 万元以内一般实时到账，超过 5 万元工作日一般 2 小时内到账。（出处：跨行转账多久到账）"
     f = fake(tool("kb_search", query="跨行转账多久到账"), text(answer))
     r = say(llm_client, "跨行转账多久到账")
-    assert r["reply"] == {"text": answer, "source": "llm", "ai_generated": True} and kinds(r) == ["knowledge"]
+    assert r["reply"].items() >= {"text": answer, "source": "llm", "ai_generated": True}.items() and kinds(r) == ["knowledge"]
     names = {t["function"]["name"] for t in f.calls[0]["tools"]}
     assert "kb_search" in names and "transfer_propose" not in names  # 规则意图 faq：只发知识域和常驻工具
     tool_msg = json.loads(next(m for m in f.calls[1]["messages"] if m["role"] == "tool")["content"])
@@ -227,7 +227,7 @@ def test_llm_no_hit_ends_turn_without_model_text(llm_client, fake):
     f = fake(tool("kb_search", query="比特币价格"), text("比特币现在 50 万元一个。"))
     r = say(llm_client, "比特币是什么")
     assert len(f.calls) == 1 and kinds(r) == ["notice"]
-    assert r["reply"] == {"text": NO_HIT, "source": "template", "ai_generated": False}
+    assert r["reply"].items() >= {"text": NO_HIT, "source": "template", "ai_generated": False}.items()
 
 
 def test_llm_no_hit_dropped_when_other_tool_answers(llm_client, fake):

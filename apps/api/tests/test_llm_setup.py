@@ -18,7 +18,8 @@ def env_file(client, tmp_path, monkeypatch):
     path.write_text("# 说明注释\nLLM_PROVIDER=deepseek\n# DEEPSEEK_API_KEY=示例行不动\nDEEPSEEK_API_KEY=\nAPP_SECRET=keep-me\n",
                     encoding="utf-8")
     monkeypatch.setattr(config, "ENV_FILE", path)
-    for k in ("LLM_API_KEY", "LLM_ENABLED", "LLM_PROVIDER", "DEEPSEEK_API_KEY", "ZHIPUAI_API_KEY", "ADMIN_PASSWORD"):
+    for k in ("LLM_API_KEY", "LLM_ENABLED", "LLM_PROVIDER", "DEEPSEEK_API_KEY", "ZHIPUAI_API_KEY", "ADMIN_PASSWORD",
+              "WORKFLOW_ENABLED"):
         monkeypatch.delenv(k, raising=False)
     get_settings.cache_clear()
     yield path
@@ -76,6 +77,16 @@ def test_toggle_rule_mode(client, env_file):
     assert not r.json()["ready"] and not client.get("/api/health").json()["llm"]["ready"]
     client.post("/admin/llm-config", json={"provider": "deepseek", "admin_password": "s3cret-pw"})
     assert env_file.read_text(encoding="utf-8").count("由模型配置页写入") == 1  # 多次追加只留一行说明
+
+
+def test_toggle_workflow(client, env_file):
+    """设置页的「确定性工作流」开关：关掉后固定流程也交给模型（演示时现场对比），立即生效，写进 .env。"""
+    client.post("/admin/llm-config", json={"provider": "deepseek", "api_key": KEY_DS})
+    assert client.get("/admin/llm-config").json()["workflow"] is True
+    r = client.post("/admin/llm-config", json={"provider": "deepseek", "workflow": False})
+    assert r.json()["workflow"] is False and not get_settings().workflow_enabled
+    assert "WORKFLOW_ENABLED=false" in env_file.read_text(encoding="utf-8")
+    assert client.post("/admin/llm-config", json={"provider": "deepseek", "workflow": True}).json()["workflow"] is True
 
 
 def test_audit_never_holds_secrets(client, env_file):

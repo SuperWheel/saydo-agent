@@ -11,6 +11,7 @@ const cfg = ref(null)
 const provider = ref('deepseek')
 const apiKey = ref('')
 const enabled = ref(true)
+const workflow = ref(true)
 const newPassword = ref('')
 const saving = ref(false)
 const testing = ref(false)
@@ -18,12 +19,13 @@ const testResult = ref(null)
 
 const current = computed(() => cfg.value?.providers.find((p) => p.id === provider.value))
 const dirty = computed(() => cfg.value && (provider.value !== cfg.value.provider || apiKey.value.trim()
-  || enabled.value !== cfg.value.enabled || newPassword.value))
+  || enabled.value !== cfg.value.enabled || workflow.value !== cfg.value.workflow || newPassword.value))
 
 function apply(c) {
   cfg.value = c
   provider.value = c.provider
   enabled.value = c.enabled
+  workflow.value = c.workflow
   apiKey.value = ''
   newPassword.value = ''
 }
@@ -36,7 +38,7 @@ async function save() {
   saving.value = true
   testResult.value = null
   try {
-    const body = { provider: provider.value, api_key: apiKey.value.trim(), enabled: enabled.value }
+    const body = { provider: provider.value, api_key: apiKey.value.trim(), enabled: enabled.value, workflow: workflow.value }
     if (newPassword.value) body.admin_password = newPassword.value
     const c = await api.saveLlmConfig(body)
     if (newPassword.value) adminPassword.set(newPassword.value)
@@ -85,6 +87,9 @@ async function test() {
                  :placeholder="current?.has_key ? '留空则沿用已填写的密钥' : `粘贴 ${current?.label} 的 API Key`" clearable />
       <van-cell title="启用大模型" label="关闭后只走规则模式（断网演示用）">
         <template #right-icon><van-switch v-model="enabled" size="20" active-color="#c8102e" /></template>
+      </van-cell>
+      <van-cell title="确定性工作流" label="固定流程（查余额、转账、查明细……）不调模型，毫秒级；关闭后全部交给模型，用来对比">
+        <template #right-icon><van-switch v-model="workflow" size="20" active-color="#c8102e" /></template>
       </van-cell>
     </van-cell-group>
 

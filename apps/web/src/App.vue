@@ -94,7 +94,8 @@ async function send(text, selection) {
   try {
     const r = await api.chat({ session_id: sessionId.value, text: t, selection })
     sessionId.value = r.session_id
-    push({ role: 'assistant', text: r.reply.text, source: r.reply.source, cards: r.cards, trace: r.trace_id })
+    push({ role: 'assistant', text: r.reply.text, source: r.reply.source, workflow: r.reply.workflow,
+           ms: r.reply.elapsed_ms, cards: r.cards, trace: r.trace_id })
   } catch (e) {
     push({ role: 'assistant', text: `出错了：${e.message}`, source: 'template' })
   } finally {
@@ -172,6 +173,12 @@ async function resetDemo() {
 }
 
 const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统回复' }
+// 气泡下方：这句话是怎么答的、服务端用了多久。固定流程走确定性工作流，毫秒级；开放问题交给模型，要几秒
+function tagText(m) {
+  const how = m.workflow ? '确定性工作流 · 不调模型' : SOURCE_LABEL[m.source]
+  if (m.ms == null) return how
+  return `${how} · ${m.ms < 1000 ? (m.ms / 1000).toFixed(2) : (m.ms / 1000).toFixed(1)} 秒`
+}
 </script>
 
 <template>
@@ -194,7 +201,7 @@ const SOURCE_LABEL = { llm: 'AI 生成', rule: '规则引擎', template: '系统
       <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
         <div v-if="m.text" class="bubble">{{ m.text }}</div>
         <div v-if="m.role === 'assistant' && m.text && m.id" class="tag">
-          {{ SOURCE_LABEL[m.source] }}<span v-if="m.trace" class="replay" @click="openAudit(m.trace)"> · 回放</span>
+          {{ tagText(m) }}<span v-if="m.trace" class="replay" @click="openAudit(m.trace)"> · 回放</span>
         </div>
         <CardHost v-for="(c, i) in m.cards" :key="i" :card="c"
                   @outcome="onOutcome" @modify="onModify" @select="onSelect" />

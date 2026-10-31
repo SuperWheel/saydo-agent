@@ -30,7 +30,8 @@ const EVENTS = {
   provenance_reject: ['金额来源校验不通过', (p) => `「${p.amount_text}」不在用户原话里`],
   grounding_failed: ['事实校验不通过', (p) => p.problem],
   grounding_retry: ['重写后再校验', (p) => (p.ok ? '通过' : p.problem)],
-  assistant_reply: ['助手回复', (p) => `${SOURCE[p.source] || p.source}：${p.text}`],
+  assistant_reply: ['助手回复', (p) => `${p.workflow ? '确定性工作流' : SOURCE[p.source] || p.source}`
+    + `${p.elapsed_ms != null ? `（${p.elapsed_ms} 毫秒）` : ''}：${p.text}`],
   policy_decision: ['策略引擎定级', (p) => (p.block ? `拒绝：${p.block_reason}` : `${LEVEL[p.level]} · ${p.reasons.join('；')}`)],
   breaker_tripped: ['触发熔断', (p) => `${p.reason} → ${BREAKER[p.level]}${p.scope === 'session' ? '（本会话）' : '（用户级）'}`],
   breaker_blocked: ['熔断拦截', (p) => `${p.reason}${p.level in BREAKER ? ' · ' + BREAKER[p.level] : ''}`],

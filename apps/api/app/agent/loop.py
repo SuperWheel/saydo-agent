@@ -7,6 +7,7 @@
 import json
 import re
 import secrets
+import time
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -22,7 +23,7 @@ from ..nlu.transfer import phones_in
 from ..security import breaker, inspect, mask_pii
 from ..tools import REGISTRY, ToolContext, ToolResult, by_llm_name, llm_tool_specs
 from ..tools.bank import get_balance
-from ..tools.bill import rule_turn as bill_rule_turn
+from ..tools.bill import rule_turn as bill_rule_turn, workflow_args as bill_workflow_args
 from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
 from ..tools.card import rule_turn as card_rule_turn
 from ..tools.knowledge import rule_turn as kb_rule_turn
@@ -49,6 +50,8 @@ class TurnResult:
     text: str
     source: str  # llm / rule / template
     cards: list[dict] = field(default_factory=list)
+    workflow: bool = False  # 这一轮走了确定性工作流（不调模型）
+    elapsed_ms: int = 0  # 服务端处理这一轮用的时间，气泡下方显示，和模型路径对比
 
     @property
     def ai_generated(self) -> bool:
@@ -72,6 +75,7 @@ def _recent_user_texts(db: Session, session_id: str, limit: int = 3) -> list[str
 
 def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
                 selection: dict | None = None, channel: str = "app") -> TurnResult:
+    started = time.perf_counter()
     session = _session(db, user_id, session_id, channel)
     trace_id = secrets.token_hex(8)
     guard = inspect(text or "")
@@ -86,6 +90,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     ctx = ToolContext(db=db, user_id=user_id, session=session, trace_id=trace_id,
                       user_texts=_recent_user_texts(db, session.id), channel=channel, injection_flag=guard.suspicious)
 
+    on_workflow = False
     if selection:
         text_out, source = _selection_turn(ctx, selection), "template"
     # 跨场景（WS7）唯一入口：计划的控制语（继续 / 「蛋糕不要了」/ 撤销锁定 / 转人工）、多步请求（进规划器）、
@@ -93,7 +98,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     elif (planned := planner.route(ctx, guard, get_llm if get_settings().llm_ready else None)) is not None:
         text_out, source = planned
     elif (workflow := _fast_path(ctx, guard)) is not None:  # 固定流程（查余额、给我妈转 500、锁卡……）：规则确定性作答，不用等模型
-        text_out, source = _rule_turn(ctx, guard)
+        text_out, source, on_workflow = *_rule_turn(ctx, guard), True
         _record_workflow(ctx, *workflow)
     elif get_settings().llm_ready:
         try:
@@ -109,10 +114,12 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
 
     _void_blocked_cards(ctx)
     db.add(ChatMessage(session_id=session.id, role="assistant", content=text_out, trace_id=trace_id))
-    audit.record(db, trace_id, "assistant_reply", {"source": source, "text": text_out,
-                                                   "cards": [c["type"] for c in ctx.cards]}, session.id)
+    took = round((time.perf_counter() - started) * 1000)
+    audit.record(db, trace_id, "assistant_reply", {"source": source, "text": text_out, "workflow": on_workflow,
+                                                   "elapsed_ms": took, "cards": [c["type"] for c in ctx.cards]}, session.id)
     db.commit()
-    return TurnResult(session_id=session.id, trace_id=trace_id, text=text_out, source=source, cards=ctx.cards)
+    return TurnResult(session_id=session.id, trace_id=trace_id, text=text_out, source=source, cards=ctx.cards,
+                      workflow=on_workflow, elapsed_ms=took)
 
 
 def _void_blocked_cards(ctx: ToolContext) -> None:
@@ -343,11 +350,13 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
 
 # 确定性工作流：规则引擎能完整识别、参数齐全的固定流程，不经过模型。
 # 白名单按回归集实测定：规则模式下这些意图的用例和模型给出的卡片一致。
-# 不在名单里的照常走模型：明细查询（「周末打车比工作日多花多少」规则会答偏）、知识问答、自由分析、规划。
+# 明细查询只在规则接得住整句话时走工作流（`bill.workflow_args`），「周末打车比工作日多花多少」这类规则会答偏的交给模型。
+# 不在名单里的照常走模型：知识问答、自由分析、规划。
 # 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
 WORKFLOW_TOOLS = {
     "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
     "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
+    "bill_query": "bill.query",
     "card:list": "card.list", "card:lock": "card.lock_propose", "card:unlock": "card.unlock_propose",
     "card:report_loss": "card.report_loss_propose", "card:limit": "card.limit_propose",
     "card:virtual_apply": "card.virtual_propose",
@@ -402,6 +411,9 @@ def _fast_path(ctx: ToolContext, guard) -> tuple[str, dict] | None:
         return None
     if key == "sub:cancel" and not names_merchant(text):
         return None
+    if key == "bill_query":
+        args = bill_workflow_args(ctx, text)
+        return None if args is None else ("bill.query", args)
     spec = REGISTRY[WORKFLOW_TOOLS[key]]
     return spec.name, {k: v for k, v in slots.items() if k in spec.parameters.get("properties", {}) and v not in (None, "")}
 
