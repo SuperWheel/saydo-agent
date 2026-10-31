@@ -1,10 +1,11 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { showToast } from 'vant'
-import { adminPassword, api } from './api'
+import { adminPassword, api, entryPass } from './api'
 import { icon } from './icons'
 import AuditTimeline from './components/AuditTimeline.vue'
 import CardHost from './components/CardHost.vue'
+import EntryFace from './components/EntryFace.vue'
 import ModelSettings from './components/ModelSettings.vue'
 import WecomSettings from './components/WecomSettings.vue'
 import RiskPanel from './components/RiskPanel.vue'
@@ -35,15 +36,52 @@ let pwResolve = null
 let waitTimer
 let seq = 1
 
+// 进入前人脸核身：本标签页里有未过期的进入凭证就直接进聊天页，否则先过人脸页（EntryFace）。
+// 凭证过期、后端说无效（重置演示数据）都回到人脸页；聊天记录留在内存里，验证后接着聊
+const entered = ref(!!entryPass.get())
+const entryNotice = ref('')
+const fromHandoff = ref(new URLSearchParams(location.search).has('r')) // 企业微信引导链接打开的，人脸页上提示一句
+let entryTimer
+
+function armEntryExpiry() {
+  clearTimeout(entryTimer)
+  const p = entryPass.get()
+  if (p) entryTimer = setTimeout(() => lockEntry('人脸验证已过期，请重新验证'), p.until - Date.now())
+}
+
+function lockEntry(reason) {
+  entryPass.clear()
+  clearTimeout(entryTimer)
+  entryNotice.value = reason
+  entered.value = false
+  auditOpen.value = false
+  settingsOpen.value = false
+}
+entryPass.onLost((detail) => lockEntry(detail || '请重新完成人脸验证'))
+
+async function onEntered() {
+  entered.value = true
+  entryNotice.value = ''
+  armEntryExpiry()
+  await takeHandoff() // 企业微信引导链接：过了人脸再带入那句话
+  fromHandoff.value = false
+}
+
 const waitText = computed(() => {
   if (waited.value < 3) return '正在理解你的意思…'
   if (waited.value < 8) return `正在查询和核对数据… ${waited.value}s`
   return `模型响应较慢，已等待 ${waited.value}s，请稍候…`
 })
-onUnmounted(() => clearInterval(waitTimer))
+onUnmounted(() => { clearInterval(waitTimer); clearTimeout(entryTimer) })
 
 onMounted(async () => {
-  try { llm.value = (await api.health()).llm } catch { llm.value = null }
+  try {
+    const h = await api.health()
+    llm.value = h.llm
+    if (h.entry_face_required === false) entered.value = true // 后端关了进入前核身（ENTRY_FACE_REQUIRED=false）
+  } catch { llm.value = null }
+  if (!entered.value) return
+  armEntryExpiry()
   await takeHandoff()
 })
 
@@ -98,6 +136,10 @@ async function send(text, selection) {
     push({ role: 'assistant', text: r.reply.text, source: r.reply.source, workflow: r.reply.workflow,
            ms: r.reply.elapsed_ms, cards: r.cards, trace: r.trace_id })
   } catch (e) {
+    if (!entered.value) { // 核身过期 / 演示数据重置，已回到人脸页：撤回这句，验证后原话还在输入框里
+      if (t) { messages.value.pop(); input.value = t }
+      return
+    }
     push({ role: 'assistant', text: `出错了：${e.message}`, source: 'template' })
   } finally {
     sending.value = false
@@ -169,7 +211,7 @@ async function resetDemo() {
   await api.reset()
   sessionId.value = null
   messages.value = messages.value.slice(0, 1)
-  auditOpen.value = false
+  lockEntry('演示数据已重置，请重新完成人脸验证') // 后端已作废之前的进入凭证
   showToast('演示数据已重置')
 }
 
@@ -186,6 +228,8 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
 
 <template>
   <div class="phone">
+    <EntryFace v-if="!entered" :notice="entryNotice" :handoff="fromHandoff" @passed="onEntered" />
+    <template v-else>
     <header class="top">
       <div class="name">言行 <small>AI 银行助手</small></div>
       <div class="sub">
@@ -220,6 +264,7 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
         <van-button type="danger" size="small" round :disabled="!input.trim() || sending" @click="send()">发送</van-button>
       </div>
     </footer>
+    </template>
 
     <van-popup v-model:show="auditOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
       <div class="audit">

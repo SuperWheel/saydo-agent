@@ -16,6 +16,7 @@ const OUTCOME = {
   succeeded: ['执行成功', 'success'], failed: ['执行失败', 'danger'], cancelled: ['已取消', 'default'],
   expired: ['已过期', 'default'], invalidated: ['授权作废', 'warning'], blocked: ['已拦截', 'danger'],
   awaiting_auth: ['待验证', 'warning'], pending: ['待确认', 'warning'], replied: ['仅回复', 'default'],
+  verified: ['核身通过', 'success'], auth_failed: ['核身未通过', 'danger'],
 }
 const flags = (p) => (p.flags?.length ? `标记 ${p.flags.join('、')}` : '')
 
@@ -44,6 +45,8 @@ const EVENTS = {
   auth_challenge: ['发起强验证', (p) => p.factors.map((f) => FACTOR[f] || f).join(' + ')],
   auth_failed: ['验证未通过', (p) => `${FACTOR[p.factor] || p.factor} · 第 ${p.attempts} 次`],
   auth_passed: ['验证通过', (p) => FACTOR[p.factor] || p.factor],
+  entry_face_passed: ['进入前人脸核身通过', (p) => `模拟人脸 · 签发进入凭证 ${p.ttl_s / 60} 分钟有效 · jti ${p.jti}`],
+  entry_face_failed: ['进入前人脸核身未通过', () => '模拟人脸 · 未签发进入凭证'],
   policy_revalidated: ['执行前重新校验', (p) => (p.block ? `拒绝：${p.block_reason}` : `${LEVEL[p.level]}，与出卡时一致`)],
   token_issued: ['签发执行令牌', (p) => `一次性 · 60 秒有效 · jti ${p.jti}`],
   execution: ['工具网关执行', (p) => [p.status === 'succeeded' ? '成功' : p.status, p.txn_no && `流水号 ${p.txn_no}`].filter(Boolean).join(' · ')],
@@ -52,14 +55,14 @@ const EVENTS = {
 }
 const BAD = new Set(['injection_suspected', 'llm_error', 'provenance_reject', 'grounding_failed', 'breaker_tripped',
   'breaker_blocked', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated', 'auth_failed',
-  'execution_failed', 'circuit_open'])
+  'execution_failed', 'circuit_open', 'entry_face_failed'])
 
 const STAGES = [
   ['input', '用户消息', ['user_message', 'injection_suspected']],
   ['intent', '意图 / 工具', ['intent', 'llm_call', 'tool_call', 'llm_error', 'provenance_reject', 'grounding_failed', 'grounding_retry', 'assistant_reply']],
   ['policy', '策略定级', ['policy_decision', 'breaker_tripped', 'breaker_blocked']],
   ['confirm', '确认', ['action_created', 'action_confirmed', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated']],
-  ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed']],
+  ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed', 'entry_face_passed', 'entry_face_failed']],
   ['token', '令牌', ['policy_revalidated', 'token_issued']],
   ['exec', '执行', ['execution', 'execution_failed', 'circuit_open']],
 ]
@@ -82,6 +85,7 @@ function bad(e) {
 function emptyHint(key) {
   const level = rows.value.find((e) => e.event === 'action_created')?.payload.level
   const hasAction = rows.value.some((e) => e.event === 'policy_decision' || e.event === 'breaker_blocked')
+  if (rows.value.some((e) => e.event.startsWith('entry_face'))) return key === 'input' ? '进入 App 前核身，没有对话' : '不涉及'
   if (key === 'policy' && !hasAction) return '本轮没有资金或账户变更'
   if (key === 'auth' && level === 'YELLOW') return '🟡 只需确认，无需强验证'
   return '未发生'

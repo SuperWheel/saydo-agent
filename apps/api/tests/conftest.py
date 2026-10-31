@@ -16,6 +16,7 @@ def _make_client(tmp_path, monkeypatch, *, llm: bool):
     monkeypatch.setenv("ADMIN_PASSWORD", "")  # 不受开发者本机 .env 里口令的影响
     monkeypatch.setenv("WECOM_BOT_ID", "")  # 本机 .env 填了企业微信凭证时，测试也不去连企业微信
     monkeypatch.setenv("WECOM_BOT_SECRET", "")
+    monkeypatch.setenv("ENTRY_FACE_REQUIRED", "true")  # 测试里也校验进入凭证，client 夹具会先过一次人脸
     get_settings.cache_clear()
     clock.reset()
     from app.main import create_app
@@ -29,9 +30,18 @@ def _no_lan(monkeypatch):
     monkeypatch.setattr(netinfo, "lan_ips", lambda: [])
 
 
+def enter(client) -> dict:
+    """进入前人脸核身（模拟），之后这个客户端的请求都带上进入凭证。重置演示数据（/dev/seed）后要重新调一次。"""
+    r = client.post("/api/auth/entry-face", json={"value": "face-ok:entry"})
+    assert r.status_code == 200, r.text
+    client.headers["X-Entry-Token"] = r.json()["token"]
+    return r.json()
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     with _make_client(tmp_path, monkeypatch, llm=False) as c:
+        enter(c)
         yield c
     get_settings.cache_clear()
     clock.reset()
@@ -41,6 +51,7 @@ def client(tmp_path, monkeypatch):
 def llm_client(tmp_path, monkeypatch):
     """模型路径：真实接口换成脚本化的假模型，测试工具循环、事实校验和降级。"""
     with _make_client(tmp_path, monkeypatch, llm=True) as c:
+        enter(c)
         yield c
     get_settings.cache_clear()
     clock.reset()

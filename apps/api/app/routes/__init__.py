@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import audit, clock, llm_setup, wecom_setup
 from ..agent.loop import handle_turn
-from ..auth import actions
+from ..auth import actions, entry
 from ..channels import take_handoff, wecom
 from ..config import get_settings
 from ..core_mock.ledger import is_balanced, ledger_balance
@@ -36,13 +36,25 @@ def require_admin(x_admin_password: str = Header(default="")) -> None:
         raise HTTPException(403, "运营后台未设口令：请在 .env 里设置 ADMIN_PASSWORD")
 
 
-api = APIRouter(prefix="/api")
-admin = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
-dev = APIRouter(prefix="/dev")
-
-
 def current_user_id() -> int:
     return get_settings().demo_user_id
+
+
+def require_entry(x_entry_token: str = Header(default=""), db: Session = Depends(get_db),
+                  user_id: int = Depends(current_user_id)) -> None:
+    """进入前人脸核身（auth/entry.py）：/api 的业务接口都要带进入凭证。ENTRY_FACE_REQUIRED=false 时不校验。"""
+    if not get_settings().entry_face_required:
+        return
+    try:
+        entry.check(db, x_entry_token, user_id)
+    except entry.EntryError as e:
+        raise HTTPException(401, str(e), headers={"X-Entry-Required": "1"}) from e  # 前端据此回到人脸页
+
+
+public = APIRouter(prefix="/api")  # 不需要进入凭证：健康检查、进入前人脸核身本身
+api = APIRouter(prefix="/api", dependencies=[Depends(require_entry)])
+admin = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+dev = APIRouter(prefix="/dev")
 
 
 class ChatIn(BaseModel):
@@ -133,12 +145,29 @@ def handoff(code: str, db: Session = Depends(get_db), user_id: int = Depends(cur
     return {"text": text}
 
 
-@api.get("/health")
+@public.get("/health")
 def health():
     s = get_settings()
     return {"ok": True, "llm": {"ready": s.llm_ready, "provider": s.llm_provider, "model": s.llm_model,
                                 "base_url": s.llm_base_url},
-            "demo_mode": s.demo_mode, "admin_protected": bool(s.admin_password)}
+            "demo_mode": s.demo_mode, "admin_protected": bool(s.admin_password),
+            "entry_face_required": s.entry_face_required}
+
+
+class EntryFaceIn(BaseModel):
+    value: str = Field(max_length=200)  # 模拟活体检测的断言
+
+
+@public.post("/auth/entry-face")
+def entry_face(body: EntryFaceIn, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    """进入前人脸核身（模拟）：通过后签发进入凭证，App 之后的 /api 请求都带上（X-Entry-Token）。"""
+    try:
+        out = entry.verify_face(db, user_id=user_id, value=body.value)
+    except entry.EntryError as e:
+        db.commit()  # 失败事件也要落审计
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    return out
 
 
 # ---------- 运营后台 ----------
@@ -247,7 +276,9 @@ def action_list(db: Session = Depends(get_db)):
 # 按 trace 回放：一轮对话从用户消息到执行结果的全部审计事件都带同一个 trace_id（确认、验证沿用出卡时的 trace）
 _OUTCOME_EVENTS = {"execution": None, "execution_failed": "failed", "action_cancelled": "cancelled",
                    "action_expired": "expired", "action_invalidated": "invalidated", "breaker_blocked": "blocked",
-                   "auth_challenge": "awaiting_auth", "action_created": "pending"}
+                   "auth_challenge": "awaiting_auth", "action_created": "pending",
+                   "entry_face_passed": "verified", "entry_face_failed": "auth_failed"}
+_ENTRY_EVENTS = {"entry_face_passed", "entry_face_failed"}
 
 
 def _trace_summary(trace_id: str, events: list[AuditLog]) -> dict:
@@ -263,7 +294,8 @@ def _trace_summary(trace_id: str, events: list[AuditLog]) -> dict:
             outcome = _OUTCOME_EVENTS[e.event_type] or p.get("status", "succeeded")
         if e.event_type == "injection_suspected":
             flags = p.get("flags", [])
-    return {"trace_id": trace_id, "session_id": events[0].session_id, "text": first.payload.get("text") if first else None,
+    text = first.payload.get("text") if first else ("进入前人脸核身" if events[0].event_type in _ENTRY_EVENTS else None)
+    return {"trace_id": trace_id, "session_id": events[0].session_id, "text": text,
             "started_at": events[0].created_at.isoformat(), "ended_at": events[-1].created_at.isoformat(),
             "events": len(events), "level": level, "outcome": outcome, "flags": flags,
             "breaker": any(e.event_type in ("breaker_tripped", "breaker_blocked") for e in events)}

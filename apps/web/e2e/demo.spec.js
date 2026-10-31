@@ -1,6 +1,39 @@
 // 演示主线（docs/09-演示视频脚本.md）的端到端用例，规则模式下跑。
 // 每个用例开头都重置演示数据：余额 28,650.32，当日还没有转出。
-import { cards, chip, expect, say, test } from './helpers'
+import { cards, chip, expect, passEntryFace, say, test } from './helpers'
+
+test.describe('0 进入前人脸核身', () => {
+  test.use({ enter: false })
+
+  test('打开 App → 人脸页 → 验证 → 进入聊天页；刷新不重验，未核身的接口请求被拒，后台能回放', async ({ page, request }) => {
+    const denied = await request.post('/api/chat', { data: { text: '我还有多少钱' } })
+    expect(denied.status()).toBe(401) // 后端也校验：不带进入凭证调不了对话接口
+
+    await page.goto('/')
+    const face = page.getByTestId('entry-face')
+    await expect(face).toContainText('人脸验证')
+    await expect(face).toContainText('为保护你的账户安全，请先完成人脸验证（演示环境为模拟）')
+    await expect(page.getByText('你好，我是言行')).toHaveCount(0) // 聊天页还没出来
+    await face.getByRole('button', { name: '开始验证' }).click()
+    await expect(face).toContainText('验证通过')
+    await expect(face).toHaveCount(0)
+    await expect(page.getByText('你好，我是言行')).toBeVisible()
+
+    await chip(page, '我还有多少钱')
+    await expect(cards(page, 'balance-card')).toContainText('¥28,650.32')
+
+    await page.reload() // 同一标签页 30 分钟内刷新不用重验
+    await expect(page.getByText('你好，我是言行')).toBeVisible()
+    await expect(page.getByTestId('entry-face')).toHaveCount(0)
+
+    await page.getByRole('button', { name: '运营后台' }).click()
+    const admin = page.locator('.van-popup').filter({ hasText: '运营后台（演示）' })
+    await admin.locator('.trace').filter({ hasText: '进入前人脸核身' }).click()
+    await expect(admin).toContainText('「进入前人脸核身」')
+    await expect(admin.getByText('进入前人脸核身通过', { exact: true })).toBeVisible()
+    await expect(admin).toContainText('签发进入凭证 30 分钟有效')
+  })
+})
 
 test('1 查余额：余额卡合计 28,650.32', async ({ page }) => {
   await chip(page, '我还有多少钱')
@@ -224,7 +257,10 @@ test('8 运营后台：按 trace 回放、校验哈希链、重置演示数据',
   await expect(admin).toContainText(/哈希链完整，共 \d+ 条，逐条重算无篡改/)
 
   await admin.getByRole('button', { name: '重置演示数据' }).click()
-  await expect(page.getByText('演示数据已重置')).toBeVisible()
+  await expect(page.getByText('演示数据已重置', { exact: true })).toBeVisible()
+  // 重置后之前的进入凭证作废，回到人脸页；重新验证后是一段新对话
+  await expect(page.getByTestId('entry-face')).toContainText('演示数据已重置，请重新完成人脸验证')
+  await passEntryFace(page)
   await expect(cards(page, 'receipt-card')).toHaveCount(0)
   await chip(page, '我还有多少钱')
   await expect(cards(page, 'balance-card')).toContainText('¥28,650.32')

@@ -14,7 +14,7 @@ from app.core_mock.seed import (CALENDAR_END, CALENDAR_START, SUBSCRIPTIONS, SWE
 from app.db import new_session
 from app.models import Account, Transaction
 
-from .conftest import say
+from .conftest import enter, say
 from .helpers import BALANCE, after_travel, balance, ledger_ok
 
 
@@ -26,6 +26,7 @@ def rows() -> list[Transaction]:
 def at_date(client, monkeypatch, day: str) -> None:
     monkeypatch.setenv("DEMO_DATE", day)
     assert client.post("/dev/seed").status_code == 200
+    enter(client)  # 重置演示数据后进入凭证作废，重新过一次人脸
 
 
 def kpis(client, text: str) -> dict:
