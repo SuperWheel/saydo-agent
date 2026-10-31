@@ -1,4 +1,4 @@
-.PHONY: install api web dev dev-lan test smoke-llm eval-llm workflow-vs-llm seed
+.PHONY: install api web dev dev-lan demo test smoke-llm eval-llm workflow-vs-llm seed
 
 install:
 	cd apps/api && uv sync
@@ -16,6 +16,11 @@ dev:
 
 # 旧名字，和 make dev 一样
 dev-lan: dev
+
+# 一键演示（和双击「一键启动.command / .bat」一样）：自动装依赖、手机可访问、临时演示数据、演示日期 2026-10-30、
+# 端口被占自动换、打开浏览器。可选参数见 scripts/start.py，如 make demo ARGS="--keep-data --rules"
+demo:
+	uv run --project apps/api python scripts/start.py $(ARGS)
 
 test:
 	cd apps/api && uv run pytest -q

@@ -2,6 +2,19 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "apps/api",
+        "python",
+        "scripts/start.py",
+        "--no-browser"
+      ],
+      "port": 5173
+    },
+    {
       "name": "api",
       "runtimeExecutable": "uv",
       "runtimeArgs": [
@@ -33,17 +46,52 @@
     },
     {
       "name": "web",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "env",
       "runtimeArgs": [
+        "WEB_HOST=0.0.0.0",
+        "npm",
+        "--prefix",
+        "apps/web",
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "api-scratch",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DATABASE_URL=sqlite:///../../data/scratch.db",
+        "DEMO_DATE=2026-10-30",
+        "LLM_ENABLED=false",
+        "WECOM_BOT_ID=",
+        "WECOM_BOT_SECRET=",
+        "uv",
+        "run",
+        "--directory",
+        "apps/api",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8100"
+      ],
+      "port": 8100
+    },
+    {
+      "name": "web-scratch",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "API_BASE=http://127.0.0.1:8100",
+        "npm",
         "--prefix",
         "apps/web",
         "run",
         "dev",
         "--",
-        "--host",
-        "127.0.0.1"
+        "--port",
+        "5180"
       ],
-      "port": 5173
+      "port": 5180
     }
   ]
 }
