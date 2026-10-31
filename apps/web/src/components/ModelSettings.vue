@@ -77,7 +77,7 @@ async function test() {
           <template #label>
             <span :class="p.has_key ? 'ok' : 'none'">{{ p.has_key ? `已填写 · 尾号 ${p.key_tail || '****'}` : '未填写密钥' }}</span>
           </template>
-          <template #right-icon><van-radio :name="p.id" checked-color="#c8102e" /></template>
+          <template #right-icon><van-radio :name="p.id" checked-color="var(--brand)" /></template>
         </van-cell>
       </van-cell-group>
     </van-radio-group>
@@ -86,10 +86,10 @@ async function test() {
       <van-field v-model="apiKey" type="password" autocomplete="off" label="密钥"
                  :placeholder="current?.has_key ? '留空则沿用已填写的密钥' : `粘贴 ${current?.label} 的 API Key`" clearable />
       <van-cell title="启用大模型" label="关闭后只走规则模式（断网演示用）">
-        <template #right-icon><van-switch v-model="enabled" size="20" active-color="#c8102e" /></template>
+        <template #right-icon><van-switch v-model="enabled" size="20" active-color="var(--brand)" /></template>
       </van-cell>
       <van-cell title="确定性工作流" label="固定流程（查余额、转账、查明细……）不调模型，毫秒级；关闭后全部交给模型，用来对比">
-        <template #right-icon><van-switch v-model="workflow" size="20" active-color="#c8102e" /></template>
+        <template #right-icon><van-switch v-model="workflow" size="20" active-color="var(--brand)" /></template>
       </van-cell>
     </van-cell-group>
 
@@ -107,7 +107,7 @@ async function test() {
                  :placeholder="cfg.admin_protected ? '已设置；填写则修改' : '未设置（仅演示模式开放）'" clearable />
     </van-cell-group>
 
-    <div v-for="w in cfg.warnings" :key="w" class="warn">⚠️ {{ w }}</div>
+    <div v-for="w in cfg.warnings" :key="w" class="warn"><IconText :text="`⚠️ ${w}`" /></div>
     <div class="foot">保存位置：{{ cfg.env_file }}{{ cfg.env_file_exists ? '' : '（将新建）' }}。密钥只保存在本机，不会显示、不进审计日志。</div>
   </div>
   <van-loading v-else class="loading" />
@@ -115,21 +115,21 @@ async function test() {
 
 <style scoped>
 .settings { padding-bottom: 8px; }
-.status { margin: 0 16px 6px; padding: 10px 12px; border-radius: 10px; display: flex; flex-direction: column; gap: 2px; }
-.status span { font-size: 12px; color: var(--muted); }
+.status { margin: 0 16px 6px; padding: 10px 12px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 2px; }
+.status span { font-size: var(--fs-xs); color: var(--muted); }
 .status.on { background: var(--green-soft); }
-.status.on b { color: var(--green); }
+.status.on b { color: var(--green-ink); }
 .status.off { background: var(--yellow-soft); }
-.status.off b { color: var(--yellow); }
-.section { font-size: 13px; color: var(--muted); margin: 14px 16px 6px; }
+.status.off b { color: var(--yellow-ink); }
+.section { font-size: var(--fs-sm); color: var(--muted); margin: 14px 16px 6px; }
 .group { margin-top: 10px; }
-.model { color: var(--muted); margin-left: 6px; font-size: 12px; }
-.ok { color: var(--green); }
+.model { color: var(--muted); margin-left: 6px; font-size: var(--fs-xs); }
+.ok { color: var(--green-ink); }
 .none { color: var(--muted); }
 .actions { display: flex; flex-direction: column; gap: 8px; margin: 14px 16px 0; }
-.result { margin: 8px 16px 0; font-size: 13px; word-break: break-all; }
+.result { margin: 8px 16px 0; font-size: var(--fs-sm); word-break: break-all; }
 .result.none { color: var(--red); }
-.warn { margin: 10px 16px 0; font-size: 12px; color: var(--yellow); }
-.foot { margin: 12px 16px 0; font-size: 11px; color: var(--muted); line-height: 1.5; word-break: break-all; }
+.warn { margin: 10px 16px 0; font-size: var(--fs-xs); color: var(--yellow-ink); }
+.foot { margin: 12px 16px 0; font-size: var(--fs-2xs); color: var(--muted); line-height: 1.5; word-break: break-all; }
 .loading { display: flex; justify-content: center; padding: 24px; }
 </style>

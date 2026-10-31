@@ -17,7 +17,7 @@ function buy(b) {
 
 <template>
   <div class="card rec">
-    <div class="card-title"><span>为你筛选的理财产品</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
+    <div class="card-title"><span>为你筛选的理财产品</span><van-tag plain type="success"><IconText text="🟢 自动查询" /></van-tag></div>
     <div class="cond">
       风险承受能力 <b>{{ card.profile.level }}</b> · 可购 {{ card.profile.range }}<span v-if="card.condition"> · {{ card.condition }}</span>
     </div>
@@ -54,23 +54,22 @@ function buy(b) {
 </template>
 
 <style scoped>
-.rec { border-top: 3px solid var(--brand); }
-.cond { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-.cond b { color: var(--text); }
-.item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
-.item { cursor: pointer; }
+.cond { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 8px; }
+.cond b { color: var(--ink); }
+.item { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.item:active { border-color: var(--brand); background: var(--brand-soft); }
 .item + .item { margin-top: 8px; }
-.more { font-size: 12px; color: var(--brand); text-align: right; margin-top: 6px; }
-.how { font-size: 12px; color: var(--muted); margin-top: 8px; }
-.top { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
+.more { font-size: var(--fs-xs); color: var(--brand); text-align: right; margin-top: 6px; }
+.how { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; }
+.top { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: var(--fs-body); }
 .score { color: var(--brand); font-variant-numeric: tabular-nums; }
-.rank { display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; font-style: normal;
-  font-size: 11px; border-radius: 50%; background: var(--brand); color: #fff; margin-right: 6px; }
+.rank { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; font-style: normal;
+  font-size: var(--fs-2xs); border-radius: 50%; background: var(--brand); color: var(--on-brand); margin-right: 6px; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
-.why { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
-.risk { font-size: 12px; color: var(--red); margin-top: 4px; }
-.diff { background: #f6f7fa; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.6; margin-top: 10px; }
-.sec { font-size: 13px; font-weight: 600; margin: 12px 0 2px; }
-.small { font-size: 12px; }
+.why { margin: 4px 0 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.6; }
+.risk { font-size: var(--fs-xs); color: var(--red-ink); margin-top: 4px; }
+.diff { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; font-size: var(--fs-sm); line-height: 1.6; margin-top: 10px; }
+.sec { font-size: var(--fs-sm); font-weight: 600; margin: 12px 0 2px; }
+.small { font-size: var(--fs-xs); }
 .small .k { flex-shrink: 1; }
 </style>

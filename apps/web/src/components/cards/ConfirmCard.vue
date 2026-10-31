@@ -76,11 +76,11 @@ async function act(kind) {
 </script>
 
 <template>
-  <div class="card confirm" :class="{ red: isRed }" data-testid="confirm-card">
+  <div class="card confirm" :class="{ red: isRed, closed: done || card.voided || expired, voided: card.voided && !done }" data-testid="confirm-card">
     <div class="card-title">
       <span>{{ card.title }}</span>
       <van-tag :type="isRed ? 'danger' : 'warning'" size="medium">
-        {{ isRed ? '🔴' : '🟡' }} {{ card.level_label }}
+        <IconText :text="`${isRed ? '🔴' : '🟡'} ${card.level_label}`" />
       </van-tag>
     </div>
     <div v-if="card.warning" class="warning"><van-icon name="warning" /> {{ card.warning }}</div>
@@ -132,19 +132,19 @@ async function act(kind) {
 </template>
 
 <style scoped>
-.confirm { border-top: 3px solid var(--yellow); }
-.confirm.red { border-top-color: var(--red); }
-.amount { margin: 2px 0 8px; }
-.reasons { background: var(--yellow-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 6px; line-height: 1.6; }
-.red .reasons { background: var(--red-soft); }
-.hint { color: var(--red); margin-top: 2px; }
-.warning { background: var(--red); color: #fff; border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
-.edit { padding: 16px 16px 24px; }
-.edit-title { font-size: 16px; font-weight: 600; text-align: center; margin-bottom: 8px; }
-.edit-sec { font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
-.radio { margin-right: 8px; }
-.dates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.date { font-size: 12px; padding: 4px 10px; border-radius: 12px; background: #f4f5f7; cursor: pointer; }
-.date.on { background: var(--brand); color: #fff; }
-.edit-note { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+.amount { margin: 2px 0 var(--space-2); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.voided .amount .money { text-decoration: line-through; text-decoration-thickness: 2px; }
+.reasons { background: var(--yellow-soft); color: var(--yellow-ink); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); margin-top: var(--space-2); line-height: 1.6; }
+.red .reasons { background: var(--red-soft); color: var(--red-ink); }
+.hint { color: var(--red-ink); font-weight: 600; margin-top: 2px; }
+.warning { display: flex; gap: 6px; background: var(--red); color: var(--on-brand); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); line-height: 1.6; margin-bottom: 10px; }
+.warning .van-icon { margin-top: 3px; }
+.edit { padding: var(--space-4) var(--space-4) var(--space-6); }
+.edit-title { font-size: var(--fs-sheet); font-weight: 600; text-align: center; margin-bottom: var(--space-2); }
+.edit-sec { font-size: var(--fs-sm); color: var(--muted); margin: var(--space-3) 0 6px; }
+.radio { margin-right: var(--space-2); }
+.dates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-4); }
+.date { font-size: var(--fs-xs); line-height: 18px; padding: 6px 12px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink); cursor: pointer; }
+.date.on { background: var(--brand); color: var(--on-brand); }
+.edit-note { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--space-2); line-height: 1.6; }
 </style>

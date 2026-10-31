@@ -101,21 +101,21 @@ function buy() {
 .sheet { padding: 4px 16px 24px; }
 .loading { display: flex; justify-content: center; padding: 32px; }
 .err { color: var(--red); padding: 24px 0; text-align: center; }
-.name { font-size: 17px; font-weight: 600; }
+.name { font-size: var(--fs-sheet); font-weight: 600; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
-.yield { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--muted); }
-.yield b { font-size: 20px; color: var(--brand); font-variant-numeric: tabular-nums; }
-.intro { font-size: 13px; line-height: 1.6; margin-top: 6px; }
-.sec { font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
-.spark { width: 100%; height: 60px; background: #f6f7fa; border-radius: 8px; }
+.yield { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
+.yield b { font-size: var(--fs-money-md); color: var(--brand); font-variant-numeric: tabular-nums; }
+.intro { font-size: var(--fs-sm); line-height: 1.6; margin-top: 6px; }
+.sec { font-size: var(--fs-sm); font-weight: 600; margin: 16px 0 6px; }
+.spark { width: 100%; height: 60px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .spark polyline { fill: none; stroke: var(--brand); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .returns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; text-align: center; }
-.returns div { background: #f6f7fa; border-radius: 8px; padding: 6px 0; font-size: 12px; color: var(--muted); }
-.returns b { display: block; font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
-.disclosure { font-size: 12px; color: var(--red); line-height: 1.6; margin-top: 8px; }
-.blocked { font-size: 13px; color: var(--red); background: #fdecee; border-radius: 8px; padding: 8px 10px; line-height: 1.6; }
+.returns div { background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 0; font-size: var(--fs-xs); color: var(--muted); }
+.returns b { display: block; font-size: var(--fs-body); color: var(--ink); font-variant-numeric: tabular-nums; }
+.disclosure { font-size: var(--fs-xs); color: var(--red); line-height: 1.6; margin-top: 8px; }
+.blocked { font-size: var(--fs-sm); color: var(--red); background: var(--red-soft); border-radius: var(--radius-sm); padding: 8px 10px; line-height: 1.6; }
 .chips { display: flex; gap: 6px; margin: 8px 0 12px; }
-.chip { font-size: 12px; padding: 3px 10px; border-radius: 12px; background: #f4f5f7; cursor: pointer; }
-.note { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 8px; }
-.meta { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.chip { font-size: var(--fs-xs); padding: 3px 10px; border-radius: var(--radius-pill); background: var(--surface-2); cursor: pointer; }
+.note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; margin-top: 8px; }
+.meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 8px; }
 </style>

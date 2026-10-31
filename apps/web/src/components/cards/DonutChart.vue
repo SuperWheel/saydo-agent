@@ -46,8 +46,8 @@ const arcs = computed(() => {
 .donut { display: flex; align-items: center; gap: 12px; margin: 4px 0 6px; }
 .ring { width: 112px; height: 112px; flex-shrink: 0; }
 .cap { font-size: 8px; fill: var(--muted); }
-.center { font-size: 10px; font-weight: 700; fill: var(--text); font-variant-numeric: tabular-nums; }
-.legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; font-size: 13px; }
+.center { font-size: 10px; font-weight: 700; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; font-size: var(--fs-sm); }
 .legend li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .legend i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 .legend .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

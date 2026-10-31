@@ -1,4 +1,6 @@
 <script setup>
+import { icon } from '../../icons'
+
 defineProps({ card: { type: Object, required: true } })
 </script>
 
@@ -6,7 +8,7 @@ defineProps({ card: { type: Object, required: true } })
   <div class="card receipt" data-testid="receipt-card">
     <div class="watermark">{{ card.watermark }}</div>
     <div class="status" :class="card.status">
-      <van-icon :name="card.status === 'succeeded' ? 'checked' : 'warning'" size="28" />
+      <van-icon :name="card.status === 'succeeded' ? icon('receipt-success', 'checked') : icon('receipt-pending', 'warning')" size="36" />
       <span>{{ card.status_label }}</span>
     </div>
     <div v-if="card.amount" class="money center">¥{{ card.amount }}</div>
@@ -16,12 +18,13 @@ defineProps({ card: { type: Object, required: true } })
 </template>
 
 <style scoped>
-.receipt { border-top: 3px solid var(--green); }
 .watermark {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: rgba(200, 16, 46, 0.08); font-size: 26px; font-weight: 800; transform: rotate(-18deg); pointer-events: none;
+  color: var(--brand); opacity: 0.07; font-size: 26px; font-weight: 800; transform: rotate(-18deg); pointer-events: none;
 }
-.status { display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: 16px; color: var(--green); }
-.status:not(.succeeded) { color: var(--yellow); }
-.center { text-align: center; margin: 6px 0 8px; }
+.status { display: flex; flex-direction: column; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-title); color: var(--green-ink); padding-top: var(--space-1); }
+.status .van-icon { color: var(--green-ink); }
+.status:not(.succeeded) { color: var(--yellow-ink); }
+.status:not(.succeeded) .van-icon { color: var(--yellow-ink); }
+.center { text-align: center; margin: var(--space-1) 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 </style>

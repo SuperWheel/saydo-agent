@@ -1,0 +1,118 @@
+/* 言行 SayDo 设计变量：色板、字号、间距、圆角、阴影，以及 Vant 主题变量。
+   组件只引用这里的变量，不写零散的色值和尺寸。规范说明见设计系统 Artifact「言行 SayDo 设计系统」。 */
+:root {
+  /* 品牌与中性色 */
+  --brand: #c8102e;        /* 用户气泡、主按钮、链接、选中态 */
+  --brand-strong: #a30d25; /* 按下态 */
+  --brand-soft: #fcebee;   /* 快捷语、平台标签、柔和按钮底 */
+  --ink: #1d2330;          /* 正文、标题、金额 */
+  --ink-2: #4a5160;        /* 次要正文（后台详情） */
+  --muted: #697080;        /* 说明、行标签、元信息 */
+  --faint: #a3a9b5;        /* 占位、禁用 */
+  --line: #e6e9ef;         /* 卡内分隔、描边 */
+  --line-soft: #f0f2f5;    /* 列表行细分隔 */
+  --bg: #f2f4f7;           /* 聊天区背景 */
+  --surface: #ffffff;      /* 卡片、气泡、弹层 */
+  --surface-2: #f5f6f9;    /* 卡片内凹陷信息框 */
+  --backdrop: #dde2ea;     /* 手机框外的背景 */
+  --on-brand: #ffffff;
+
+  /* 风险色：纯色做图标 / 进度条，-ink 做文字，-soft / -tint 做底 */
+  --green: #389e0d;
+  --green-ink: #237804;
+  --green-soft: #f0f9e8;
+  --yellow: #d48806;
+  --yellow-ink: #874d00;
+  --yellow-soft: #fff7e6;
+  --yellow-tint: #ffe7ba;
+  --red: #cf1322;
+  --red-ink: #a8071a;
+  --red-soft: #fff1f0;
+  --info: #2a62c9;
+  --info-soft: #edf3fe;
+
+  /* 字体与字号 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --fs-money: 28px;   /* 主金额 */
+  --fs-money-md: 20px;/* 合计框、KPI */
+  --fs-sheet: 17px;   /* 弹层标题 */
+  --fs-title: 15px;   /* 卡片标题、气泡 */
+  --fs-body: 14px;    /* 卡片行 */
+  --fs-sm: 13px;      /* 说明框 */
+  --fs-xs: 12px;      /* 元信息、标签 */
+  --fs-2xs: 11px;     /* 来源标签、哈希 */
+
+  /* 间距、圆角、阴影 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-bubble: 18px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(20, 30, 50, 0.04), 0 2px 12px rgba(20, 30, 50, 0.05);
+  --shadow-float: 0 4px 20px rgba(20, 30, 50, 0.10);
+
+  /* Vant 主题 */
+  --van-primary-color: var(--info);
+  --van-danger-color: var(--brand);
+  --van-success-color: var(--green-ink);
+  --van-warning-color: var(--yellow);
+  --van-text-color: var(--ink);
+  --van-text-color-2: var(--muted);
+  --van-text-color-3: var(--faint);
+  --van-border-color: var(--line);
+  --van-background: var(--bg);
+  --van-background-2: var(--surface);
+  --van-active-color: var(--surface-2);
+  --van-radius-md: var(--radius-sm);
+  --van-radius-lg: var(--radius-md);
+  --van-button-small-height: 36px;
+  --van-button-small-font-size: var(--fs-body);
+  --van-button-small-padding: 0 var(--space-3);
+  --van-button-mini-height: 26px;
+  --van-button-mini-font-size: var(--fs-xs);
+  --van-button-default-height: 44px;
+  --van-button-default-font-size: 15px;
+  --van-tag-font-size: var(--fs-xs);
+  --van-tag-line-height: 18px;
+  --van-tag-padding: 0 6px;
+  --van-tag-medium-padding: 2px 8px;
+  --van-tag-radius: var(--radius-pill);
+  --van-tag-plain-background: transparent;
+  --van-cell-font-size: var(--fs-body);
+  --van-cell-group-inset-radius: var(--radius-md);
+  --van-popup-round-radius: var(--radius-lg);
+  --van-dialog-radius: var(--radius-lg);
+  --van-tab-active-text-color: var(--ink);
+  --van-tab-text-color: var(--muted);
+  --van-tabs-bottom-bar-color: var(--brand);
+  --van-radio-checked-icon-color: var(--brand);
+  --van-switch-on-background: var(--brand);
+  --van-loading-spinner-color: var(--faint);
+}
+
+/* 徽章：plain 一律浅底无描边；实心 🟡 用浅琥珀底深字，实心 🔴 保持红底白字 */
+.van-tag { font-weight: 500; }
+.van-tag--plain::before { display: none; }
+.van-tag--plain.van-tag--success { background: var(--green-soft); color: var(--green-ink); }
+.van-tag--plain.van-tag--warning { background: var(--yellow-soft); color: var(--yellow-ink); }
+.van-tag--plain.van-tag--danger { background: var(--red-soft); color: var(--red-ink); }
+.van-tag--plain.van-tag--primary { background: var(--info-soft); color: var(--info); }
+.van-tag--plain.van-tag--default { background: var(--surface-2); color: var(--muted); }
+.van-tag--warning:not(.van-tag--plain) { background: var(--yellow-tint); color: var(--yellow-ink); }
+.van-tag--danger:not(.van-tag--plain) { background: var(--red); }
+.van-tag--success:not(.van-tag--plain) { background: var(--green-ink); }
+.van-tag--default:not(.van-tag--plain) { background: var(--surface-2); color: var(--muted); }
+
+/* 按钮：品牌色描边按钮改成柔和底色，不加描边 */
+.van-button { font-weight: 500; }
+.van-button--danger.van-button--plain { background: var(--brand-soft); border-color: var(--brand-soft); color: var(--brand); }
+.van-button--danger:not(.van-button--plain):active { background: var(--brand-strong); border-color: var(--brand-strong); }
+.van-button--default { border-color: var(--line); }

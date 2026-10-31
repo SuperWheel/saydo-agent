@@ -7,7 +7,7 @@ defineProps({ card: { type: Object, required: true } })
 
 <template>
   <div class="card report">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success">🟢 自动生成</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success"><IconText text="🟢 自动生成" /></van-tag></div>
     <div class="kpis">
       <div v-for="k in card.kpis" :key="k.label" class="kpi">
         <div class="label">{{ k.label }}</div>
@@ -49,23 +49,22 @@ defineProps({ card: { type: Object, required: true } })
 </template>
 
 <style scoped>
-.report { border-top: 3px solid var(--brand); }
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.kpi { background: #f6f7fa; border-radius: 8px; padding: 8px 10px; }
-.kpi .label { color: var(--muted); font-size: 12px; }
-.kpi .value { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
-.line { font-size: 13px; color: var(--muted); margin-top: 8px; }
-.line b { color: var(--text); }
-.sec { font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
+.kpi { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.kpi .label { color: var(--muted); font-size: var(--fs-xs); }
+.kpi .value { font-size: var(--fs-sheet); font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.line { font-size: var(--fs-sm); color: var(--muted); margin-top: 8px; }
+.line b { color: var(--ink); }
+.sec { font-size: var(--fs-sm); font-weight: 600; margin: 12px 0 4px; }
 .rank { display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; font-style: normal;
-  font-size: 11px; border-radius: 50%; background: var(--brand-soft); color: var(--brand); margin-right: 6px; }
+  font-size: var(--fs-2xs); border-radius: 50%; background: var(--brand-soft); color: var(--brand); margin-right: 6px; }
 .v { font-variant-numeric: tabular-nums; }
-.anomaly { border-left: 3px solid var(--yellow); background: var(--yellow-soft); border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
-.anomaly.high { border-left-color: var(--red); background: var(--red-soft); }
-.anomaly .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; }
+.anomaly { background: var(--yellow-soft); border-radius: var(--radius-sm); padding: 8px 10px; margin-top: 6px; }
+.anomaly.high { background: var(--red-soft); }
+.anomaly .top { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-sm); font-weight: 600; }
 .anomaly .top span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .anomaly small { font-weight: 400; color: var(--muted); }
-.anomaly .reason { font-size: 12px; line-height: 1.5; margin-top: 2px; }
-.none { font-size: 13px; color: var(--green); }
-.insights { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+.anomaly .reason { font-size: var(--fs-xs); line-height: 1.5; margin-top: 2px; }
+.none { font-size: var(--fs-sm); color: var(--green-ink); }
+.insights { margin: 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.7; }
 </style>

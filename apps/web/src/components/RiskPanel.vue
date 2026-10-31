@@ -70,7 +70,7 @@ defineExpose({ refresh: load })
         <b>全局只读开关</b>
         <div class="sub">开启后所有写操作暂停，锁卡、挂失等止损操作不受影响</div>
       </div>
-      <van-switch :model-value="killOn" size="20" active-color="#cf1322" @update:model-value="toggleKill" />
+      <van-switch :model-value="killOn" size="20" active-color="var(--red)" @update:model-value="toggleKill" />
     </div>
 
     <div class="sec">
@@ -133,26 +133,26 @@ defineExpose({ refresh: load })
 </template>
 
 <style scoped>
-.kill { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: #f7f8fa; }
-.sub { font-size: 11px; color: var(--muted); margin-left: 6px; font-weight: 400; }
+.kill { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px; border-radius: var(--radius-md); background: var(--surface-2); }
+.sub { font-size: var(--fs-2xs); color: var(--muted); margin-left: 6px; font-weight: 400; }
 .kill .sub { margin: 2px 0 0; }
-.sec { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; font-size: 14px; }
-.empty { font-size: 13px; color: var(--muted); }
-.trip { border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.sec { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; font-size: var(--fs-body); }
+.empty { font-size: var(--fs-sm); color: var(--muted); }
+.trip { background: var(--red-soft); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 8px; }
 .trip-head { display: flex; align-items: center; gap: 8px; }
-.reason { font-weight: 600; font-size: 14px; }
-.kv { font-size: 12px; color: #4a5160; margin-top: 4px; }
-.notice { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+.reason { font-weight: 600; font-size: var(--fs-body); }
+.kv { font-size: var(--fs-xs); color: var(--ink-2); margin-top: 4px; }
+.notice { font-size: var(--fs-xs); color: var(--muted); margin-top: 4px; line-height: 1.5; }
 .trip-btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
-.circuit { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 0; }
-.mono { font-family: ui-monospace, Menlo, monospace; }
+.circuit { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); padding: 4px 0; }
+.mono { font-family: var(--font-mono); }
 .err { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.event { display: flex; gap: 8px; font-size: 12px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.event { display: flex; gap: 8px; font-size: var(--fs-xs); padding: 3px 0; border-bottom: 1px dashed var(--line); }
 .at { color: var(--muted); flex-shrink: 0; }
 .kind { flex-shrink: 0; font-weight: 600; }
 .kind.hot { color: var(--red); }
-.kind.hot.ok { color: var(--green); }
-.det { color: #4a5160; word-break: break-all; }
-.rule { font-size: 12px; color: #4a5160; padding: 3px 0; }
-.appeal { font-size: 12px; margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--yellow-soft); color: #874d00; }
+.kind.hot.ok { color: var(--green-ink); }
+.det { color: var(--ink-2); word-break: break-all; }
+.rule { font-size: var(--fs-xs); color: var(--ink-2); padding: 3px 0; }
+.appeal { font-size: var(--fs-xs); margin-top: 8px; padding: 8px; border-radius: var(--radius-sm); background: var(--yellow-soft); color: var(--yellow-ink); }
 </style>

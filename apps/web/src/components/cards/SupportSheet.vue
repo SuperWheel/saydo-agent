@@ -3,6 +3,7 @@
 // → 核实通过由「客服」解除（后端 security/support.py 调 breaker.release，审计记操作人和核实记录）；说不是本人就保持冻结，建议锁卡 / 挂失。
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../../api'
+import { icon } from '../../icons'
 
 const props = defineProps({ tripId: { type: String, required: true } })
 const emit = defineEmits(['released', 'say', 'close'])
@@ -107,7 +108,7 @@ async function submit(selfOperated, identity = '') {
         <van-button block round plain data-testid="support-no" @click="answer(false)">{{ s.no }}</van-button>
       </template>
       <van-button v-else-if="step === 'identity' || step === 'face' || step === 'retry'" block round type="danger"
-                  icon="contact" :loading="step === 'face'" loading-text="人脸比对中…" data-testid="support-face"
+                  :icon="icon('face-id', 'contact')" :loading="step === 'face'" loading-text="人脸比对中…" data-testid="support-face"
                   @click="face">{{ step === 'retry' ? '重新验证' : '开始模拟人脸识别' }}</van-button>
       <van-loading v-else-if="step === 'busy'" size="20" class="center">客服核实中…</van-loading>
       <template v-else-if="step === 'released'">
@@ -128,24 +129,24 @@ async function submit(selfOperated, identity = '') {
 
 <style scoped>
 .sheet { padding: 4px 16px 16px; display: flex; flex-direction: column; height: 100%; }
-.title { font-size: 17px; font-weight: 600; padding-right: 32px; }
-.banner { margin-top: 6px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--yellow-soft); color: #874d00; }
-.info { margin-top: 8px; font-size: 13px; line-height: 1.6; background: #f6f7fa; border-radius: 10px; padding: 8px 10px; }
+.title { font-size: var(--fs-sheet); font-weight: 600; line-height: 24px; padding: 12px 32px 0 0; }
+.banner { margin-top: 8px; font-size: var(--fs-xs); padding: 6px 10px; border-radius: var(--radius-sm); background: var(--yellow-soft); color: var(--yellow-ink); }
+.info { margin-top: 8px; font-size: var(--fs-sm); line-height: 1.6; background: var(--surface-2); border-radius: var(--radius-md); padding: 10px 12px; }
 .info .k { color: var(--muted); margin-right: 8px; }
-.info .auto { color: var(--green); }
+.info .auto { color: var(--green-ink); }
 .chat { flex: 1; overflow-y: auto; padding: 8px 0; }
-.queue { display: flex; align-items: center; gap: 8px; justify-content: center; color: var(--muted); font-size: 13px; padding: 24px 0; }
-.sys { text-align: center; font-size: 12px; color: var(--muted); margin: 8px 0; }
+.queue { display: flex; align-items: center; gap: 8px; justify-content: center; color: var(--muted); font-size: var(--fs-sm); padding: 24px 0; }
+.sys { text-align: center; font-size: var(--fs-xs); color: var(--muted); margin: 8px 0; }
 .msg { display: flex; flex-direction: column; margin: 8px 0; }
 .msg.user { align-items: flex-end; }
-.who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
-.bubble { max-width: 86%; padding: 8px 10px; border-radius: 10px; font-size: 14px; line-height: 1.55; background: #f2f3f5; }
-.msg.user .bubble { background: var(--user-bubble); color: #fff; }
-.ev { font-size: 12px; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #dcdfe6; }
+.who { font-size: var(--fs-2xs); color: var(--muted); margin: 0 0 3px 4px; }
+.bubble { max-width: 86%; padding: 9px 12px; border-radius: var(--radius-bubble); border-bottom-left-radius: 6px; font-size: var(--fs-body); line-height: 1.55; background: var(--surface-2); }
+.msg.user .bubble { background: var(--brand); color: var(--on-brand); border-bottom-left-radius: var(--radius-bubble); border-bottom-right-radius: 6px; }
+.ev { font-size: var(--fs-xs); margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line); }
 .ev .at { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
 .actions { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
 .center { justify-content: center; }
-.done { text-align: center; color: var(--green); font-weight: 600; }
-.kept { text-align: center; color: var(--red); font-size: 13px; }
-.meta { font-size: 11px; color: var(--muted); margin-top: 8px; text-align: center; }
+.done { text-align: center; color: var(--green-ink); font-weight: 600; }
+.kept { text-align: center; color: var(--red-ink); font-size: var(--fs-sm); }
+.meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 8px; text-align: center; }
 </style>

@@ -6,7 +6,7 @@ defineProps({ card: { type: Object, required: true } })
 
 <template>
   <div class="card" data-testid="knowledge-card">
-    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary">📖 知识库</van-tag></div>
+    <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="primary"><IconText text="📖 知识库" /></van-tag></div>
     <div v-for="(it, i) in card.items" :key="it.id" class="item" :class="{ first: i === 0 }">
       <div class="q">{{ it.title }}</div>
       <div class="text">{{ it.text }}</div>
@@ -19,7 +19,7 @@ defineProps({ card: { type: Object, required: true } })
 <style scoped>
 .item { padding: 8px 0; border-top: 1px solid var(--line); }
 .item.first { border-top: none; padding-top: 2px; }
-.q { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
-.text { font-size: 13px; line-height: 1.6; }
-.disclaimer { color: var(--muted); font-size: 12px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.q { font-weight: 600; font-size: var(--fs-body); margin-bottom: 4px; }
+.text { font-size: var(--fs-sm); line-height: 1.6; }
+.disclaimer { color: var(--muted); font-size: var(--fs-xs); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 </style>

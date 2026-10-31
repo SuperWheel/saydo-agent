@@ -37,6 +37,5 @@ defineProps({ card: { type: Object, required: true } })
 </template>
 
 <style scoped>
-.automation { border-top: 3px solid var(--brand); }
-.sec { font-size: 12px; color: var(--muted); margin-top: 8px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.sec { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 </style>

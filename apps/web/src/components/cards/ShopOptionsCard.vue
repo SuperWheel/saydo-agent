@@ -36,18 +36,19 @@ function pick(p) {
 </template>
 
 <style scoped>
-.shop { border-top: 3px solid var(--brand); }
-.item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; }
+.item { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.item:active { border-color: var(--brand); background: var(--brand-soft); }
+
 .item + .item { margin-top: 8px; }
-.top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-body); }
 .price { color: var(--brand); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.rank { display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; font-style: normal;
-  font-size: 11px; border-radius: 50%; background: var(--brand); color: #fff; margin-right: 6px; }
-.note { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 4px; }
-.shop-line { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-top: 6px; }
-.platform { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--brand-soft); color: var(--brand); }
-.partner { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
-.delivery { font-size: 12px; color: var(--muted); margin-top: 4px; }
-.more { font-size: 12px; color: var(--brand); text-align: right; margin-top: 2px; }
-.how { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.rank { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; font-style: normal;
+  font-size: var(--fs-2xs); border-radius: 50%; background: var(--brand); color: var(--on-brand); margin-right: 6px; }
+.note { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); margin-top: 4px; }
+.shop-line { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); margin-top: 6px; }
+.platform { font-size: var(--fs-2xs); padding: 1px 6px; border-radius: var(--radius-xs); background: var(--brand-soft); color: var(--brand); }
+.partner { font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius-xs); padding: 0 4px; }
+.delivery { font-size: var(--fs-xs); color: var(--muted); margin-top: 4px; }
+.more { font-size: var(--fs-xs); color: var(--brand); font-weight: 500; text-align: right; margin-top: 2px; }
+.how { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; }
 </style>

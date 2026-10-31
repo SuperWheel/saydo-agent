@@ -40,7 +40,6 @@ async function simulatePay(share) { // 演示模式：模拟对方付款
 </template>
 
 <style scoped>
-.aa { border-top: 3px solid var(--brand); }
 .share .v { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .total { border-top: 1px dashed var(--line); margin-top: 4px; padding-top: 8px; }
 </style>

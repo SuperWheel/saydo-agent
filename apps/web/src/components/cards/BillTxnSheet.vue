@@ -89,27 +89,27 @@ const net = computed(() => ['消费', '支出'].includes(head.value?.kind)) // �
 
 <style scoped>
 .sheet { padding: 4px 16px 24px; }
-.title { font-size: 17px; font-weight: 600; padding-right: 32px; }
-.period { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
-.chip { background: #f4f6fa; border-radius: 4px; padding: 0 6px; font-size: 12px; }
-.sum { background: #f6f7fa; border-radius: 10px; padding: 8px 10px; margin: 10px 0 4px; }
+.title { font-size: var(--fs-sheet); font-weight: 600; padding-right: 32px; }
+.period { font-size: var(--fs-sm); color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.chip { background: var(--surface-2); border-radius: var(--radius-xs); padding: 0 6px; font-size: var(--fs-xs); }
+.sum { background: var(--surface-2); border-radius: var(--radius-md); padding: 8px 10px; margin: 10px 0 4px; }
 .sum > div:first-child { display: flex; justify-content: space-between; align-items: baseline; }
-.sum .k { color: var(--muted); font-size: 13px; }
-.sum .money { font-size: 20px; }
-.refund-sum { font-size: 12px; color: var(--green); margin-top: 2px; }
+.sum .k { color: var(--muted); font-size: var(--fs-sm); }
+.sum .money { font-size: var(--fs-money-md); }
+.refund-sum { font-size: var(--fs-xs); color: var(--green-ink); margin-top: 2px; }
 .err { color: var(--red); padding: 24px 0; text-align: center; }
 .day { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; background: var(--surface);
-  font-size: 12px; color: var(--muted); padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
+  font-size: var(--fs-xs); color: var(--muted); padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
 .day .sub { font-variant-numeric: tabular-nums; }
-.txn { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f3f4f7; }
+.txn { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
 .l { min-width: 0; }
-.name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.meta-line { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.tag { margin-left: 4px; padding: 0 4px; border-radius: 3px; background: #f4f6fa; }
-.tag.warn { background: var(--yellow-soft); color: var(--yellow); }
-.tag.back { background: var(--green-soft); color: var(--green); }
+.name { font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta-line { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; }
+.tag { margin-left: 4px; padding: 0 4px; border-radius: var(--radius-xs); background: var(--surface-2); }
+.tag.warn { background: var(--yellow-soft); color: var(--yellow-ink); }
+.tag.back { background: var(--green-soft); color: var(--green-ink); }
 .amt { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-.amt.in { color: var(--green); }
-.empty { color: var(--muted); font-size: 13px; text-align: center; padding: 16px 0; }
-.meta { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.amt.in { color: var(--green-ink); }
+.empty { color: var(--muted); font-size: var(--fs-sm); text-align: center; padding: 16px 0; }
+.meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 8px; }
 </style>
