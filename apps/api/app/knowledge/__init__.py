@@ -9,7 +9,9 @@
   「本行（演示）业务规则」是比赛原型参数，和代码里的实际参数一致，两者冲突时以代码为准；商户取消路径是团队整理的「一般路径」，未向商户核实。
 - 加载时扫描注入特征（security.inspect），命中的条目不入库，记在 REJECTED 里。
 - 检索：中文按字的二元组切分，英文和数字按词，BM25 打分；最佳条目的分数和查询词覆盖率都过门槛（或覆盖率很高）才算「查到」，
-  否则返回空结果，由上层如实说没查到，不让模型用常识补充。没有向量模型，不联网。
+  否则返回空结果，由上层如实说没查到，不让模型用常识补充。
+- 可选的向量通道（embedding.py）：配了 EMBEDDING_PROVIDER 时，BM25 和余弦相似度按 RRF 混合排序，「查到」要同时过
+  BM25 门槛和向量相似度下限（或覆盖率过宽松门槛、相似度很高）；没配置、向量没就绪、超时或出错时和纯 BM25 一字不差。
 """
 
 import math
@@ -24,6 +26,7 @@ import yaml
 
 from ..core_mock.wealth import PRODUCTS, RISK_LABEL, pct
 from ..security import inspect
+from . import embedding
 
 KB_DIR = Path(__file__).parent / "kb"
 SOURCE_PREFIX = "演示知识库"
@@ -38,6 +41,15 @@ MIN_SCORE = 10.0  # 最佳条目的 BM25 分数
 MIN_COVERAGE = 0.15  # 查询词（IDF 加权）被最佳条目覆盖的比例；扩库到 100 条后从 0.12 调到 0.15（评测集里命中题最低约 0.18，超范围题最高约 0.12）
 SURE_COVERAGE = 0.6  # 短而准的问法（「R2 是什么意思」）分数低但几乎全被覆盖，覆盖率过这个数也算查到；超范围问题最高约 0.3
 RELATIVE_CUTOFF = 0.6  # 第二、三条命中的分数至少是第一条的这个比例，否则不带上
+
+# 混合检索（只在配了向量通道时生效）。两个相似度阈值是保守初值：下限只挡明显无关的，SIM_SURE 很高、很少放行；
+# 还没用真实向量在 evals/kb.yaml 上校准，换向量模型后跑 scripts/kb_eval.py（会打印每题的相似度）再调
+SIM_FLOOR = 0.3  # BM25 判为查到时，最相近条目的余弦相似度还要过这个下限
+SIM_SURE = 0.85  # BM25 没过门槛、但覆盖率过 LOOSE_COVERAGE 且相似度过这个数，也算查到（换了说法、字面重合少）
+LOOSE_COVERAGE = 0.1  # 低于 MIN_COVERAGE；超范围题最高约 0.12，所以还要靠很高的相似度一起把关
+SIM_MARGIN = 0.05  # 向量侧候选：相似度和第一名相差不超过这个数
+RRF_K = 60  # 倒数排名融合：1 / (RRF_K + BM25 名次) + 1 / (RRF_K + 向量名次)
+DOC_SUMMARY = 200  # 条目向量用标题 + 问法 + 正文前这么多字
 
 
 @dataclass(frozen=True)
@@ -72,6 +84,9 @@ class Entry:
 class SearchResult:
     hits: list[tuple[Entry, float]] = field(default_factory=list)
     coverage: float = 0.0  # 最佳条目对查询词的覆盖率（0–1）
+    mode: str = "bm25"  # bm25 / hybrid（这一问用上了向量）
+    similarity: float | None = None  # 混合模式下最相近条目的余弦相似度
+    fallback: str = ""  # 配了向量通道但这一问没用上的原因（timeout / 异常类名），写审计用
 
     @property
     def entries(self) -> list[Entry]:
@@ -240,8 +255,23 @@ def _index() -> _Index:
     return _Index(docs, tfs, lens, sum(lens) / max(len(lens), 1), df)
 
 
+def _doc_text(e: Entry) -> str:
+    return f"{e.title}。{'；'.join(e.q)}。{e.body[:DOC_SUMMARY]}"
+
+
+@lru_cache
+def doc_texts() -> tuple[str, ...]:
+    """送去算条目向量的文本，和 _index().docs 一一对应。"""
+    return tuple(_doc_text(e) for e in _index().docs)
+
+
+def warm_embeddings(block: bool = False) -> bool:
+    """配了向量通道时预先算好条目向量（启动时后台跑；评测脚本 block=True）。返回是否已就绪。"""
+    return embedding.enabled() and embedding.doc_vectors(doc_texts(), block=block) is not None
+
+
 def search(query: str, top_k: int = 3) -> SearchResult:
-    """返回命中的条目（按分数从高到低，最多 top_k 条）。覆盖率低于 MIN_COVERAGE 时 hits 为空。"""
+    """返回命中的条目（按分数从高到低，最多 top_k 条）。没过「查到」门槛时 hits 为空。"""
     idx = _index()
     q = list(dict.fromkeys(tokens(query)))
     if not q or not idx.docs:
@@ -259,7 +289,34 @@ def search(query: str, top_k: int = 3) -> SearchResult:
         return SearchResult()
     total = sum(idx.idf(t) for t in q)
     coverage = round(sum(idx.idf(t) for t in q if t in idx.tfs[best]) / total, 3)
-    if (scores[best] < MIN_SCORE or coverage < MIN_COVERAGE) and coverage < SURE_COVERAGE:
-        return SearchResult(coverage=coverage)
+    lexical_ok = (scores[best] >= MIN_SCORE and coverage >= MIN_COVERAGE) or coverage >= SURE_COVERAGE
+
+    fallback = ""
+    if embedding.enabled() and (vecs := embedding.doc_vectors(doc_texts())) is not None:
+        qv, fallback = embedding.query_vector(query)
+        if qv is not None:
+            return _hybrid(idx, scores, order, coverage, lexical_ok, [embedding.cosine(qv, v) for v in vecs], top_k)
+
+    if not lexical_ok:
+        return SearchResult(coverage=coverage, fallback=fallback)
     hits = [(idx.docs[i], round(scores[i], 3)) for i in order[:top_k] if scores[i] >= scores[best] * RELATIVE_CUTOFF]
-    return SearchResult(hits=hits, coverage=coverage)
+    return SearchResult(hits=hits, coverage=coverage, fallback=fallback)
+
+
+def _hybrid(idx: _Index, scores: list[float], order: list[int], coverage: float, lexical_ok: bool,
+            sims: list[float], top_k: int) -> SearchResult:
+    """BM25 名次和向量名次做倒数排名融合；门槛由 BM25 覆盖率和向量相似度共同决定。"""
+    vorder = sorted(range(len(sims)), key=lambda i: -sims[i])
+    top_sim = round(sims[vorder[0]], 4)
+    ok = (lexical_ok and top_sim >= SIM_FLOOR) or (coverage >= LOOSE_COVERAGE and top_sim >= SIM_SURE)
+    if not ok:
+        return SearchResult(coverage=coverage, mode="hybrid", similarity=top_sim)
+    brank = {i: r for r, i in enumerate(order, 1)}
+    vrank = {i: r for r, i in enumerate(vorder, 1)}
+    best = scores[order[0]]
+    cands = {i for i in order[:top_k * 2] if scores[i] > 0 and scores[i] >= best * RELATIVE_CUTOFF}
+    cands |= {i for i in vorder[:top_k * 2] if sims[i] >= top_sim - SIM_MARGIN}
+    fused = {i: 1 / (RRF_K + brank[i]) + 1 / (RRF_K + vrank[i]) for i in cands}
+    ranked = sorted(cands, key=lambda i: -fused[i])[:top_k]
+    return SearchResult(hits=[(idx.docs[i], round(fused[i], 5)) for i in ranked], coverage=coverage,
+                        mode="hybrid", similarity=top_sim)

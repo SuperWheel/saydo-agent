@@ -6,7 +6,7 @@
 条文里的数字随工具结果交给事实校验（agent/grounding.py 从工具结果里收集事实数字），照条文作答的数字都能通过。
 """
 
-from .. import knowledge
+from .. import audit, knowledge
 from ..cards import notice_card
 from ..policy import Risk
 from . import ToolContext, ToolResult, bank_tool
@@ -23,9 +23,11 @@ def _first_sentence(text: str) -> str:
     return text.split("。")[0].rstrip("；，") + "。"
 
 
-def lookup(query: str) -> ToolResult:
+def lookup(query: str, ctx: ToolContext | None = None) -> ToolResult:
     query = (query or "").strip()[:MAX_QUERY]
     found = knowledge.search(query)
+    if found.fallback and ctx is not None:  # 配了向量通道但这一问超时 / 出错，只用了 BM25
+        audit.record(ctx.db, ctx.trace_id, "kb_embedding_fallback", {"reason": found.fallback})
     if not found.hits:
         return ToolResult({"status": "no_hit", "message": NO_HIT}, {**notice_card(NO_HIT), "kb_no_hit": True})
     items = [e.view() for e in found.entries]
@@ -51,9 +53,9 @@ def lookup(query: str) -> ToolResult:
     }, "required": ["query"]},
 )
 def kb_search(ctx: ToolContext, query: str) -> ToolResult:
-    return lookup(query)
+    return lookup(query, ctx)
 
 
 def rule_turn(ctx: ToolContext, text: str) -> ToolResult:
     """规则兜底模式：整句原话就是查询。"""
-    return lookup(text)
+    return lookup(text, ctx)

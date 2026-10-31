@@ -1,7 +1,8 @@
 """知识问答评测（WS9，F-GN-14）：命中率（Hit@3）、超范围拒答率、个人数据走工具。
 
 用法：
-  uv run python scripts/kb_eval.py          只测检索（确定性，不耗 API）
+  uv run python scripts/kb_eval.py          只测检索（不耗模型 API）；.env 配了 EMBEDDING_PROVIDER 时测 BM25 + 向量混合检索
+  uv run python scripts/kb_eval.py --bm25   只测检索，强制纯 BM25（和混合模式对比用）
   uv run python scripts/kb_eval.py --llm    用 .env 里的真实模型走完整对话：该查知识库的调用了 kb.search、
                                             知识卡里有应命中的条目；超范围的不出知识卡；个人数据调对应工具、不查知识库
 用例在 evals/kb.yaml。命中率或拒答率低于 90%、或个人数据问题走了知识库时退出码为 1。
@@ -37,10 +38,12 @@ def offline_case(case: dict) -> tuple[bool, str]:
 
     found = search(case["ask"])
     ids = [e.id for e in found.entries]
+    sim = f"，相似度 {found.similarity:.2f}" if found.similarity is not None else ""
+    note = f"命中 {ids or '无'}（覆盖率 {found.coverage:.2f}{sim}{'，向量没用上：' + found.fallback if found.fallback else ''}）"
     if case["kind"] == "hit":
-        return any(w in ids for w in case["want"]), f"命中 {ids or '无'}（覆盖率 {found.coverage:.2f}）"
+        return any(w in ids for w in case["want"]), note
     if case["kind"] == "oos":
-        return not ids, f"命中 {ids or '无'}（覆盖率 {found.coverage:.2f}）"
+        return not ids, note
     intent = rule_intent(case["ask"]).intent
     return intent != "faq" and not ids, f"规则意图 {intent}，知识库命中 {ids or '无'}"
 
@@ -70,6 +73,8 @@ def llm_case(client, case: dict) -> tuple[bool, str]:
 
 def main() -> int:
     use_llm = "--llm" in sys.argv
+    if "--bm25" in sys.argv:
+        os.environ["EMBEDDING_PROVIDER"] = ""
     if use_llm:
         os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/kb_eval.db"
         # 同一个企业微信机器人只能有一个长连接：评测时不连，免得把正在演示的后端踢下线
@@ -90,7 +95,16 @@ def main() -> int:
         print(f"模型：{s.llm_provider} / {s.llm_model}，{len(cases)} 条用例\n")
         client = TestClient(create_app()).__enter__()
     else:
-        print(f"只测检索，{len(cases)} 条用例\n")
+        from app.knowledge import warm_embeddings
+
+        s = get_settings()
+        if not s.embedding_ready:
+            mode = "纯 BM25"
+        elif warm_embeddings(block=True):
+            mode = f"BM25 + 向量混合（{s.embedding_provider} / {s.embedding_model}）"
+        else:
+            mode = f"配了向量通道（{s.embedding_provider} / {s.embedding_model}）但条目向量没算出来，实际是纯 BM25"
+        print(f"只测检索，{mode}，{len(cases)} 条用例\n")
 
     rows, t0 = [], time.perf_counter()
     for case in cases:

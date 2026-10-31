@@ -9,3 +9,7 @@ apps/web/dist/
 .DS_Store
 apps/web/test-results/
 apps/web/playwright-report/
+
+# 知识库向量缓存（knowledge/embedding.py），按条目内容哈希重算
+data/kb_embeddings.json
+data/kb_embeddings.tmp

@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -28,6 +28,21 @@ PROVIDERS: dict[str, dict] = {
     },
 }
 
+# 知识库检索的向量通道（knowledge/embedding.py，可选）。EMBEDDING_PROVIDER 留空就只走 BM25。
+# siliconflow：硅基流动 Qwen/Qwen3-Embedding-8B（取 1024 维），EMBEDDING_API_KEY 没填时用 SILICONFLOW_API_KEY；
+# zhipu：智谱 embedding-3，没填时复用 ZHIPUAI_API_KEY；openai：任意 OpenAI 兼容 /embeddings，地址、模型、密钥自己填
+_QWEN3_QUERY = "Instruct: Given a bank customer's question, retrieve knowledge base entries that answer it\nQuery:"
+EMBEDDING_PROVIDERS: dict[str, dict] = {
+    "siliconflow": {"embedding_base_url": "https://api.siliconflow.cn/v1", "embedding_model": "Qwen/Qwen3-Embedding-8B",
+                    "embedding_dimensions": 1024, "embedding_query_instruction": _QWEN3_QUERY,
+                    "key_field": "siliconflow_api_key"},
+    "zhipu": {"embedding_base_url": "https://open.bigmodel.cn/api/paas/v4", "embedding_model": "embedding-3",
+              "key_field": "zhipuai_api_key"},
+    "openai": {"key_field": None},
+}
+_QWEN3_ONLY = ("embedding_dimensions", "embedding_query_instruction")
+_EMBEDDING_ALIASES = {"glm": "zhipu", "zhipuai": "zhipu", "silicon": "siliconflow", "off": "", "none": "", "bm25": ""}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")  # .env 由 get_settings 按 ENV_FILE 传入
@@ -47,6 +62,16 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     deepseek_api_key: str = ""
     zhipuai_api_key: str = Field(default="", validation_alias=AliasChoices("ZHIPUAI_API_KEY", "GLM_API_KEY"))
+
+    # 知识库向量检索（可选）：留空 = 只用 BM25，行为和不配一样
+    embedding_provider: str = ""
+    embedding_model: str | None = None
+    embedding_base_url: str | None = None
+    embedding_api_key: str = ""
+    embedding_dimensions: int | None = None  # 输出维度（Qwen3、embedding-3 支持）；不填用预设，预设也没有就不传
+    embedding_query_instruction: str | None = None  # 查询前面加的检索指令（Qwen3-Embedding 预设自带）；写一个空格表示不加
+    siliconflow_api_key: str = ""
+    embedding_timeout_s: float = 2.0  # 查询取向量的时限，超时就这一问只用 BM25
 
     database_url: str = f"sqlite:///{REPO_ROOT / 'data' / 'dev.db'}"
     app_secret: str = "dev-only-secret-change-me"
@@ -68,6 +93,13 @@ class Settings(BaseSettings):
     wecom_bind_user_id: int | None = None  # 企业微信用户默认绑定到哪个演示用户；不填用 demo_user_id
     wecom_allowed_users: str = ""  # 逗号分隔的企业微信 userid 白名单；空 = 企业内成员都可以用
 
+    @field_validator("embedding_model", "embedding_base_url", "embedding_dimensions", "embedding_query_instruction",
+                     mode="before")
+    @classmethod
+    def _blank_is_preset(cls, v):
+        # 设置页切换供应商时会写 EMBEDDING_MODEL= 这样的空值：空值表示用预设。查询指令要关掉时写一个空格
+        return None if isinstance(v, str) and v == "" else v
+
     @model_validator(mode="after")
     def _apply_provider(self) -> "Settings":
         self.llm_provider = self.llm_provider.strip().lower()
@@ -78,6 +110,22 @@ class Settings(BaseSettings):
             if key in type(self).model_fields and getattr(self, key) is None:
                 setattr(self, key, value)
         self.llm_api_key = self.llm_api_key or getattr(self, preset["key_field"])
+        p = self.embedding_provider.strip().lower()
+        self.embedding_provider = _EMBEDDING_ALIASES.get(p, p)
+        if self.embedding_provider:
+            emb = EMBEDDING_PROVIDERS.get(self.embedding_provider)
+            if emb is None:
+                raise ValueError(f"EMBEDDING_PROVIDER 只支持 {' / '.join(EMBEDDING_PROVIDERS)}（留空 = 只用 BM25），"
+                                 f"收到 {self.embedding_provider!r}")
+            self.embedding_model = self.embedding_model or emb.get("embedding_model")
+            for key, value in emb.items():
+                # 维度和查询指令只对 Qwen3-Embedding 系列有意义；换成别的模型（如 BAAI/bge-m3）就不带
+                if key in _QWEN3_ONLY and "qwen3-embedding" not in (self.embedding_model or "").lower():
+                    continue
+                if key in type(self).model_fields and getattr(self, key) is None:
+                    setattr(self, key, value)
+            if not self.embedding_api_key and emb["key_field"]:
+                self.embedding_api_key = getattr(self, emb["key_field"])
         return self
 
     @property
@@ -87,6 +135,11 @@ class Settings(BaseSettings):
     @property
     def llm_ready(self) -> bool:
         return self.llm_enabled and bool(self.llm_api_key)
+
+    @property
+    def embedding_ready(self) -> bool:
+        return bool(self.embedding_provider and self.embedding_model and self.embedding_base_url
+                    and self.embedding_api_key)
 
     @property
     def wecom_ready(self) -> bool:

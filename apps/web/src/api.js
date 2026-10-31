@@ -80,4 +80,7 @@ export const api = {
   testLlm: () => post('/admin/llm-config/test'),
   wecomConfig: () => get('/admin/wecom-config'),
   saveWecomConfig: (body) => post('/admin/wecom-config', body),
+  embeddingConfig: () => get('/admin/embedding-config'),
+  saveEmbeddingConfig: (body) => post('/admin/embedding-config', body),
+  testEmbedding: () => post('/admin/embedding-config/test'),
 }

@@ -9,6 +9,7 @@ from .channels import wecom
 from .config import get_settings
 from .core_mock.seed import catch_up, seed
 from .db import Base, init_engine, new_session
+from .knowledge import warm_embeddings
 from .routes import admin, api, dev, public
 from .tools import bank  # noqa: F401  注册银行工具
 from .tools import bill  # noqa: F401  注册账单分析工具
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
             seed(db)
             catch_up(db)
         await wecom.restart(get_settings())  # 企业微信渠道（可选）：没配 BotID / Secret 就不启动
+        warm_embeddings()  # 知识库向量通道（可选）：没配 EMBEDDING_PROVIDER 就什么都不做；配了在后台算条目向量
         yield
         await wecom.shutdown()
 

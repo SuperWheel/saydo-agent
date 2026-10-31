@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock, llm_setup, wecom_setup
+from .. import audit, clock, embedding_setup, llm_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions, entry
 from ..channels import take_handoff, wecom
@@ -265,6 +265,38 @@ async def wecom_config_save(body: WecomConfigIn):
                                                    "app_h5_url": body.app_h5_url.strip()})
         db.commit()
     return wecom_setup.status()
+
+
+class EmbeddingConfigIn(BaseModel):
+    provider: str = Field(default="", max_length=32)
+    api_key: str = Field(default="", max_length=200)  # 留空 = 沿用已有密钥
+    model: str = Field(default="", max_length=100)  # 留空 = 用供应商预设
+    base_url: str = Field(default="", max_length=200)
+    disable: bool = False  # 停用向量检索，只用 BM25（密钥保留）
+
+
+@admin.get("/embedding-config")
+def embedding_config():
+    return embedding_setup.status()
+
+
+@admin.post("/embedding-config")
+def embedding_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)):
+    try:
+        out = embedding_setup.save(body.provider, body.api_key, body.model, body.base_url, body.disable)
+    except llm_setup.ConfigError as e:
+        raise HTTPException(400, str(e)) from e
+    # 审计只记改了什么，不记密钥
+    audit.record(db, "admin", "embedding_config", {"provider": "" if body.disable else body.provider.strip().lower(),
+                                                   "disable": body.disable, "key_updated": bool(body.api_key.strip()),
+                                                   "model": body.model.strip(), "base_url": body.base_url.strip()})
+    db.commit()
+    return out
+
+
+@admin.post("/embedding-config/test")
+def embedding_config_test():
+    return embedding_setup.test_connection()
 
 
 @admin.get("/audit")
