@@ -79,6 +79,18 @@ def test_card_bind_is_workflow(llm_client, workflow, words, cards):
     assert [c["type"] for c in r["cards"]] == cards and f.calls == [] and r["reply"]["workflow"] is True
 
 
+@pytest.mark.parametrize("words, cards", [
+    ("解绑银行卡", ["notice"]),  # 还没有绑定进来的卡：直接说明，不调模型
+    ("删除银行卡", ["notice"]),
+    ("解绑尾号6688的卡", ["notice"]),  # 主账户卡不能解绑，说明原因
+    ("把这张卡解绑", ["notice"]),
+])
+def test_card_unbind_is_workflow(llm_client, workflow, words, cards):
+    f = workflow(text("不该被调用"))
+    r = say(llm_client, words)
+    assert [c["type"] for c in r["cards"]] == cards and f.calls == [] and r["reply"]["workflow"] is True
+
+
 @pytest.mark.parametrize("words", [
     "周末打车比工作日多花多少",  # 明细查询：规则只会算总额，答偏题
     "这个月比上个月多花了多少",  # 比较
@@ -177,3 +189,13 @@ def test_spending_stats_period(llm_client, workflow):
     f = workflow(text("不该被调用"))
     card = say(llm_client, "给我最近七天的支出统计")["cards"][0]
     assert f.calls == [] and card["type"] == "bill_categories" and card["period"] == "近7天"
+
+
+def test_card_unbind_confirm_is_workflow(llm_client, workflow):
+    """有绑定进来的卡：「解绑尾号1554的卡」直接出 🔴 解绑确认卡，不调模型。"""
+    from .test_card_unbind import P14, add_pool_cards
+    add_pool_cards(P14)
+    f = workflow(text("不该被调用"))
+    r = say(llm_client, f"解绑尾号{P14.tail}的卡")
+    c = r["cards"][0]
+    assert c["type"] == "confirm" and c["level"] == "RED" and f.calls == [] and r["reply"]["workflow"] is True

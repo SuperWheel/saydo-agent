@@ -1,4 +1,4 @@
-"""卡片管理（WS3）：查卡 🟢、锁卡 🟡、解锁 / 解除挂失 🔴、挂失 🔴、交易限制（收紧 🟡 / 放宽 🔴）、限额虚拟卡 🟡、绑卡 🔴。
+"""卡片管理（WS3）：查卡 🟢、锁卡 🟡、解锁 / 解除挂失 🔴、挂失 🔴、交易限制（收紧 🟡 / 放宽 🔴）、限额虚拟卡 🟡、绑卡 / 解绑 🔴。
 
 设计要点是不对称：收紧保护的操作门槛低，放松保护的操作门槛高。锁卡、挂失是止损操作（stop_loss），收紧交易限制也算（stop_loss_if），熔断开着也能办。
 收紧还是放宽由系统比对卡片当前设置算出（规则 card_loosen），模型只传「改哪一项、改成什么」。
@@ -16,13 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import audit
-from ..auth.actions import ActionError, PolicyEnv, base_context, propose_action
+from ..auth.actions import ACTIVE, ActionError, PolicyEnv, base_context, expire_stale, propose_action
 from ..cards import SOURCE_CORE, action_display, notice_card
 from ..clock import now
 from ..core_mock import cards as core
 from ..core_mock.ledger import LedgerError
 from ..flags import kill_switch_on
-from ..models import Account, Card, CardReveal, User
+from ..models import Account, Card, CardReveal, PendingAction, User
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, card_amount_text
 from ..nlu import card_hint as hint_in
@@ -31,7 +31,7 @@ from ..security import breaker, mask_pii
 from . import ToolContext, ToolResult, bank_tool
 
 KIND_LABEL = {"debit": "借记卡", "credit": "信用卡", "virtual": "虚拟卡"}
-STATUS_LABEL = {"active": "正常", "locked": "已临时锁定", "lost": "已挂失"}
+STATUS_LABEL = {"active": "正常", "locked": "已临时锁定", "lost": "已挂失", "unbound": "已解绑"}  # 解绑是软删除，卡片列表不再显示
 SWITCHES = {"overseas": "境外交易", "online": "无卡支付（线上）", "atm": "ATM 取现"}
 AMOUNTS = {"per_txn": "单笔限额", "daily": "单日限额"}
 SETTING_LABEL = SWITCHES | AMOUNTS
@@ -48,6 +48,9 @@ OPS = {
                     "kinds": ("debit", "credit")},
     "limit": {"tool": "card.limit_set", "verb": "修改交易限制", "ask": "要修改哪张卡的交易限制？", "status": ("active", "locked"),
               "kinds": ("debit", "credit", "virtual")},
+    # 只能解绑通过绑卡加进来的卡（bound_only）；锁定、挂失的绑定卡也能解绑
+    "unbind": {"tool": "card.unbind", "verb": "解绑", "ask": "要解绑哪张卡？", "status": ("active", "locked", "lost"),
+               "kinds": ("debit", "credit"), "bound_only": True},
 }
 OP_OF_TOOL = {v["tool"]: k for k, v in OPS.items()} | {"card.virtual_create": "virtual_apply", "card.bind": "bind"}
 
@@ -62,7 +65,13 @@ _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 # ---------- 查找与展示 ----------
 
 def _user_cards(db: Session, user_id: int) -> list[Card]:
-    return list(db.scalars(select(Card).where(Card.user_id == user_id).order_by(Card.id)))
+    """用户名下的卡，不含已解绑的。"""
+    return list(db.scalars(select(Card).where(Card.user_id == user_id, Card.status != "unbound").order_by(Card.id)))
+
+
+def _is_bound(c: Card) -> bool:
+    """是不是通过绑卡加进来的（卡号在模拟卡池里）。本行开立的主账户卡、信用卡和虚拟卡都不是。"""
+    return c.card_no in core.POOL_BY_NO
 
 
 def resolve_cards(cards: list[Card], hint: str | None) -> list[Card]:
@@ -129,6 +138,8 @@ def _set_question(ctx: ToolContext, question: dict | None) -> None:
 
 
 def _why_not(op: str, c: Card) -> str:
+    if op == "unbind":
+        return _not_unbindable(c)
     if c.status == "lost" and op != "unlock":
         return f"{_label(c)}已挂失，原卡已停用。" + ("" if op == "report_loss" else "如需恢复，可以办理解除挂失。")
     if op == "lock" and c.status == "locked":
@@ -153,7 +164,8 @@ def _pick(ctx: ToolContext, op: str, card_hint: str | None, *, card_ids: list[in
         msg = f"没有找到「{mask_pii(card_hint or '')}」对应的卡。"
         return ToolResult({"status": "card_not_found", "message": msg}, notice_card(msg, "warning"))
     rule = OPS[op]
-    ok = [c for c in found if c.status in rule["status"] and c.kind in rule["kinds"]]
+    ok = [c for c in found if c.status in rule["status"] and c.kind in rule["kinds"]
+          and (not rule.get("bound_only") or _is_bound(c))]
     if not ok:
         msg = _why_not(op, found[0]) if len(found) == 1 else f"你名下没有可以{rule['verb']}的卡。"
         return ToolResult({"status": "not_applicable", "message": msg, "cards": [_view(c) for c in found]},
@@ -194,7 +206,7 @@ REVEAL_MAX_ATTEMPTS = 3
 
 def _owned(db: Session, user_id: int, card_id: int) -> Card:
     card = db.get(Card, card_id)
-    if card is None or card.user_id != user_id:
+    if card is None or card.user_id != user_id or card.status == "unbound":
         raise ActionError(404, "没有这张卡")
     return card
 
@@ -231,6 +243,7 @@ def card_detail(db: Session, user_id: int, card_id: int) -> dict:
             "status": c.status, "status_label": STATUS_LABEL[c.status], "card_no_masked": core.masked_no(c.card_no),
             "bank": p.bank, "money": money, "rows": rows, "limits": _limit_rows(c) + _extra_rows(c),
             "bound": bool(bound and p.bank != core.HOME_BANK),
+            "unbind": _unbind_view(db, c),
             "reveal": {"factors": ["face"], "ttl_s": REVEAL_TTL_S,
                        "note": "查看完整卡号需要本人人脸验证；关闭详情后再看要重新验证"},
             "as_of": now().strftime("%Y-%m-%d %H:%M"), "source": SOURCE_CORE}
@@ -562,6 +575,95 @@ def _bind_problem(db: Session, args: dict, user_id: int) -> str | None:
     return None
 
 
+# ---------- 解绑 🔴 ----------
+# 只能解绑通过绑卡加进来的卡。本行开立的主账户卡是工资、定时转账、心愿罐、代扣和理财的扣款账户
+# （这些业务都挂在 accounts 上，绑定卡没有账户，当不了付款卡），不能在线解绑。
+# 解绑会让本人失去这张卡的管理入口（看不到、锁不了），盗号后也常见先解绑原卡，所以和绑卡一样是 🔴（规则 card_unbind）
+
+def _not_unbindable(c: Card) -> str:
+    if c.kind == "virtual":
+        return f"{_label(c)}是虚拟卡，不能解绑；不想用可以锁卡。"
+    if c.account_id is not None:
+        return (f"{_label(c)}是本行开户的主账户卡，工资、定时转账、心愿罐、代扣和理财都从它扣款，不能在线解绑；"
+                "如需销户请携带身份证件到网点办理。")
+    return f"{_label(c)}是本行开立的卡，不是绑定进来的，不能解绑；不想用可以锁卡。"
+
+
+def _unbind_problems(db: Session, c: Card, *, exclude: PendingAction | None = None) -> list[str]:
+    """解绑前要办完的事。exclude：执行前重新校验时排除解绑动作自身。"""
+    if not _is_bound(c):
+        return [_not_unbindable(c).rstrip("。")]
+    problems = []
+    pending = [a for a in db.scalars(select(PendingAction).where(PendingAction.user_id == c.user_id,
+                                                                PendingAction.status.in_(ACTIVE)))
+               if a.args.get("card_id") == c.id and a.tool != "card.unbind" and (exclude is None or a.id != exclude.id)]
+    if pending:
+        verbs = "、".join(dict.fromkeys(a.display.get("verb", "操作") for a in pending))
+        problems.append(f"这张卡还有待确认的{verbs}（确认卡还没办完），请先确认或取消")
+    if c.kind == "credit" and (owed := (c.credit_limit_fen or 0) - (c.available_fen or 0)) > 0:
+        problems.append(f"这张信用卡还有 ¥{fmt_yuan(owed)} 未还清，还清后才能解绑")
+    return problems
+
+
+def _unbind_view(db: Session, c: Card) -> dict:
+    """详情弹层上的「解绑此卡」：能不能点、不能点的原因。点了以后后端照样完整校验一遍。"""
+    if not _is_bound(c):
+        return {"allowed": False, "reason": _not_unbindable(c)}
+    problems = _unbind_problems(db, c)
+    return {"allowed": not problems, "reason": "；".join(problems) + "。" if problems else None}
+
+
+def _named_banks(cards: list[Card], text: str) -> list[int] | None:
+    """话里点了发卡行（「解绑工商银行那张」）：按银行缩小候选。没点名返回 None。"""
+    def names(c: Card) -> tuple[str, ...]:
+        bank = core.POOL_BY_NO[c.card_no].bank
+        return bank, core.SHORT_BANK.get(bank, bank), bank.removesuffix("银行")
+    hit = [c.id for c in cards if _is_bound(c) and any(n in text for n in names(c))]
+    return hit or None
+
+
+@bank_tool(
+    name="card.unbind_propose", domain="card", base_risk=Risk.GREEN,
+    description="解绑一张通过绑卡加进来的银行卡，生成确认卡（需要强验证）。本行开户的主账户卡不能解绑，系统会说明原因。"
+                "知道是哪张卡就填 card_hint；不知道就不填，系统会展示可解绑的卡让用户选。",
+    capability="解绑银行卡", examples=("解绑尾号1554的卡",),
+    parameters={"type": "object", "properties": {"card_hint": _CARD_HINT_PARAM}},
+)
+def propose_unbind(ctx: ToolContext, card_hint: str | None = None, *, card_ids: list[int] | None = None,
+                   card_id: int | None = None) -> ToolResult:
+    """card_id：卡片详情里点「解绑此卡」的那张。"""
+    expire_stale(ctx.db, ctx.user_id)  # 过期的确认卡不算未完成事项
+    cards = _user_cards(ctx.db, ctx.user_id)
+    if card_id is not None:
+        card_ids = [card_id] if any(c.id == card_id for c in cards) else []
+    elif card_ids is None and ctx.user_texts:
+        card_ids = _named_banks(cards, ctx.user_texts[0])
+    if card_ids == []:
+        msg = "没有找到这张卡，可能已经解绑。"
+        return ToolResult({"status": "not_applicable", "message": msg}, notice_card(msg))
+    if card_ids is None and not card_hint and not any(_is_bound(c) for c in cards):
+        msg = "你还没有绑定进来的卡。本行开立的卡不能在这里解绑；想绑一张，可以说「我要绑一张新卡」。"
+        return ToolResult({"status": "not_applicable", "message": msg}, notice_card(msg))
+    picked = _pick(ctx, "unbind", card_hint, card_ids=card_ids)
+    if isinstance(picked, ToolResult):
+        return picked
+    c = picked
+    if problems := _unbind_problems(ctx.db, c):
+        msg = f"{_label(c)}暂时不能解绑：" + "；".join(problems) + "。"
+        return ToolResult({"status": "blocked", "message": msg}, notice_card(msg, "warning"))
+    pool, count = core.POOL_BY_NO[c.card_no], len(cards)
+    display = action_display(title="解绑确认", verb="解绑", summary=f"解绑{pool.bank}{KIND_LABEL[c.kind]}（尾号{c.tail}）", rows=[
+        ["发卡银行", pool.bank], ["卡种", pool.card_class], ["卡号", core.masked_no(c.card_no)],
+        ["当前状态", STATUS_LABEL[c.status]],
+        ["解绑后", "从卡片列表移除，不能再在这里查看、锁卡、调整限额"],
+        ["不受影响", "卡片本身和发卡行账户、余额"], ["重新绑定", "以后可以随时重新绑定（需要强验证）"],
+        ["已绑定", f"{count} 张 → {count - 1} 张（上限 {core.MAX_CARDS} 张）"]],
+        fields={"op": "unbind", "card_tail": c.tail, "bank": pool.bank})
+    return propose_action(ctx, tool="card.unbind", args={"card_id": c.id, "card_tail": c.tail, "from_status": c.status},
+                          display=display, data={**_view(c), "bank": pool.bank,
+                                                 "tip": "解绑需要强验证。解绑后卡片从列表移除，发卡行账户不受影响。"})
+
+
 # ---------- 写工具：只能由网关凭执行令牌调用 ----------
 
 def _card_context(tool: str):
@@ -589,6 +691,8 @@ def _card_context(tool: str):
             problem = "卡片不存在"
         elif card.status != args["from_status"]:
             problem = "卡片状态已变化"
+        elif tool == "card.unbind":
+            problem = "；".join(_unbind_problems(db, card, exclude=env.exclude)) or None
         elif tool == "card.limit_set":
             problem = _limit_problem(card, args)
             facts["direction"] = _direction(args["setting"], args["before"], args["value"])
@@ -601,7 +705,7 @@ def _card_context(tool: str):
 
 def _load_card(db: Session, args: dict, user_id: int) -> Card:
     card = db.get(Card, args["card_id"])
-    if card is None or card.user_id != user_id:
+    if card is None or card.user_id != user_id or card.status == "unbound":
         raise LedgerError("卡片校验失败")
     return card
 
@@ -705,6 +809,24 @@ def bind_card(db: Session, args: dict, *, idempotency_key: str, user_id: int) ->
                              ["生效时间", f"{now():%Y-%m-%d %H:%M:%S}"], ["查看", "说「查看我的银行卡」，点卡片看详情"]]}
 
 
+@bank_tool(
+    name="card.unbind", domain="card", base_risk=Risk.RED, side_effect=True, llm_visible=False,
+    policy_context=_card_context("card.unbind"), description="解绑银行卡。只能由工具网关凭执行令牌调用。",
+)
+def unbind_card(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:
+    card = db.get(Card, args["card_id"])
+    if card is None or card.user_id != user_id or not _is_bound(card):
+        raise LedgerError("卡片校验失败")
+    if card.status != "unbound":  # 已经解绑：幂等返回
+        if card.status != args["from_status"]:
+            raise LedgerError("卡片状态已变化")
+        card.status = "unbound"  # 软删除：审计、看卡号记录还指着这一行；卡池里那张卡可以重新绑定
+    pool = core.POOL_BY_NO[card.card_no]
+    return {"status": "succeeded", "card_tail": card.tail,
+            "receipt_rows": [["已解绑", f"{pool.bank}{KIND_LABEL[card.kind]}（尾号{card.tail}）"],
+                             ["生效时间", f"{now():%Y-%m-%d %H:%M:%S}"], ["重新绑定", "说「我要绑一张新卡」"]]}
+
+
 # ---------- 规则兜底（模型不可用时）----------
 
 def rule_turn(ctx: ToolContext, intent, text: str) -> str | None:
@@ -750,6 +872,8 @@ def _run(ctx: ToolContext, op: str, card_hint: str | None, card_ids: list[int] |
             return propose_virtual(ctx, p.get("amount_text"), p.get("merchant"), p.get("one_time", False))
         case "bind":
             return propose_bind(ctx, p.get("tail"))
+        case "unbind":
+            return propose_unbind(ctx, card_hint, card_ids=card_ids)
     raise ValueError(op)
 
 

@@ -143,6 +143,13 @@ rules:
     elevate_to: RED
     reason: "向从未转过账的收款人设置定时转账，需要本人强验证"
 
+  # 解绑：本人会失去这张卡的管理入口，盗号后也常见先解绑原卡；只能解绑绑定进来的卡，主账户卡在策略上下文里硬拦截
+  - id: card_unbind
+    tool_in: [card.unbind]
+    when: {op: unbind}
+    elevate_to: RED
+    reason: "解绑后这张卡不能再在这里查看和管理，需要本人强验证"
+
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000
   reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"

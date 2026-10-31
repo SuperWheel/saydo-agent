@@ -25,7 +25,7 @@ from ..tools import REGISTRY, ToolContext, ToolResult, by_llm_name, llm_tool_spe
 from ..tools.bank import get_balance
 from ..tools.bill import rule_turn as bill_rule_turn, workflow_args as bill_workflow_args
 from ..tools.bill_analysis import rule_turn as adhoc_rule_turn
-from ..tools.card import propose_bind, rule_turn as card_rule_turn
+from ..tools.card import propose_bind, propose_unbind, rule_turn as card_rule_turn
 from ..tools.knowledge import rule_turn as kb_rule_turn
 from ..tools.subscription import rule_turn as sub_rule_turn
 from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
@@ -360,7 +360,7 @@ WORKFLOW_TOOLS = {
     "bill_query": "bill.query",
     "card:list": "card.list", "card:lock": "card.lock_propose", "card:unlock": "card.unlock_propose",
     "card:report_loss": "card.report_loss_propose", "card:limit": "card.limit_propose",
-    "card:virtual_apply": "card.virtual_propose", "card:bind": "card.bind_propose",
+    "card:virtual_apply": "card.virtual_propose", "card:bind": "card.bind_propose", "card:unbind": "card.unbind_propose",
     "sub:list": "sub.list", "sub:upcoming": "sub.upcoming", "sub:cancel": "sub.cancel_propose",
     "wealth:assess": "wealth.assessment", "wealth:holdings": "wealth.holdings", "wealth:compare": "wealth.compare",
     "wealth:recommend": "wealth.recommend", "wealth:subscribe": "wealth.subscribe_propose",
@@ -544,6 +544,9 @@ def _selection_turn(ctx: ToolContext, selection: dict) -> str:
         tail = str(selection.get("tail") or "")[:8]
         return _apply(ctx, propose_bind(ctx, tail, pool_id=selection.get("pool_id") and str(selection["pool_id"])[:4],
                                         typed=True))
+    if selection.get("type") == "card_unbind":  # 卡片详情里点「解绑此卡」：和说「解绑尾号1554的卡」走同一个提议工具
+        cid = selection.get("card_id")
+        return _apply(ctx, propose_unbind(ctx, card_id=cid if isinstance(cid, int) else -1))
     if selection.get("type") == "plan":  # 计划卡的按钮（WS7）
         return planner.selection_turn(ctx, selection)
     pq = (ctx.session.state or {}).get("pending_question") or {}
