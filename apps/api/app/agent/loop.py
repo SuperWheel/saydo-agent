@@ -10,10 +10,11 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+from openai.types.chat import ChatCompletionMessageToolCall
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit
+from .. import audit, knowledge
 from ..cards import notice_card
 from ..clock import now
 from ..config import get_settings
@@ -223,6 +224,8 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     tools = llm_tool_specs(domains, extra=ALWAYS_TOOLS)
     datas: list[dict] = []
     final = ""
+    if _kb_first(text):
+        _prefill_kb(ctx, messages, datas)
     for step in range(MAX_TOOL_STEPS + 1):
         db.commit()  # 调模型前结束事务，不占着数据库写锁
         reply = llm.chat(messages, tools=tools, tool_choice="auto" if step < MAX_TOOL_STEPS else "none")
@@ -240,7 +243,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
         messages.append(assistant)
         for tc in reply.tool_calls:
             result = _run_tool_call(ctx, tc)
-            if result.card:
+            if result.card and not _same_kb_card(ctx.cards, result.card):
                 ctx.cards.append(result.card)
             datas.append(result.data)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result.data, ensure_ascii=False)})
@@ -284,6 +287,38 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     if (g.promises or g2.promises) and not ctx.cards:  # 「有没有保本稳赚的理财」：给一句合规的话，而不是帮助语
         return NO_PROMISE, "template"
     return _template_reply(ctx.cards), "template"  # 两次都不过：丢弃模型文字，只返回模板
+
+
+def _kb_first(text: str) -> bool:
+    """整句和每个分句都是知识问句（「赎回理财的时候需要刷脸吗」），而且知识库查得到。
+    这时模型容易凭常识直接答，或者去调赎回、订阅这类办理工具：先替它查一次知识库，它只需要照条文作答。
+    「挂失要钱吗？要的话帮我挂失 6688」后半句是办理，不算。"""
+    return _tool_domains(text, []) == {"knowledge"} and bool(knowledge.search(text).hits)
+
+
+def _same_kb_card(cards: list[dict], card: dict) -> bool:
+    """预查过知识库后模型又查了一次、查到的条目一样：不再出第二张一样的知识卡。"""
+    ids = lambda c: [i["id"] for i in c.get("items", [])]  # noqa: E731
+    return card["type"] == "knowledge" and any(c["type"] == "knowledge" and ids(c) == ids(card) for c in cards)
+
+
+def _prefill_kb(ctx: ToolContext, messages: list[dict], datas: list[dict]) -> None:
+    """以模型的名义先调一次 kb.search（查询就是本轮用户原话，已脱敏），交互照常写审计、存历史。
+    走的是同一个工具网关；之后模型照常可以换个说法再查，或调别的工具。"""
+    query = messages[-1]["content"]
+    call = ChatCompletionMessageToolCall.model_validate({
+        "id": f"kb_{ctx.trace_id}", "type": "function",
+        "function": {"name": REGISTRY["kb.search"].llm_name, "arguments": json.dumps({"query": query}, ensure_ascii=False)}})
+    result = _run_tool_call(ctx, call)
+    if result.card:
+        ctx.cards.append(result.card)
+    datas.append(result.data)
+    start = len(messages)
+    messages += [{"role": "assistant", "content": "", "tool_calls": [call.model_dump(exclude_none=True)]},
+                 {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result.data, ensure_ascii=False)}]
+    messages[start:] = _masked_exchange(messages[start:])
+    ctx.db.add(ChatMessage(session_id=ctx.session.id, role="tool", trace_id=ctx.trace_id,
+                           content=json.dumps(messages[start:], ensure_ascii=False)))
 
 
 _MARKDOWN = re.compile(r"\*\*|__|`|^#{1,6}\s*", re.M)

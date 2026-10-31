@@ -32,7 +32,7 @@ from ..config import get_settings
 from ..core_mock.shops import CATEGORY_LABELS, SHOPS
 from ..models import ChatMessage, ChatSession, PendingAction, TaskPlan
 from ..money import fmt_yuan, parse_amount
-from ..nlu import amount_from_user, normalize_hint, rule_intent
+from ..nlu import amount_from_user, asks_rule, normalize_hint, rule_intent
 from ..nlu.when import parse_date, parse_when
 from ..security import mask_pii
 from ..tools import REGISTRY, ToolContext, ToolResult, ToolSpec, by_llm_name, model_tools
@@ -906,6 +906,8 @@ def route(ctx: ToolContext, guard, llm: Callable | None = None) -> tuple[str, st
             ctx.cards.append(result.card)
             return f"好的，选了{result.data['shop']}的{result.data['item']}，请核对订单确认卡。", "rule"
         return _reply_for(ctx, result), "rule"
+    if asks_rule(text):  # 「用助手订花付款要不要人脸验证」问的是规则：不出候选商品、不进定时转账，交给知识问答
+        return None
     if is_multi_step(text):
         return create_plan(ctx, text, llm)
     if slots := auto.schedule_slots(text):  # 「每月15号给我妈转2000」：两种模式都确定性处理，不能被当成立即转账

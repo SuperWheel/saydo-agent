@@ -49,6 +49,11 @@ def workflow(fake, monkeypatch):
     ("给我最近七天的支出统计", ["bill_categories"]),
     ("最近一周的消费汇总", ["bill_categories"]),
     ("帮我统计最近一周的开销", ["bill_txns"]),
+    # 带办理槽位的问句仍是办理，不当成知识问句：金额、尾号、点名了自己订的商户、卡丢了先锁卡
+    ("给我妈转500行吗", ["confirm"]),
+    ("能帮我锁一下尾号6688的卡吗", ["confirm"]),
+    ("怎么取消腾讯视频的自动续费", ["sub_guide", "confirm"]),
+    ("我的卡丢了怎么办", ["card_list"]),
 ])
 def test_fixed_flows_skip_model(llm_client, workflow, words, cards):
     f = workflow(text("不该被调用"))
@@ -199,3 +204,50 @@ def test_card_unbind_confirm_is_workflow(llm_client, workflow):
     r = say(llm_client, f"解绑尾号{P14.tail}的卡")
     c = r["cards"][0]
     assert c["type"] == "confirm" and c["level"] == "RED" and f.calls == [] and r["reply"]["workflow"] is True
+
+
+# ---------- 规则 / 条件类问句：不走工作流，先查知识库 ----------
+
+KB_QUESTIONS = [
+    ("赎回理财的时候需要刷脸吗", ["faq-wm-verify"]),  # 原来进了赎回流程
+    ("支付宝里的自动扣款服务怎么停", ["mc-alipay"]),  # 原来出订阅总览
+    ("B站大会员自动续费在哪关", ["mc-bilibili"]),
+    ("会员没提醒就自动续费扣钱了能要回来吗", ["faq-sub-dispute", "reg-auto-renew"]),
+    ("把一张卡解除绑定会有什么影响", ["faq-card-unbind"]),  # 原来进了解绑流程
+    ("用助手订花付款要不要人脸验证", ["faq-order-verify"]),  # 原来出候选商品
+    ("活钱宝赎回当天能到账吗", ["prod-wm01-redeem"]),
+    ("科技成长股票持有不满一个月赎回扣多少钱", ["prod-wm07-redeem"]),
+    ("风险承受能力低能不能买高风险理财产品", ["reg-wm-suitability", "faq-wm-suitability"]),  # 原来出测评问卷
+    ("证明盗刷不是本人交易要准备哪些材料", ["reg-card-fraud-evidence", "reg-card-fraud-liability"]),
+    ("我的卡号会不会被发给大模型", ["faq-ai-privacy"]),  # 原来出卡片列表
+    ("我的理财净值这周跌了是怎么回事", ["faq-wm-nav", "reg-wm-not-guaranteed"]),  # 原来出持仓
+    ("为什么助手办事每次都要我点确认", ["faq-ai-why-confirm", "faq-ai-scope"]),
+]
+
+
+@pytest.mark.parametrize("words, want", KB_QUESTIONS)
+def test_rule_question_queries_kb_before_model(llm_client, workflow, words, want):
+    """问规则 / 条件的话不走工作流；先替模型查好知识库，只发知识域和常驻工具，模型照条文作答。"""
+    f = workflow(text("请以知识卡上的条文为准。"))
+    r = say(llm_client, words)
+    assert len(f.calls) == 1 and r["reply"]["workflow"] is False and r["reply"]["source"] == "llm"
+    assert [c["type"] for c in r["cards"]] == ["knowledge"]
+    assert {i["id"] for i in r["cards"][0]["items"]} & set(want)
+    assert {t["function"]["name"] for t in f.calls[0]["tools"]} <= {"kb_search", "account_balance", "handoff_request"}
+    prefilled = [m for m in f.calls[0]["messages"] if m.get("tool_calls")]
+    assert prefilled and prefilled[-1]["tool_calls"][0]["function"]["name"] == "kb_search"
+
+
+def test_rule_question_with_action_clause_keeps_all_tools(llm_client, workflow):
+    """「挂失要钱吗？要的话帮我挂失 6688」后半句是办理：不预查知识库，卡片工具照发，由模型决定。"""
+    f = workflow(text("好的。"))
+    say(llm_client, "信用卡挂失要钱吗？要的话帮我挂失尾号6688")
+    names = {t["function"]["name"] for t in f.calls[0]["tools"]}
+    assert "card_report_loss_propose" in names and not any(m.get("tool_calls") for m in f.calls[0]["messages"])
+
+
+def test_model_requery_does_not_duplicate_kb_card(llm_client, workflow):
+    """预查之后模型又用同样的话查一次：只留一张知识卡。"""
+    f = workflow(tool("kb_search", query="赎回理财的时候需要刷脸吗"), text("请以知识卡上的条文为准。"))
+    r = say(llm_client, "赎回理财的时候需要刷脸吗")
+    assert len(f.calls) == 2 and [c["type"] for c in r["cards"]] == ["knowledge"]

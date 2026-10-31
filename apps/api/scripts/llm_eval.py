@@ -46,6 +46,8 @@ def main() -> int:
     with TestClient(create_app()) as c:
         for case in cases:
             c.post("/dev/seed")
+            # 进入前人脸核身（模拟）：重置演示数据后旧的进入凭证失效，要重新拿
+            c.headers["X-Entry-Token"] = c.post("/api/auth/entry-face", json={"value": "face-ok:entry"}).json()["token"]
             sid, t0 = None, time.perf_counter()
             for text in case["say"]:
                 r = c.post("/api/chat", json={"text": str(text), "session_id": sid}).json()

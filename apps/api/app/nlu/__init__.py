@@ -99,7 +99,7 @@ def rule_intent(text: str) -> RuleIntent:
 
     if slots := phone_transfer_slots(text):  # 槽位里是脱敏号码，提议工具再从原话还原
         return RuleIntent("transfer", {**slots, "memo": memo})
-    if _faq_intent(text):  # 知识问答（WS9）排在 AA、理财、订阅、卡片之前：「AA 收款怎么操作」「信用卡挂失要钱吗」问的是规则，不是办理
+    if _faq_intent(text) or asks_rule(text):  # 知识问答（WS9）排在 AA、理财、订阅、卡片之前：「AA 收款怎么操作」「信用卡挂失要钱吗」问的是规则，不是办理
         return RuleIntent("faq")
     if asks_aa_status(text):
         return RuleIntent("aa_status")
@@ -327,3 +327,50 @@ def _faq_intent(text: str) -> bool:
     if len(set(_WM_PRODUCT.findall(text))) >= 2:  # 两个产品「有什么区别」是理财对比
         return False
     return bool(_FAQ.search(text)) and not _FAQ_PERSONAL.search(text)
+
+
+# ---------- 规则 / 条件类问句：「赎回理财的时候需要刷脸吗」「支付宝里的自动扣款服务怎么停」「把一张卡解除绑定会有什么影响」 ----------
+# 话里有「赎回」「自动扣款」「解绑」，上面的业务正则会把它们当成办理接走。问法是在问规则或条件、话里没有金额、
+# 手机号、尾号这类办理槽位、知识库也确实查得到时，按知识问答处理。「给我妈转500行吗」带金额，仍是办理；
+# 「帮我…」「我要…」是请求办理；「我的理财怎么样」「我还有多少钱」问的是自己的账户
+_RULE_Q = re.compile(
+    r"(需要|需不需要|要不要|用不用|必须|得)[^，,。]{0,8}(刷脸|人脸|验证|短信|验证码|确认|材料|手续|密码|开通|本人)"
+    r"|(能|可以|会|算|可|允许|还会|还能)[^，,。]{0,24}(吗|么)[？?]?$"
+    r"|能不能|可不可以|会不会|算不算|是不是|行不行|有没有(上限|限制|规定|影响|风险|用)"
+    r"|怎么|如何|怎样|为什么|为啥|凭什么"
+    r"|(会|有)(什么|啥|哪些)(影响|后果|风险|区别|不同|权利|用处)|会怎样|会怎么样"
+    r"|(在|去)?哪(里|儿)?(关|取消|停|办|退|投诉|开通|查看)"
+    r"|(哪些|什么)(材料|权利|证明|功能|条件|规定|情况)|要做什么|几个等级|分几"
+    r"|(扣|收|要)多少钱|起购|起投|(风险等级|费率)是?(多少|什么|几)|是真的吗|可信吗|靠谱吗|合理吗|合法吗")
+# 「这个月钱怎么花这么快」是在看自己的账单，不是问规则
+_RULE_Q_NOT = re.compile(r"^(帮我|请|麻烦|给我)|我(想|要)(?!问|知道|了解|咨询)|怎么(花|用)了?(这么|那么)|怎么样了?[？?]?$"
+                         r"|我.{0,12}(多少|几张|几笔|哪些|是什么|是啥)"
+                         r"|怎么理财|(钱|资金).{0,6}(放哪|存哪|怎么放|怎么打理)")
+# 金额：带单位的数（「500元」「两千」「1万」），或者不接时间、等级、量词的裸数字（「转500」「尾号6688」）
+_SLOT_MONEY = re.compile(r"[¥￥]\s*\d|\d+(?:\.\d+)?\s*(?:元|块|万|千|w|k)|[零一二两三四五六七八九十百]+(?:元|块|万|千)"
+                         r"|(?<![\dA-Za-z.])\d{3,}(?![\d.]|\s*(?:天|个?月|年|日|号|级|位|点|%|次|笔|张|个|小时|分钟|秒))")
+
+
+def has_action_slots(text: str) -> bool:
+    """话里有没有办理用的槽位：金额、尾号、手机号。只有收款人没有金额不算（「能给家里定时转钱吗」）。"""
+    from .transfer import phones_in
+
+    return bool(_SLOT_MONEY.search(text) or phones_in(text))
+
+
+def asks_rule(text: str) -> bool:
+    """规则 / 条件类问句，且知识库查得到：两种模式都先走知识库，不让业务工作流接走。"""
+    from ..knowledge import search
+
+    if not _RULE_Q.search(text) or _RULE_Q_NOT.search(text) or has_action_slots(text) or _FAQ_SELF.search(text):
+        return False
+    if _CARD_LOST.search(text) and not re.search(r"材料|证明|赔|承担|责任|规定", text):
+        return False  # 「卡丢了怎么办」先建议锁卡止损（隐含意图）；「证明盗刷要哪些材料」才是问规则
+    if _SUB_MERCHANT.search(text) and _SUB_CANCEL.search(text) and not re.search(r"[吗么][？?]?$", text):
+        return False  # 「怎么取消腾讯视频的自动续费」：用户订了的商户走取消流程，卡片上的商户指引同样来自知识库
+    if len(set(_WM_PRODUCT.findall(text))) >= 2:  # 两个产品比较是理财对比
+        return False
+    return bool(search(text).hits)
+
+
+_FAQ_SELF = re.compile(r"你的|您的|提示词|指令")
