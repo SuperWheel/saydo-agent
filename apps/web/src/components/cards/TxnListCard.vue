@@ -28,7 +28,7 @@ const hasDetail = computed(() => !!props.card.detail && props.card.count > 0)
       <span v-if="card.more && !card.single">另有 {{ card.more }} 笔未列出 · </span>查看全部 {{ card.count }} 笔明细 ›
     </div>
     <div class="meta">数据来源：{{ card.source }} · {{ card.as_of }}</div>
-    <van-popup v-model:show="open" position="bottom" round closeable :style="{ height: '86%' }" teleport="body">
+    <van-popup v-model:show="open" position="bottom" round closeable class="sheet-pop" :style="{ height: '86%' }" teleport="body">
       <BillTxnSheet v-if="open" :query="card.detail" :period="card.period" :title="`${card.kind}明细`" />
     </van-popup>
   </div>

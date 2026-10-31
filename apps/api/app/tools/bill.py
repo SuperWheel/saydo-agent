@@ -426,6 +426,10 @@ def report(ctx: ToolContext, period: str | None = None) -> ToolResult:
         "kpis": kpis, "net": fmt_yuan(tot["net_fen"]),
         "spend_change": spend_change.get("change"), "spend_change_yuan": spend_change.get("change_yuan"),
         "slices": _slices(rows),
+        # 点开报告看的分类构成（和消费分类卡同一口径），「查看消费明细」按 detail 取数，合计等于 KPI 里的消费
+        "rows": [{"category": r["category"], "amount": fmt_yuan(r["amount_fen"]), "share": engine.pct(r["permille"]),
+                  "count": r["count"], "change": r["change"]} for r in rows],
+        "detail": _detail_args(p, kind="消费"),
         "top_merchants": [{"name": m["display"], "amount": fmt_yuan(m["amount_fen"]), "count": m["count"]} for m in tops],
         "subscription": {"total": fmt_yuan(sub_total), "count": len(subs)},
         "anomalies": [_anomaly_card_item(a) for a in found],

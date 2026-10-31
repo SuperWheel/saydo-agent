@@ -4,3 +4,9 @@ export const CATEGORY_COLORS = {
   教育: '#5fa8d3', 娱乐: '#d35fb7', 旅行: '#4caf7a', 订阅: '#c8102e', 其他: '#b7bfcc',
 }
 export const colorOf = (category) => CATEGORY_COLORS[category] || CATEGORY_COLORS.其他
+
+// 环比的颜色：涨红、跌绿，±0.0% 和「不可比」不着色
+export function trend(change) {
+  if (!change || /^[+-]0\.0%$/.test(change)) return ''
+  return change.startsWith('+') ? 'up' : change.startsWith('-') ? 'down' : ''
+}

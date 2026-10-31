@@ -3,8 +3,9 @@
 // 「查看消费明细」直接看这个区间的全部消费。明细按卡片上的 detail 取数，合计和卡片一致。
 import { computed, ref } from 'vue'
 import BillTxnSheet from './BillTxnSheet.vue'
+import CategoryRows from './CategoryRows.vue'
 import DonutChart from './DonutChart.vue'
-import { colorOf } from './colors'
+import { trend } from './colors'
 
 const props = defineProps({ card: { type: Object, required: true } })
 
@@ -19,11 +20,6 @@ function open(v, origin = '') {
   if (!hasDetail.value) return
   from.value = origin
   view.value = v
-}
-
-function trend(change) {
-  if (!change || /^[+-]0\.0%$/.test(change)) return ''
-  return change.startsWith('+') ? 'up' : change.startsWith('-') ? 'down' : ''
 }
 </script>
 
@@ -49,25 +45,22 @@ function trend(change) {
     <div class="meta">{{ card.note }}</div>
     <div class="meta">数字由系统计算，非 AI 生成 · {{ card.source }} · {{ card.as_of }}</div>
 
-    <van-popup :show="!!view" position="bottom" round closeable :style="{ height: '86%' }" teleport="body"
+    <van-popup :show="!!view" position="bottom" round closeable class="sheet-pop" :style="{ height: '86%' }" teleport="body"
                @update:show="(v) => { if (!v) view = '' }">
-      <div v-if="view === 'cats'" class="sheet" data-testid="category-detail">
-        <div class="title">{{ card.period }}消费构成</div>
-        <div class="sum"><span class="k">消费合计（已扣除退款）</span><b class="money">¥{{ card.total }}</b></div>
-        <div v-if="card.total_change" class="vs">较{{ card.compare_to }} <span class="chg" :class="trend(card.total_change)">{{ card.total_change }}</span></div>
-        <div v-for="r in card.rows" :key="r.category" class="cat" data-testid="category-row" @click="open({ category: r.category }, 'cats')">
-          <div class="top">
-            <span class="name"><i :style="{ background: colorOf(r.category) }" />{{ r.category }}<small>{{ r.count }} 笔</small></span>
-            <span class="amt">¥{{ r.amount }}<span class="go">›</span></span>
-          </div>
-          <div class="bar"><div :style="{ width: r.share, background: colorOf(r.category) }" /></div>
-          <div class="sub"><span>占比 {{ r.share }}</span><span class="chg" :class="trend(r.change)">环比 {{ r.change }}</span></div>
+      <div v-if="view === 'cats'" class="sheet-frame" data-testid="category-detail">
+        <div class="sheet-head" data-testid="sheet-head">
+          <div class="sheet-title">{{ card.period }}消费构成</div>
+          <div class="sheet-sum"><span class="k">消费合计（已扣除退款）</span><b class="money">¥{{ card.total }}</b></div>
+          <div v-if="card.total_change" class="vs">较{{ card.compare_to }} <span class="chg" :class="trend(card.total_change)">{{ card.total_change }}</span></div>
         </div>
-        <van-button block round type="danger" class="all" @click="open({ category: '' }, 'cats')">查看全部消费明细</van-button>
-        <div class="meta">{{ card.note }}</div>
+        <div class="sheet-body">
+          <CategoryRows :rows="card.rows" @pick="(c) => open({ category: c }, 'cats')" />
+          <van-button block round type="danger" class="all" @click="open({ category: '' }, 'cats')">查看全部消费明细</van-button>
+          <div class="meta">{{ card.note }}</div>
+        </div>
       </div>
       <template v-else-if="query">
-        <div v-if="from" class="back" @click="view = 'cats'">‹ 返回分类构成</div>
+        <div v-if="from" class="sheet-back" @click="view = 'cats'">‹ 返回分类构成</div>
         <BillTxnSheet :query="query" :period="card.period"
                       :title="view.category ? `${view.category}消费明细` : '消费明细'" />
       </template>
@@ -89,24 +82,7 @@ function trend(change) {
   border-top: 1px dashed var(--line); }
 .more { font-size: var(--fs-xs); color: var(--brand); }
 
-.sheet { padding: 4px 16px 24px; }
-.title { font-size: var(--fs-sheet); font-weight: 600; padding-right: 32px; }
-.sum { display: flex; justify-content: space-between; align-items: baseline; background: var(--surface-2); border-radius: var(--radius-md);
-  padding: 8px 10px; margin: 10px 0 2px; }
-.sum .k { color: var(--muted); font-size: var(--fs-sm); }
-.sum .money { font-size: var(--fs-money-md); }
-.vs { font-size: var(--fs-xs); color: var(--muted); margin-bottom: 6px; }
-.cat { padding: 10px 0; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
-.cat .top { display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-body); }
-.cat .name { display: flex; align-items: center; gap: 6px; }
-.cat .name i { width: 10px; height: 10px; border-radius: var(--radius-xs); }
-.cat .name small { color: var(--muted); font-size: var(--fs-xs); }
-.cat .amt { font-weight: 600; font-variant-numeric: tabular-nums; }
-.cat .go { color: var(--muted); margin-left: 6px; font-weight: 400; }
-.bar { height: 6px; background: var(--surface-2); border-radius: var(--radius-xs); margin: 6px 0 4px; overflow: hidden; }
-.bar div { height: 100%; border-radius: var(--radius-xs); }
-.cat .sub { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--muted); }
+.vs { font-size: var(--fs-xs); color: var(--muted); margin-top: 4px; }
 .all { margin-top: 14px; }
-.back { font-size: var(--fs-sm); color: var(--brand); padding: 6px 16px 0; cursor: pointer; }
 .meta { font-size: var(--fs-2xs); color: var(--muted); margin-top: 8px; }
 </style>

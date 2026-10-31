@@ -107,25 +107,27 @@ async function act(kind) {
       </div>
       <div class="meta">{{ countdown }} 内有效 · 确认内容与执行内容一致（digest {{ card.digest.slice(0, 8) }}）</div>
     </template>
-    <van-popup v-if="card.edit" v-model:show="editOpen" position="bottom" round closeable teleport="body"
+    <van-popup v-if="card.edit" v-model:show="editOpen" position="bottom" round closeable class="sheet-pop" teleport="body"
                :style="{ maxHeight: '80%' }">
-      <div class="edit" data-testid="order-edit">
-        <div class="edit-title">修改订单</div>
-        <div class="edit-sec">商品</div>
-        <van-radio-group v-model="editSku">
-          <van-cell v-for="i in card.edit.items" :key="i.sku" :title="i.name" :label="i.shop" :value="`¥${i.price}`"
-                    clickable @click="editSku = i.sku">
-            <template #icon><van-radio :name="i.sku" class="radio" /></template>
-          </van-cell>
-        </van-radio-group>
-        <div v-if="card.edit.dates.length" class="edit-sec">送达日期{{ slotHint }}</div>
-        <div v-if="card.edit.dates.length" class="dates">
-          <span v-for="d in editDates" :key="d" class="date" :class="{ on: d === editDate }" @click="editDate = d">
-            {{ dayLabel(d) }}
-          </span>
+      <div class="sheet-frame" data-testid="order-edit">
+        <div class="sheet-head" data-testid="sheet-head"><div class="sheet-title edit-title">修改订单</div></div>
+        <div class="sheet-body">
+          <div class="edit-sec">商品</div>
+          <van-radio-group v-model="editSku">
+            <van-cell v-for="i in card.edit.items" :key="i.sku" :title="i.name" :label="i.shop" :value="`¥${i.price}`"
+                      clickable @click="editSku = i.sku">
+              <template #icon><van-radio :name="i.sku" class="radio" /></template>
+            </van-cell>
+          </van-radio-group>
+          <div v-if="card.edit.dates.length" class="edit-sec">送达日期{{ slotHint }}</div>
+          <div v-if="card.edit.dates.length" class="dates">
+            <span v-for="d in editDates" :key="d" class="date" :class="{ on: d === editDate }" @click="editDate = d">
+              {{ dayLabel(d) }}
+            </span>
+          </div>
+          <van-button type="danger" round block :disabled="!editChanged" @click="submitEdit">按新选择重新出确认卡</van-button>
+          <div class="edit-note">价格以商户重新报价为准；原确认卡会作废，新卡同样要你确认后才付款。</div>
         </div>
-        <van-button type="danger" round block :disabled="!editChanged" @click="submitEdit">按新选择重新出确认卡</van-button>
-        <div class="edit-note">价格以商户重新报价为准；原确认卡会作废，新卡同样要你确认后才付款。</div>
       </div>
     </van-popup>
   </div>
@@ -139,8 +141,7 @@ async function act(kind) {
 .hint { color: var(--red-ink); font-weight: 600; margin-top: 2px; }
 .warning { display: flex; gap: 6px; background: var(--red); color: var(--on-brand); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); line-height: 1.6; margin-bottom: 10px; }
 .warning .van-icon { margin-top: 3px; }
-.edit { padding: var(--space-4) var(--space-4) var(--space-6); }
-.edit-title { font-size: var(--fs-sheet); font-weight: 600; text-align: center; margin-bottom: var(--space-2); }
+.edit-title { text-align: center; padding-left: 32px; }
 .edit-sec { font-size: var(--fs-sm); color: var(--muted); margin: var(--space-3) 0 6px; }
 .radio { margin-right: var(--space-2); }
 .dates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-4); }

@@ -46,7 +46,7 @@ function buy(b) {
     <div class="meta">打分权重：{{ card.weights }}</div>
     <div class="meta">{{ card.disclaimer }}</div>
     <div class="meta">数据来源：{{ card.source }} · {{ card.as_of }}</div>
-    <van-popup :show="!!open" position="bottom" round closeable :style="{ maxHeight: '86%' }" teleport="body"
+    <van-popup :show="!!open" position="bottom" round closeable class="sheet-pop" :style="{ maxHeight: '86%' }" teleport="body"
                @update:show="(v) => { if (!v) open = '' }">
       <WealthProductSheet :code="open" @buy="buy" />
     </van-popup>

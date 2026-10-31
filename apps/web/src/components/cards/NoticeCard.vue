@@ -45,7 +45,7 @@ function onSay(text) {
     <van-button v-if="card.breaker.support && !released" block round size="small" type="danger" plain :icon="icon('support', 'service-o')"
                 class="support" data-testid="breaker-support" @click="open = true">联系人工客服</van-button>
 
-    <van-popup v-model:show="open" position="bottom" round closeable :style="{ height: '86%' }" teleport="body">
+    <van-popup v-model:show="open" position="bottom" round closeable class="sheet-pop" :style="{ height: '86%' }" teleport="body">
       <SupportSheet v-if="open" :trip-id="card.breaker.trip_id" @released="onReleased" @say="onSay" @close="open = false" />
     </van-popup>
   </div>

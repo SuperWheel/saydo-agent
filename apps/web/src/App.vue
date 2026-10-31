@@ -221,13 +221,13 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
       </div>
     </footer>
 
-    <van-popup v-model:show="auditOpen" position="bottom" round :style="{ height: '82%' }" teleport="body">
-      <div class="audit">
-        <div class="audit-head">
+    <van-popup v-model:show="auditOpen" position="bottom" round class="sheet-pop" :style="{ height: '82%' }" teleport="body">
+      <div class="audit sheet-frame">
+        <div class="audit-head sheet-head" data-testid="sheet-head">
           <b class="sheet-title">运营后台（演示）</b>
           <van-button size="mini" plain @click="resetDemo">重置演示数据</van-button>
         </div>
-        <van-tabs v-model:active="auditTab" shrink>
+        <van-tabs v-model:active="auditTab" shrink class="sheet-tabs">
           <van-tab title="按 trace 回放" name="replay">
             <AuditTimeline v-if="auditOpen" :trace="auditTrace" />
           </van-tab>
@@ -238,9 +238,9 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
       </div>
     </van-popup>
 
-    <van-popup v-model:show="settingsOpen" position="bottom" round :style="{ height: '82%', background: 'var(--bg)' }" teleport="body">
-      <div class="audit-head settings-head"><b class="sheet-title">设置</b></div>
-      <van-tabs v-model:active="settingsTab" shrink class="settings-tabs">
+    <van-popup v-model:show="settingsOpen" position="bottom" round class="sheet-pop" :style="{ height: '82%', background: 'var(--bg)' }" teleport="body">
+      <div class="audit-head settings-head sheet-head" data-testid="sheet-head"><b class="sheet-title">设置</b></div>
+      <van-tabs v-model:active="settingsTab" shrink class="sheet-tabs settings-tabs">
         <van-tab title="模型" name="model">
           <ModelSettings v-if="settingsOpen && settingsTab === 'model'" @changed="onSettingsChanged" />
         </van-tab>
@@ -308,11 +308,9 @@ const tagKind = (m) => (m.workflow || m.source === 'rule' ? 'det' : m.source ===
 .input::placeholder { color: var(--faint); }
 .input:focus { border-color: var(--line); background: var(--surface); }
 .bar .van-button { height: 40px; padding: 0 18px; font-size: var(--fs-title); }
-.audit { padding: var(--space-4) var(--space-4) var(--space-6); }
-.audit-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+.audit-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); padding-bottom: 6px; box-shadow: none; }
 .audit-head .sheet-title { padding-right: 0; }
-.audit :deep(.van-tabs__content) { padding-top: var(--space-3); }
-.settings-head { padding: var(--space-4) var(--space-4) 10px; }
+.settings-head { background: var(--bg); padding-bottom: 4px; }
 .settings-tabs :deep(.van-tabs__nav) { background: transparent; }
-.settings-tabs :deep(.van-tabs__content) { padding-top: var(--space-2); }
+.settings-tabs :deep(.van-tabs__content) { padding: var(--space-2) 0 calc(var(--space-6) + env(safe-area-inset-bottom)); }
 </style>
