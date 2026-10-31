@@ -50,6 +50,7 @@ class Decision:
     reasons: list[str] = field(default_factory=list)
     rule_hits: list[str] = field(default_factory=list)
     required_factors: list[str] = field(default_factory=list)
+    factor_mode: str = "all"  # all：要过全部因子；any：任选一个（🔴 小额只因额度升级时）
     block: bool = False
     block_reason: str | None = None
     cumulative_after_fen: int = 0
@@ -62,7 +63,7 @@ class Decision:
     def as_dict(self) -> dict:
         return {
             "level": self.level.name, "reasons": self.reasons, "rule_hits": self.rule_hits,
-            "required_factors": self.required_factors, "block": self.block, "block_reason": self.block_reason,
+            "required_factors": self.required_factors, "factor_mode": self.factor_mode, "block": self.block, "block_reason": self.block_reason,
             "cumulative_after_fen": self.cumulative_after_fen, "cooling_off_s": self.cooling_off_s,
         }
 
@@ -144,7 +145,17 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
             cooling = max(cooling, rule.get("cooling_off_s", 0))
     if not reasons and level == Risk.YELLOW:
         reasons.append(f"资金转出，今日累计 {fmt_yuan(after)} 元，需要你确认" if ctx.moves_money else "需要你确认后才会执行")
+    factors, mode = _factors(rules["auth"], ctx, level, hits, after)
     return Decision(
-        level=level, reasons=reasons, rule_hits=hits,
-        required_factors=list(rules["auth"].get(level.name, [])), cumulative_after_fen=after, cooling_off_s=cooling,
+        level=level, reasons=reasons, rule_hits=hits, required_factors=factors, factor_mode=mode,
+        cumulative_after_fen=after, cooling_off_s=cooling,
     )
+
+
+def _factors(auth: dict, ctx: PolicyContext, level: Risk, hits: list[str], after: int) -> tuple[list[str], str]:
+    """🔴 要哪些验证因子：小额、只因额度规则升级的任选一种（人脸或短信），其余人脸 + 短信（rules.yaml 的 auth）。"""
+    lite = auth.get("RED_ONE_FACTOR")
+    if (level == Risk.RED and lite and ctx.base_level < Risk.RED and hits and set(hits) <= set(lite["rules"])
+            and ctx.moves_money and ctx.amount_fen <= lite["max_single_fen"] and after <= lite["max_daily_fen"]):
+        return list(lite["any_of"]), "any"
+    return list(auth.get(level.name, [])), "all"

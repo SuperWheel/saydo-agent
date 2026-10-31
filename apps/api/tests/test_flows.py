@@ -78,6 +78,57 @@ def test_cumulative_escalates_to_red_with_auth(client):
     ledger_ok(client)
 
 
+def _small_red(client) -> dict:
+    """单笔 800、当日累计 1300：只因额度升 🔴。"""
+    assert confirm(client, say(client, "给我妈转500")["cards"][0]).json()["status"] == "succeeded"
+    return say(client, "给我妹转800")["cards"][0]
+
+
+def test_small_red_face_alone_executes(client):
+    """确认卡提示任选一种；人脸通过就执行，不用再输短信验证码。"""
+    card = _small_red(client)
+    assert card["level"] == "RED" and card["auth_hint"] == "确认后完成人脸识别即可，也可改用短信验证码（模拟）"
+    auth = confirm(client, card).json()["card"]
+    assert auth["mode"] == "any" and [f["factor"] for f in auth["factors"]] == ["face", "sms"]
+    url = f"/api/auth/challenges/{auth['challenge_id']}/verify"
+    done = client.post(url, json={"factor": "face", "value": f"face-ok:{auth['digest']}"}).json()
+    assert done["status"] == "succeeded" and done["card"]["type"] == "receipt"
+    assert balance(client) == "27,350.32"
+    ledger_ok(client)
+
+
+def test_small_red_sms_alone_executes(client):
+    """人脸不能是唯一可选方式：不想刷脸的，只输短信验证码也能办。"""
+    auth = confirm(client, _small_red(client)).json()["card"]
+    with new_session() as db:
+        ch = db.get(AuthChallenge, auth["challenge_id"])
+        code = otp_for(db.get(PendingAction, ch.action_id).digest, ch.otp_issued_at)
+    assert code in auth["sms_preview"]
+    done = client.post(f"/api/auth/challenges/{auth['challenge_id']}/verify", json={"factor": "sms", "value": code}).json()
+    assert done["status"] == "succeeded"
+
+
+def test_new_payee_small_amount_still_needs_both(client):
+    card = say(client, "给赵磊转100")["cards"][0]
+    assert card["auth_hint"] == "确认后需完成人脸识别 + 短信验证码（模拟）"
+    auth = confirm(client, card).json()["card"]
+    assert auth["mode"] == "all" and [f["factor"] for f in auth["factors"]] == ["face", "sms"]
+    r = client.post(f"/api/auth/challenges/{auth['challenge_id']}/verify",
+                    json={"factor": "face", "value": f"face-ok:{auth['digest']}"}).json()
+    assert r["status"] == "awaiting_auth"  # 人脸过了还要短信
+
+
+def test_stricter_when_total_grows_before_confirm(client):
+    """出卡时任选一种，确认前当日累计涨过 5000（等级没变）：不作废，改成两种都要。"""
+    card = _small_red(client)
+    with new_session() as db:  # 模拟其间别处又转出了一大笔（直接记到当日累计上）
+        from app.auth.actions import _counter
+        _counter(db, 1, clock.now().date()).used_fen += 400_000
+        db.commit()
+    auth = confirm(client, card).json()["card"]
+    assert auth["mode"] == "all"
+
+
 def test_cancel_releases_reservation(client):
     card = say(client, "给我妈转900")["cards"][0]
     assert client.post(f"/api/actions/{card['action_id']}/cancel").json()["status"] == "cancelled"

@@ -65,7 +65,7 @@ test('2 🟡 转账：确认卡 → 确认 → 回执，余额减少', async ({ 
   await expect(cards(page, 'balance-card')).toContainText('¥28,150.32')
 })
 
-test('3 累计超额 🔴：人脸 + 短信验证后转账成功', async ({ page }) => {
+test('3 累计超额 🔴（小额）：人脸、短信任选一种，刷脸即可转账成功', async ({ page }) => {
   await chip(page, '给我妈转500，备注生活费')
   await cards(page, 'confirm-card').getByRole('button', { name: '确认' }).click()
   await expect(cards(page, 'receipt-card')).toContainText('转账成功')
@@ -75,19 +75,18 @@ test('3 累计超额 🔴：人脸 + 短信验证后转账成功', async ({ page
   await expect(red).toContainText('🔴')
   await expect(red).toContainText('李*雨')
   await expect(red).toContainText('今日累计转出将达 1,300.00 元，超过 1,000.00 元')
-  await expect(red).toContainText('人脸识别 + 短信验证码')
+  // 单笔 ≤ 1000 元、当日累计 ≤ 5000 元，只因额度升 🔴：人脸、短信任选一种（新收款人、频繁转账、大额等仍要两种都过）
+  await expect(red).toContainText('确认后完成人脸识别即可，也可改用短信验证码')
 
   await red.getByRole('button', { name: '确认' }).click()
   const auth = cards(page, 'auth-card')
   await expect(auth).toContainText('向李*雨（尾号5678）转账800.00元')
+  await expect(auth).toContainText('任选一种验证')
+  await expect(auth.getByPlaceholder('输入 6 位验证码')).toHaveCount(0)
+  await auth.getByTestId('auth-use-sms').click() // 人脸不是唯一可选方式：可以改用短信
+  await expect(auth.getByPlaceholder('输入 6 位验证码')).toBeVisible()
+  await auth.getByText('改用人脸识别').click()
   await auth.getByRole('button', { name: '模拟人脸识别' }).click()
-  await expect(auth).toContainText('已通过')
-
-  // 演示环境把模拟短信直接显示在卡片上，从里面取验证码
-  const sms = await auth.getByText(/验证码\d{6}/).textContent()
-  const code = sms.match(/验证码(\d{6})/)[1]
-  await auth.getByPlaceholder('输入 6 位验证码').fill(code)
-  await auth.getByRole('button', { name: '提交' }).click()
 
   await expect(auth).toContainText('验证流程已结束')
   const receipt = cards(page, 'receipt-card').nth(1)
@@ -398,7 +397,7 @@ test('9d 详情弹层滚动后标题栏不跟着滑走：报告详情、交易�
   await expect(admin.getByRole('tab', { name: '熔断与风险' })).toBeInViewport()
 })
 
-test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 强验证 → 下单回执', async ({ page }) => {
+test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 人脸 → 下单回执', async ({ page }) => {
   await say(page, '帮我买双鞋')
   const opts = cards(page, 'shop-options-card')
   await expect(opts.getByTestId('shop-item')).toHaveCount(3)
@@ -412,15 +411,13 @@ test('10 买鞋：候选卡 → 点一款 → 确认卡带订购平台 → 强�
   await expect(card).toContainText('订购平台')
   await expect(card).toContainText('京东自营（合作商户）')
   await expect(card).toContainText('¥269.00')
-  await expect(card).toContainText('🔴') // 没有心愿罐，从活期付款：照旧要强验证
+  await expect(card).toContainText('🔴') // 没有心愿罐，从活期付款：照旧要强验证，小额任选一种
+  await expect(card).toContainText('确认后完成人脸识别即可')
 
   await card.getByRole('button', { name: '确认' }).click()
   const auth = cards(page, 'auth-card')
+  await expect(auth.getByPlaceholder('输入 6 位验证码')).toHaveCount(0)
   await auth.getByRole('button', { name: '模拟人脸识别' }).click()
-  await expect(auth).toContainText('已通过')
-  const sms = await auth.getByText(/验证码\d{6}/).textContent()
-  await auth.getByPlaceholder('输入 6 位验证码').fill(sms.match(/验证码(\d{6})/)[1])
-  await auth.getByRole('button', { name: '提交' }).click()
 
   const receipt = cards(page, 'receipt-card')
   await expect(receipt).toContainText('下单成功')

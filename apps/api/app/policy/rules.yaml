@@ -149,5 +149,13 @@ bank_hard_limits:
 
 auth:
   YELLOW: []
-  RED: [face, sms]                   # 人脸不能作为唯一因子
+  RED: [face, sms]                   # 默认两个因子
+  # 小额只因为「额度」升到 🔴 时，任选一种验证即可（默认人脸，可改用短信验证码；人脸不能是唯一可选的方式，
+  # 见《人脸识别技术应用安全管理办法》第十条）：命中的规则全在 rules 里、单笔和当日累计都不超过上限。
+  # 新收款人、频繁转账、注入 / 诈骗嫌疑、拆单、卡片放宽与绑卡、理财、大额，以及工具本身就是 🔴 的，仍要人脸 + 短信
+  RED_ONE_FACTOR:
+    any_of: [face, sms]
+    rules: [cumulative_outflow, rolling_24h_outflow, order_strong_auth]
+    max_single_fen: 100000           # 单笔 ≤ 1000 元
+    max_daily_fen: 500000            # 当日累计转出（含本笔）≤ 5000 元
   sms_max_attempts: 3
