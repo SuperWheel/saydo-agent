@@ -188,3 +188,57 @@ test('8 运营后台：按 trace 回放、校验哈希链、重置演示数据',
   await chip(page, '我还有多少钱')
   await expect(cards(page, 'balance-card')).toContainText('¥28,650.32')
 })
+
+// 明细详情滚到底：一页 50 笔，滚动自动加载下一页，直到出现「已全部显示」
+async function loadAll(sheet) {
+  await expect(async () => {
+    await sheet.getByTestId('txn-detail-item').last().scrollIntoViewIfNeeded()
+    await expect(sheet.getByText(/已全部显示/)).toBeVisible({ timeout: 500 })
+  }).toPass({ timeout: 20_000 })
+}
+
+test('9a 消费分类卡：点开看分类构成 → 某一类明细；「查看消费明细」笔数完整、合计一致', async ({ page }) => {
+  await say(page, '最近30天钱都花哪了')
+  const card = cards(page, 'category-card')
+  await expect(card).toHaveCount(1)
+  const total = await card.locator('.period b').textContent() // ¥x,xxx.xx
+
+  await card.click()
+  const cats = page.getByTestId('category-detail')
+  await expect(cats).toBeVisible()
+  await expect(cats.getByTestId('category-row')).toHaveCount(await card.locator('.row').count())
+  const first = cats.getByTestId('category-row').first()
+  const name = (await first.locator('.name').textContent()).replace(/\d+ 笔$/, '').trim()
+  const n = Number((await first.locator('small').first().textContent()).match(/\d+/)[0])
+  await first.click()
+  let sheet = page.getByTestId('txn-detail')
+  await expect(sheet).toContainText(`${name}消费明细`)
+  await expect(sheet).toContainText(`共 ${n} 笔`)
+  await loadAll(sheet)
+  await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(n)
+  await page.getByText('‹ 返回分类构成').click()
+  await expect(cats).toBeVisible()
+  await page.locator('.van-popup__close-icon').filter({ visible: true }).click()
+
+  await card.getByTestId('category-txns').click()
+  sheet = page.getByTestId('txn-detail')
+  await expect(sheet.locator('.sum .money')).toHaveText(total)
+  const count = Number((await sheet.locator('.sum .k').textContent()).match(/共 (\d+) 笔/)[1])
+  expect(count).toBeGreaterThan(50) // 一个月上百笔，要翻页
+  await loadAll(sheet)
+  await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(count)
+  await expect(sheet).toContainText(`共 ${count} 笔，已全部显示`)
+})
+
+test('9b 交易明细卡：卡片只列前几笔，点开看完整一个月', async ({ page }) => {
+  await say(page, '最近一个月的消费明细')
+  const card = cards(page, 'txn-list-card')
+  await expect(card).toContainText('另有')
+  const count = Number((await card.locator('.sum .k').textContent()).match(/(\d+) 笔/)[1])
+  const total = await card.locator('.sum .money').textContent()
+  await card.click()
+  const sheet = page.getByTestId('txn-detail')
+  await expect(sheet.locator('.sum .money')).toHaveText(total)
+  await loadAll(sheet)
+  await expect(sheet.getByTestId('txn-detail-item')).toHaveCount(count)
+})

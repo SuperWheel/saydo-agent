@@ -48,8 +48,8 @@ def _spends(start, end, merchant=None) -> list[Transaction]:
         return list(db.scalars(q))
 
 
-def _cards_without_time(cards: list[dict]) -> list[dict]:
-    return [{k: v for k, v in c.items() if k != "as_of"} for c in cards]
+def _cards_without_time(cards: list[dict]) -> list[dict]:  # detail 里的截止时刻是出卡那一秒
+    return [{k: v for k, v in c.items() if k not in ("as_of", "detail")} for c in cards]
 
 
 # ---------- 分类：MCC 规则为主 ----------
@@ -413,3 +413,89 @@ def test_month_start_has_no_data_yet_but_answers(client, monkeypatch):
         assert word in r["reply"]["text"] and "截至1日" in r["reply"]["text"], sentence
     report = say(client, "上个月的账单报告")["cards"][0]
     assert {k["label"]: k["value"] for k in report["kpis"]}["收入"] != "0.00" and report["spend_change"].endswith("%")
+
+
+# ---------- 卡片详情：点开消费分类卡 / 交易明细卡看完整明细 ----------
+
+def _detail(client, args: dict, page: int = 40) -> tuple[dict, list[dict]]:
+    """按卡片上的 detail 分页取完整明细，返回（第一页的汇总 + 各页合起来的每日小计, 全部条目）。"""
+    items, offset, days = [], 0, {}
+    while True:
+        r = client.get("/api/bill/txns", params={**args, "offset": offset, "limit": page})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        first = first if offset else d
+        assert (d["count"], d["total"]) == (first["count"], first["total"])  # 每页的汇总都是整个区间的
+        items += d["items"]
+        days |= d["day_totals"]
+        offset += len(d["items"])
+        if not d["has_more"]:
+            return first | {"day_totals": days}, items
+
+
+def test_category_card_detail_matches_card(client):
+    card = say(client, "最近30天钱都花哪了")["cards"][0]
+    p = window("近30天")
+    assert card["detail"] == {"start": p.start.isoformat(), "end": p.end.isoformat(), "kind": "消费"}
+    head, items = _detail(client, card["detail"])
+    assert head["total"] == card["total"] and len(items) == head["count"] == len(_spends(p.start, p.end))
+    assert sum(i["kind"] == "消费" for i in items) == sum(r["count"] for r in card["rows"])
+    times = [(i["date"], i["time"]) for i in items]
+    assert times == sorted(times, reverse=True)  # 最近的在前，分页不重不漏
+    for row in card["rows"]:  # 点某一类：该类的笔数、金额和卡片上那一行一致
+        h, its = _detail(client, {**card["detail"], "category": row["category"]})
+        assert (h["total"], h["count"], len(its)) == (row["amount"], row["count"], row["count"])
+        assert {i["category"] for i in its} == {row["category"]}
+
+
+def test_txn_card_detail_lists_every_record(client):
+    card = say(client, "最近一个月的消费明细")["cards"][0]
+    assert card["type"] == "bill_txns" and card["more"] > 0  # 卡片上只列前几笔
+    head, items = _detail(client, card["detail"])
+    assert (head["count"], head["total"], len(items)) == (card["count"], card["total"], card["count"])
+    shown = [(i["name"], i["amount"]) for i in card["items"]]
+    assert [(i["name"], i["amount"]) for i in items[:len(shown)]] == shown  # 卡片上那几笔就是详情的开头
+    by_day: dict[str, int] = {}  # 每日小计 = 当天消费 − 当天退款，跨页也对
+    for i in items:
+        by_day[i["date"]] = by_day.get(i["date"], 0) - int(i["amount"].replace(",", "").replace(".", ""))
+    assert head["day_totals"] == {d: fmt_yuan(v) for d, v in by_day.items()}
+
+
+def test_detail_keeps_card_filters(client):
+    card = say(client, "这个月给我妈转了多少")["cards"][0]
+    assert card["detail"]["kind"] == "转账" and card["detail"]["keyword"] == "我妈"
+    head, items = _detail(client, card["detail"])
+    assert (head["kind"], head["count"], head["total"]) == ("转账", card["count"], card["total"])
+    assert head["filters"] == card["filters"] and all(i["name"] == "王*英（母亲）" for i in items)
+
+
+def test_detail_shows_refund_offset(client):
+    from .conftest import confirm
+    from .helpers import pass_auth
+    r = say(client, "帮我订个蛋糕")
+    pass_auth(client, confirm(client, r["cards"][0]).json()["card"])
+    confirm(client, say(client, "把蛋糕订单取消", r["session_id"])["cards"][0])
+    card = say(client, "最近花了多少钱")["cards"][0]
+    head, items = _detail(client, card["detail"])
+    assert head["total"] == card["total"] and (head["refund_count"], head["refund"]) == (1, "238.00")
+    assert [(i["kind"], i["amount"], i["direction"]) for i in items[:2]] == [("退款", "+238.00", "in"), ("消费", "-238.00", "out")]
+
+
+def test_detail_does_not_include_later_txns(client):
+    """详情按出卡那一刻的区间取数：之后新入账的不算进来，合计和卡片一致。"""
+    card = say(client, "最近7天花了多少")["cards"][0]
+    clock.travel(timedelta(minutes=5))
+    with new_session() as db:
+        acct = db.scalars(select(Account).where(Account.user_id == 1)).first()
+        post(db, account=acct, direction="out", amount_fen=3_200, counterparty="瑞幸咖啡", merchant="瑞幸咖啡", mcc=5814,
+             contra_code="CLEARING:UNIONPAY", at=now())
+        db.commit()
+    assert say(client, "最近7天花了多少")["cards"][0]["count"] == card["count"] + 1
+    head, _ = _detail(client, card["detail"])
+    assert (head["count"], head["total"]) == (card["count"], card["total"])
+
+
+@pytest.mark.parametrize("start,end", [("2026-10-02T00:00:00", "2026-10-01T00:00:00"),
+                                       ("2024-01-01T00:00:00", "2026-01-01T00:00:00")])
+def test_detail_rejects_bad_range(client, start, end):
+    assert client.get("/api/bill/txns", params={"start": start, "end": end}).status_code == 400

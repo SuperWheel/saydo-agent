@@ -94,44 +94,8 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
           order: str | None = None, limit: int | str | None = None) -> ToolResult:
     p = _window(ctx, period, "近90天")
     txns = _load(ctx, p.start, p.end)
-    filters: list[str] = []  # 卡片上展示的筛选条件
-    subject = ""  # 回复里的「在美团外卖」「给我妈」
-
-    merchant = contact_ids = None
-    if keyword:
-        merchant = merchant_by_alias(keyword)
-        if merchant is None:
-            contact_ids = {c.id for c in resolve_payee(ctx.db, ctx.user_id, keyword)} or None
-    if kind not in _KINDS or (contact_ids and kind == KIND_SPEND):  # 问的是收款人，就是查转账
-        kind = KIND_TRANSFER if contact_ids else KIND_SPEND
-    if kind != "全部":
-        txns = [t for t in txns if t.kind in _KIND_MEMBERS[kind]]
-    if category in SPEND_CATEGORIES:
-        txns = [t for t in txns if t.category == category]
-        filters.append(f"分类：{category}")
-    if keyword:
-        word = quarantine.normalize(keyword).lower()
-        if merchant:
-            key = merchant.lower()
-            txns = [t for t in txns if t.merchant_key == key]
-            filters.append(f"商户：{merchant}")
-            subject = f"在{merchant}"
-        elif contact_ids:
-            txns = [t for t in txns if t.contact_id in contact_ids]
-            filters.append(f"收款人：{keyword}")
-            subject = f"给{keyword}"
-        else:  # 用户说的词（可信）在规范化商户名里做子串匹配，确定性的，不经过模型
-            txns = [t for t in txns if t.merchant_key and word and word in t.merchant_key]
-            filters.append(f"关键词：{keyword}")
-            subject = f"与「{keyword}」相关的"
-    lo = parse_amount(min_amount) if min_amount else None
-    hi = parse_amount(max_amount) if max_amount else None
-    if lo:
-        txns = [t for t in txns if t.amount_fen >= lo]
-        filters.append(f"金额 ≥ {fmt_yuan(lo)} 元")
-    if hi:
-        txns = [t for t in txns if t.amount_fen <= hi]
-        filters.append(f"金额 ≤ {fmt_yuan(hi)} 元")
+    txns, kind, filters, subject = _filter(ctx.db, ctx.user_id, txns, keyword=keyword, category=category, kind=kind,
+                                           min_amount=min_amount, max_amount=max_amount)
 
     try:
         n = max(1, min(20, int(limit))) if limit not in (None, "") else 10
@@ -142,10 +106,9 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
     else:
         txns.sort(key=lambda t: (t.at, t.id), reverse=True)
     refunds = sum(t.amount_fen for t in txns if t.kind == KIND_REFUND)
-    total = (sum(t.amount_fen for t in txns if t.direction == "out") - refunds if kind in ("消费", "支出")
-             else sum(t.amount_fen for t in txns))
+    total = _net_total(txns, kind)
     shown = txns[:n]
-    label = {"消费": "消费", "支出": "支出", "转账": "转账", "收入": "收入", "全部": "交易"}[kind]
+    label = _LABEL[kind]
     conds = [f for f in filters if not f.startswith(("商户：", "收款人：", "关键词："))]
     cond = f"（{'；'.join(conds)}）" if conds else ""
 
@@ -176,9 +139,100 @@ def query(ctx: ToolContext, period: str | None = None, keyword: str | None = Non
         "items": [{"time": _short(t), "name": t.display, "category": t.category, "kind": t.kind,
                    "amount": ("+" if t.direction == "in" else "-") + fmt_yuan(t.amount_fen),
                    "direction": t.direction, "tags": _tags(t)} for t in shown],
+        "detail": _detail_args(p, kind=kind, category=category if category in SPEND_CATEGORIES else None,
+                               keyword=keyword, min_amount=min_amount, max_amount=max_amount),
         "reply": reply, **_meta(),
     }
     return ToolResult(data, card)
+
+
+def _filter(db, user_id: int, txns: list[Txn], *, keyword: str | None, category: str | None, kind: str | None,
+            min_amount: str | None, max_amount: str | None) -> tuple[list[Txn], str, list[str], str]:
+    """按查询条件筛交易，返回（交易, 实际口径, 卡片上的筛选条件, 回复里的「在美团外卖」「给我妈」）。
+
+    对话里的 bill.query 和卡片详情（txn_detail）共用这一份，两边的笔数、合计才对得上。
+    """
+    filters: list[str] = []
+    subject = ""
+    merchant = contact_ids = None
+    if keyword:
+        merchant = merchant_by_alias(keyword)
+        if merchant is None:
+            contact_ids = {c.id for c in resolve_payee(db, user_id, keyword)} or None
+    if kind not in _KINDS or (contact_ids and kind == KIND_SPEND):  # 问的是收款人，就是查转账
+        kind = KIND_TRANSFER if contact_ids else KIND_SPEND
+    if kind != "全部":
+        txns = [t for t in txns if t.kind in _KIND_MEMBERS[kind]]
+    if category in SPEND_CATEGORIES:
+        txns = [t for t in txns if t.category == category]
+        filters.append(f"分类：{category}")
+    if keyword:
+        word = quarantine.normalize(keyword).lower()
+        if merchant:
+            key = merchant.lower()
+            txns = [t for t in txns if t.merchant_key == key]
+            filters.append(f"商户：{merchant}")
+            subject = f"在{merchant}"
+        elif contact_ids:
+            txns = [t for t in txns if t.contact_id in contact_ids]
+            filters.append(f"收款人：{keyword}")
+            subject = f"给{keyword}"
+        else:  # 用户说的词（可信）在规范化商户名里做子串匹配，确定性的，不经过模型
+            txns = [t for t in txns if t.merchant_key and word and word in t.merchant_key]
+            filters.append(f"关键词：{keyword}")
+            subject = f"与「{keyword}」相关的"
+    lo = parse_amount(min_amount) if min_amount else None
+    hi = parse_amount(max_amount) if max_amount else None
+    if lo:
+        txns = [t for t in txns if t.amount_fen >= lo]
+        filters.append(f"金额 ≥ {fmt_yuan(lo)} 元")
+    if hi:
+        txns = [t for t in txns if t.amount_fen <= hi]
+        filters.append(f"金额 ≤ {fmt_yuan(hi)} 元")
+    return txns, kind, filters, subject
+
+
+def _net_total(txns: list[Txn], kind: str) -> int:
+    """消费、支出按扣掉退款后的净额，其余口径直接加总。"""
+    if kind in ("消费", "支出"):
+        return sum(t.amount_fen for t in txns if t.direction == "out") - sum(t.amount_fen for t in txns if t.kind == KIND_REFUND)
+    return sum(t.amount_fen for t in txns)
+
+
+_LABEL = {"消费": "消费", "支出": "支出", "转账": "转账", "收入": "收入", "全部": "交易"}
+
+
+def _detail_args(p: Period, **cond) -> dict:
+    """卡片上「查看明细」用的参数：区间起止固定在出卡这一刻，详情按它取数，合计和卡片一致（之后新入账的不算进来）。"""
+    return {"start": p.start.isoformat(), "end": p.end.isoformat(), **{k: v for k, v in cond.items() if v}}
+
+
+DETAIL_MAX_DAYS = 400  # 详情一次最多看多长的区间（「今年」「近一年」都在内）
+WEEKDAYS = "一二三四五六日"
+
+
+def txn_detail(db, user_id: int, start, end, *, kind: str | None = None, category: str | None = None,
+               keyword: str | None = None, min_amount: str | None = None, max_amount: str | None = None,
+               offset: int = 0, limit: int = 100) -> dict:
+    """卡片详情（只读）：区间内符合条件的全部交易，最近的在前，分页返回。筛选和合计口径与 bill.query 完全一致。"""
+    txns = engine.load(db, user_id, start, end)
+    txns, kind, filters, _ = _filter(db, user_id, txns, keyword=keyword, category=category, kind=kind,
+                                     min_amount=min_amount, max_amount=max_amount)
+    txns.sort(key=lambda t: (t.at, t.id), reverse=True)
+    page = txns[offset:offset + limit]
+    days = {f"{t.at:%Y-%m-%d}" for t in page}
+    day_totals = {d: fmt_yuan(_net_total([t for t in txns if f"{t.at:%Y-%m-%d}" == d], kind)) for d in sorted(days)}
+    refunds = [t for t in txns if t.kind == KIND_REFUND]
+    return {
+        "kind": _LABEL[kind], "filters": filters, "count": len(txns), "total": fmt_yuan(_net_total(txns, kind)),
+        "refund_count": len(refunds), "refund": fmt_yuan(sum(t.amount_fen for t in refunds)),
+        "offset": offset, "has_more": offset + len(page) < len(txns), "day_totals": day_totals,
+        "items": [{"date": f"{t.at:%Y-%m-%d}", "day": f"{t.at.month}月{t.at.day}日 周{WEEKDAYS[t.at.weekday()]}",
+                   "time": f"{t.at:%H:%M}", "name": t.display, "category": t.category, "kind": t.kind,
+                   "amount": ("+" if t.direction == "in" else "-") + fmt_yuan(t.amount_fen),
+                   "direction": t.direction, "tags": _tags(t)} for t in page],
+        **_meta(),
+    }
 
 
 def _tags(t: Txn) -> list[str]:
@@ -243,6 +297,7 @@ def categories(ctx: ToolContext, period: str | None = None) -> ToolResult:
         "slices": _slices(rows),
         "rows": [{"category": r["category"], "amount": fmt_yuan(r["amount_fen"]), "share": engine.pct(r["permille"]),
                   "count": r["count"], "change": r["change"]} for r in rows],
+        "detail": _detail_args(p, kind="消费"),
         "note": CATEGORY_NOTE, "reply": reply, **_meta(),
     }
     return ToolResult(data, card)

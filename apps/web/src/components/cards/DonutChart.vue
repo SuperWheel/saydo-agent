@@ -1,6 +1,7 @@
 <script setup>
 // 轻量环形图：纯 SVG，不引图表库。占比（permille）由后端算好，这里只换算成弧长，不产生任何展示数字。
 import { computed } from 'vue'
+import { colorOf } from './colors'
 
 const props = defineProps({
   slices: { type: Array, required: true }, // [{ category, share, permille, amount, merged }]
@@ -8,10 +9,6 @@ const props = defineProps({
   caption: { type: String, default: '' },
 })
 
-const COLORS = {
-  餐饮: '#f5803e', 购物: '#4e79e6', 交通: '#2bb3a3', 居住: '#8c6cd9', 生活缴费: '#e3b341', 医疗: '#e05d7a',
-  教育: '#5fa8d3', 娱乐: '#d35fb7', 旅行: '#4caf7a', 订阅: '#c8102e', 其他: '#b7bfcc',
-}
 const R = 40
 const C = 2 * Math.PI * R
 
@@ -19,7 +16,7 @@ const arcs = computed(() => {
   let offset = 0
   return props.slices.filter(s => s.permille > 0).map(s => {
     const len = (s.permille / 1000) * C
-    const arc = { ...s, color: COLORS[s.category] || COLORS.其他, dash: `${len} ${C - len}`, offset: -offset }
+    const arc = { ...s, color: colorOf(s.category), dash: `${len} ${C - len}`, offset: -offset }
     offset += len
     return arc
   })

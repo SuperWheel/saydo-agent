@@ -1,9 +1,15 @@
 <script setup>
-defineProps({ card: { type: Object, required: true } })
+// 交易查询（F-BA-02）：卡片上只列前几笔，点卡片打开完整明细（按日期分组、滚动加载），合计和卡片一致。
+import { computed, ref } from 'vue'
+import BillTxnSheet from './BillTxnSheet.vue'
+
+const props = defineProps({ card: { type: Object, required: true } })
+const open = ref(false)
+const hasDetail = computed(() => !!props.card.detail && props.card.count > 0)
 </script>
 
 <template>
-  <div class="card">
+  <div class="card" :class="{ tap: hasDetail }" data-testid="txn-list-card" @click="open = hasDetail">
     <div class="card-title"><span>{{ card.title }}</span><van-tag plain type="success">🟢 自动查询</van-tag></div>
     <div class="head">
       <div class="period">{{ card.period }}<span v-for="f in card.filters" :key="f" class="chip">{{ f }}</span></div>
@@ -18,12 +24,19 @@ defineProps({ card: { type: Object, required: true } })
       <div class="amt" :class="t.direction">{{ t.amount }}</div>
     </div>
     <div v-if="!card.items.length" class="empty">没有符合条件的交易</div>
-    <div v-if="card.more && !card.single" class="meta">另有 {{ card.more }} 笔未列出</div>
+    <div v-if="hasDetail" class="more">
+      <span v-if="card.more && !card.single">另有 {{ card.more }} 笔未列出 · </span>查看全部 {{ card.count }} 笔明细 ›
+    </div>
     <div class="meta">数据来源：{{ card.source }} · {{ card.as_of }}</div>
+    <van-popup v-model:show="open" position="bottom" round closeable :style="{ height: '86%' }" teleport="body">
+      <BillTxnSheet v-if="open" :query="card.detail" :period="card.period" :title="`${card.kind}明细`" />
+    </van-popup>
   </div>
 </template>
 
 <style scoped>
+.tap { cursor: pointer; }
+.more { font-size: 12px; color: var(--brand); text-align: right; margin-top: 6px; }
 .head { border-bottom: 1px dashed var(--line); padding-bottom: 8px; margin-bottom: 4px; }
 .period { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chip { background: #f4f6fa; border-radius: 4px; padding: 0 6px; font-size: 12px; }
