@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
 _CN = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "半": 0}
+_UNIT_DAYS = {"天": 1, "日": 1, "周": 7, "星期": 7, "礼拜": 7, "月": 30, "年": 365}
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,18 @@ class Period:
 def _int(s: str) -> int | None:
     if s.isdigit():
         return int(s)
+    if "百" in s:  # 「一百」「两百」「一百零五」「一百二」「一百二十五」
+        h, _, rest = s.partition("百")
+        hundreds = _CN.get(h) if h else 1
+        if not rest:
+            tail = 0
+        elif rest[0] == "零":
+            tail = _int(rest[1:])
+        elif len(rest) == 1:
+            tail = _CN.get(rest, 0) * 10 or None
+        else:
+            tail = _int(rest)
+        return hundreds * 100 + tail if hundreds and tail is not None else None
     if s == "十":
         return 10
     if len(s) == 2 and s[0] == "十" and s[1] in _CN:
@@ -80,8 +93,33 @@ _M = r"(\d{1,2}|十[一二]?|[一二三四五六七八九])"
 _MONTH_RANGE = re.compile(rf"(今年|去年)?{_M}月份?(?:到|至|~|～|-|—|－)+{_M}月")
 _QUARTER = re.compile(r"(今年|去年)?第?([一二三四1-4])季度")
 _YM = re.compile(r"(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*月?")
-_RECENT = re.compile(r"(?:最近|近|过去|前)\s*(\d{1,3}|[一两二三四五六七八九十半]{1,3})\s*(?:个)?\s*(天|日|周|星期|礼拜|月|年)")
+_N = r"(\d{1,3}|[一两二三四五六七八九十百零半]{1,5})"
+_UNIT = r"(天|日|周|星期|礼拜|月|年)"
+# 「近30天」「最近的两周」「过去这三个月」「最近一百天」
+_RECENT = re.compile(rf"(?:最近|近|过去|前)(?:的|这)?{_N}(?:个)?{_UNIT}")
+# 「这30天」「这两周」「30天内」「三个月以内」：「这个月」是本月、「3月以来」是从 3 月起，所以月份要带「个」
+_N_UNIT = rf"{_N}(?:(个)月|个?(天|周|星期|礼拜|年))"
+_THIS_N = re.compile(rf"这{_N_UNIT}")
+_WITHIN = re.compile(rf"{_N_UNIT}(?:内|以内|之内|以来)")
 _MONTH = re.compile(r"(今年|去年)?\s*(\d{1,2}|十[一二]?|[一二三四五六七八九])\s*月份?(?!份额)")
+
+
+def _recent(t: str, at: datetime) -> Period | None:
+    """滚动区间：「近N天 / 周 / 个月 / 年」按 1 / 7 / 30 / 365 天折算，「半年」182 天，「半个月」15 天。"""
+    if m := _RECENT.search(t):
+        n, unit = m.group(1), m.group(2)
+    elif m := _THIS_N.search(t) or _WITHIN.search(t):
+        n, unit = m.group(1), "月" if m.group(2) else m.group(3)
+    else:
+        return None
+    if n == "半":
+        days = {"年": 182, "月": 15}.get(unit)
+        return _rolling(days, at, {"年": "近半年", "月": "近半个月"}[unit]) if days else None
+    if (k := _int(n)) and k > 0:
+        days = k * _UNIT_DAYS[unit]
+        if days <= 3650:  # 十年以内；再长就不是「最近」了，也会超出日期范围
+            return _rolling(days, at, f"近{days}天")
+    return None
 
 
 def parse_period(text: str | None, *, at: datetime, default: str) -> Period:
@@ -104,16 +142,8 @@ def _parse(text: str, at: datetime) -> Period | None:
         y, mo = int(m.group(1)), int(m.group(2))
         if 1 <= mo <= 12 and _month_start(y, mo) <= at:
             return _month(y, mo, at)
-    if m := _RECENT.search(t):
-        n, unit = m.group(1), m.group(2)
-        if n == "半":
-            days = {"年": 182, "月": 15}.get(unit)
-            label = {"年": "近半年", "月": "近半个月"}.get(unit)
-            if days:
-                return _rolling(days, at, label)
-        elif (k := _int(n)) and k > 0:
-            days = k * {"天": 1, "日": 1, "周": 7, "星期": 7, "礼拜": 7, "月": 30, "年": 365}[unit]
-            return _rolling(days, at, f"近{days}天")
+    if p := _recent(t, at):
+        return p
     if "上上个月" in t or "上上月" in t:
         d = _add_months(_month_start(at.year, at.month), -2)
         return _month(d.year, d.month, at)
