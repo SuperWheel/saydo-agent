@@ -74,8 +74,9 @@ _KIND_MEMBERS = {  # 每种查询口径包含的交易：消费和支出都带�
 
 @bank_tool(
     name="bill.query", domain="bill", base_risk=Risk.GREEN,
-    description="查询交易明细并汇总金额，可按时间、商户或收款人、分类、金额范围筛选，"
-                "如「上个月在美团花了多少」「最近一笔超过1000的消费」「这个月给我妈转了多少」。",
+    description="查询交易明细并汇总金额，卡片逐笔列出交易，可按时间、商户或收款人、分类、金额范围筛选，"
+                "如「上个月在美团花了多少」「最近一笔超过1000的消费」「这个月给我妈转了多少」。"
+                "要看消费记录、明细、流水，或问「近30天花了哪些钱」「最近两周买了什么」，都用这个工具。",
     capability="查交易明细", examples=("上个月在美团花了多少",),
     parameters={"type": "object", "properties": {
         "period": _PERIOD,
@@ -205,7 +206,7 @@ def _category_rows(cur: list[Txn], prev: list[Txn], ok: bool) -> list[dict]:
 @bank_tool(
     name="bill.categories", domain="bill", base_risk=Risk.GREEN,
     description="按消费分类（餐饮、购物、交通、居住、订阅…）统计支出金额、占比和环比，并给出饼图，"
-                "如「这个月钱都花哪了」「上个月各类消费占比」。",
+                "如「这个月钱都花哪了」「上个月各类消费占比」。只汇总到类目；用户要看一笔笔的记录、明细时用 bill_query。",
     capability="看消费分类统计", examples=("这个月钱都花哪了",),
     parameters={"type": "object", "properties": {"period": _PERIOD}},
 )
