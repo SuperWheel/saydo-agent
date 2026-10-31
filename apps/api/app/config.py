@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     action_ttl_s: int = 120  # 确认卡有效期
     token_ttl_s: int = 60  # 执行令牌有效期
     otp_window_s: int = 300  # 短信验证码有效期
+    entry_face_required: bool = True  # 进入 App 前先过模拟人脸，/api 业务接口校验进入凭证（auth/entry.py）
+    entry_face_ttl_s: int = 1800  # 进入凭证有效期（按真实时间，不受演示时间快进影响）
     app_h5_url: str = "http://127.0.0.1:5173"  # IM 里需要确认的操作，引导用户到这个地址的言行 App 办理
 
     # 企业微信智能机器人（长连接模式，channels/wecom.py）。BotID 和 Secret 都填了才启动

@@ -9,7 +9,7 @@ from .channels import wecom
 from .config import get_settings
 from .core_mock.seed import catch_up, seed
 from .db import Base, init_engine, new_session
-from .routes import admin, api, dev
+from .routes import admin, api, dev, public
 from .tools import bank  # noqa: F401  注册银行工具
 from .tools import bill  # noqa: F401  注册账单分析工具
 from .tools import card  # noqa: F401  注册卡片工具
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
             catch_up(db)
         return await call_next(request)
 
+    app.include_router(public)
     app.include_router(api)
     app.include_router(admin)
     app.include_router(dev)

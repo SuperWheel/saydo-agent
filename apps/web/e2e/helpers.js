@@ -2,16 +2,26 @@
 import { expect, test as base } from '@playwright/test'
 
 export const test = base.extend({
-  // 每个用例开头重置演示数据（余额、当日额度、熔断记录都回到种子状态），再打开首页
-  page: async ({ page, request }, use) => {
+  enter: [true, { option: true }], // 打开首页后自动过人脸页；专门测人脸页的用例 test.use({ enter: false })
+  // 每个用例开头重置演示数据（余额、当日额度、熔断记录都回到种子状态），再打开首页、过进入前人脸核身
+  page: async ({ page, request, enter }, use) => {
     const r = await request.post('/dev/seed') // 走 Vite 代理到测试后端
     expect(r.ok()).toBeTruthy()
     await page.goto('/')
-    await expect(page.getByText('你好，我是言行')).toBeVisible()
+    if (enter) await passEntryFace(page)
     await use(page)
   },
 })
 export { expect }
+
+// 进入前人脸核身（模拟）：人脸页 → 开始验证 → 进入聊天页
+export async function passEntryFace(page) {
+  const face = page.getByTestId('entry-face')
+  await expect(face).toContainText('为保护你的账户安全，请先完成人脸验证（演示环境为模拟）')
+  await face.getByRole('button', { name: '开始验证' }).click()
+  await expect(face).toHaveCount(0)
+  await expect(page.getByText('你好，我是言行')).toBeVisible()
+}
 
 // 等这一轮回复完：等待气泡消失
 export async function settled(page) {
