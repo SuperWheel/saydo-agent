@@ -453,11 +453,14 @@ def test_category_card_detail_matches_card(client):
 @pytest.mark.parametrize("ask,period", [("这个月的消费总结", "本月"), ("最近30天的账单报告", "近30天")])
 def test_report_card_detail_matches_card(client, ask, period):
     """报告卡点开：分类构成和消费分类卡同口径，「查看消费明细」的笔数、合计和报告里的消费一致。"""
+    before = window(period)
     r = say(client, ask)
     card = r["cards"][0]
     assert card["type"] == "bill_report" and r["reply"].get("workflow")  # 工作流出卡，不调模型
-    p = window(period)
-    assert card["detail"] == {"start": p.start.isoformat(), "end": p.end.isoformat(), "kind": "消费"}
+    # 「近30天」按当前时刻滚动，出卡途中可能跨过一秒：和出卡前、后算的区间之一一致即可
+    p = next((w for w in (before, window(period))
+              if card["detail"] == {"start": w.start.isoformat(), "end": w.end.isoformat(), "kind": "消费"}), None)
+    assert p, card["detail"]
     spend = next(k["value"] for k in card["kpis"] if k["label"] == "消费")
     head, items = _detail(client, card["detail"])
     assert head["total"] == spend and len(items) == head["count"] == len(_spends(p.start, p.end))

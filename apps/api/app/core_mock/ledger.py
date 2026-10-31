@@ -15,7 +15,8 @@ class LedgerError(Exception):
 
 
 def new_txn_no(at: datetime) -> str:
-    return f"T{at:%Y%m%d%H%M%S}{secrets.randbelow(10**4):04d}"
+    # 随机部分 8 位：种子流水按时间编排，同一秒常有好几笔，4 位时整套测试大约每 8 次就撞一次唯一约束
+    return f"T{at:%Y%m%d%H%M%S}{secrets.randbelow(10**8):08d}"
 
 
 def post(
