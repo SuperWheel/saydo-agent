@@ -2,14 +2,16 @@
 
 按用户 / 会话的处置：认证连续失败、疑似注入、发起转账过于频繁、模型越权调用工具 → 只读 / 暂停办理 / 转人工。
 按工具的断路器：下游异常率过高 → 断开（closed → open → half_open），冷却后放一次探测请求。
-每次触发、拦截、解除都写审计；处置可在运营后台（/admin/risk-events）解除。
+每次触发、拦截、解除都写审计；处置可在运营后台（/admin/risk-events）解除，
+用户也可以在熔断提示卡上点「联系人工客服」，由模拟客服核实后解除（security/support.py）。
 
 止损类操作不受任何熔断影响：熔断不能妨碍用户止损。止损按这次调用判断（ToolSpec.is_stop_loss）：
 锁卡、挂失整个工具都是（stop_loss=True）；改交易限制只有收紧时是（stop_loss_if）。
 被拦下时向用户说明原因类别、恢复方式和申诉渠道（《反电信网络诈骗法》第三十二条）。
 
 安全外壳里只加了调用点，逻辑都在这里：
-  auth/actions.py   propose_action → check_propose；执行前重新校验 → check；验证失败 / 通过 → on_auth_failed / on_auth_passed
+  auth/actions.py   propose_action → check_propose；用户确认资金转出 → on_money_confirmed；执行前重新校验 → check；
+                    验证失败 / 通过 → on_auth_failed / on_auth_passed
   agent/loop.py     L1 注入标记 → on_injection；模型越权调用工具 → on_tool_violation
   tools/gateway.py  执行写工具前 → check；工具调用前后 → circuit_block / tool_ok / tool_failed
 """
@@ -36,6 +38,7 @@ LEVEL_LABELS = {"readonly": "会话只读", "freeze": "暂停办理", "handoff":
                 "circuit": "服务暂不可用"}
 _SEVERITY = {"handoff": 3, "freeze": 2, "readonly": 1}
 STILL_AVAILABLE = "查询和锁卡、挂失等止损操作不受影响"
+SUPPORT_OPERATOR = "模拟人工客服"  # 用户侧核实解除（security/support.py）时 released_by 的前缀
 
 
 @lru_cache
@@ -71,6 +74,7 @@ class Block:
             "level": self.level, "level_label": LEVEL_LABELS[self.level], "reason": self.reason,
             "affects": self.affects, "recover": self.recover, "still_available": STILL_AVAILABLE,
             "appeal": load_config()["appeal"], "handoff": self.level == "handoff", "trip_id": self.trip_id,
+            "support": self.trip_id is not None,  # 有处置记录的才能找人工客服核实解除；系统只读、断路器不行
         }}
 
     def as_dict(self) -> dict:
@@ -92,14 +96,14 @@ def _trip_block(trip: BreakerTrip) -> Block:
     who = "本次会话中的" if trip.session_id else "你的账户"
     affects = f"{who}{_what(trip.tools)}暂停办理"
     if trip.level == "handoff":
-        affects, recover = affects + "，已为你转接人工客服", "坐席核实后会为你解除"
+        affects, recover = affects + "，需要人工客服核实", "不会自动恢复，请联系人工客服核实后解除"
     elif trip.expires_at:
         minutes = max(1, round((trip.expires_at - now()).total_seconds() / 60))
-        recover = f"约 {minutes} 分钟后（{trip.expires_at:%H:%M}）自动恢复"
+        recover = f"约 {minutes} 分钟后（{trip.expires_at:%H:%M}）自动恢复，或联系人工客服提前解除"
     elif trip.session_id:
-        recover = "开启新会话后恢复，也可申诉后由人工解除"
+        recover = "开启新会话后恢复，或联系人工客服解除"
     else:
-        recover = "需人工核实后解除"
+        recover = "请联系人工客服核实后解除"
     return Block(trip.level, trip.reason, affects, recover, trip.id, trip.trigger)
 
 
@@ -142,12 +146,10 @@ def check(db: Session, *, user_id: int, tool: str, session_id: str | None, args:
 
 
 def check_propose(ctx: ToolContext, tool: str, args: dict, data: dict | None = None) -> ToolResult | None:
-    """提议写操作前的熔断检查；资金类在这里计频率。返回 None 表示放行，否则是带熔断提示卡的拦截结果。"""
-    db, spec = ctx.db, REGISTRY[tool]
+    """提议写操作前的熔断检查。返回 None 表示放行，否则是带熔断提示卡的拦截结果。
+    出确认卡不计频率：资金转出在用户点确认时才算一笔（on_money_confirmed）。"""
+    db = ctx.db
     block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id, args=args)
-    if block is None and spec.moves_money and not spec.is_stop_loss(args):
-        _record(db, "money_propose", user_id=ctx.user_id, session_id=ctx.session.id, trace_id=ctx.trace_id, tool=tool)
-        block = check(db, user_id=ctx.user_id, tool=tool, session_id=ctx.session.id, args=args)
     if block is None:
         return None
     audit.record(db, ctx.trace_id, "breaker_blocked", {"tool": tool, **block.as_dict()}, ctx.session.id)
@@ -218,6 +220,19 @@ def on_auth_failed(db: Session, action) -> Block | None:
     _record(db, "auth_failed", user_id=action.user_id, session_id=action.session_id, trace_id=action.trace_id,
             tool=action.tool)
     return check(db, user_id=action.user_id, tool=action.tool, session_id=action.session_id)
+
+
+def on_money_confirmed(db: Session, action) -> None:
+    """用户点了确认的一笔资金转出，计入「发起资金转出」频率。只在确认时记：没确认就作废 / 取消 / 过期的卡、
+    改参数后作废的旧卡都不算；同一张卡只能确认一次，不会重复算。已经在熔断中的不再计数。
+    触发熔断时不在这里拦：确认流程紧接着的执行前重新校验（check）会把这一笔拦下、作废并释放额度。"""
+    spec = REGISTRY.get(action.tool)
+    if spec is None or not spec.moves_money or spec.is_stop_loss(action.args):
+        return
+    if check(db, user_id=action.user_id, tool=action.tool, session_id=action.session_id, args=action.args) is not None:
+        return
+    _record(db, "money_confirmed", user_id=action.user_id, session_id=action.session_id, trace_id=action.trace_id,
+            tool=action.tool, detail={"action_id": action.id, "summary": action.display.get("summary", "")})
 
 
 def on_auth_passed(db: Session, action) -> None:
@@ -341,6 +356,8 @@ def trip_view(trip: BreakerTrip) -> dict:
         "level_label": LEVEL_LABELS[trip.level], "tools": trip.tools, "reason": trip.reason, "status": status,
         "trace_id": trip.trace_id, "created_at": _iso(trip.created_at), "expires_at": _iso(trip.expires_at),
         "released_at": _iso(trip.released_at), "released_by": trip.released_by, "release_note": trip.release_note,
+        "released_via": None if not trip.released_by else
+        "support" if trip.released_by.startswith(SUPPORT_OPERATOR) else "admin",
         "notice": _trip_block(trip).text if status == "active" else None,
     }
 

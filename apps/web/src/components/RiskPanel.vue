@@ -13,7 +13,7 @@ const showHistory = ref(false)
 const LEVEL_TAG = { readonly: 'warning', freeze: 'danger', handoff: 'danger' }
 const KIND = {
   auth_failed: '验证失败', auth_passed: '验证通过', injection: '疑似注入', injection_high: '高置信注入',
-  money_propose: '发起转账', tool_violation: '越权调用',
+  money_confirmed: '确认资金转出', money_propose: '发起转账', tool_violation: '越权调用', support_review: '客服核实',
 }
 const SCOPE = { '*': '全部写操作', '@moves_money': '资金类操作' }
 
@@ -48,8 +48,11 @@ async function toggleKill(on) {
 
 function tools(t) { return t.tools.map((x) => SCOPE[x] || x).join('、') }
 function eventDetail(e) {
+  if (e.kind === 'support_review') return `${e.detail.operator}：${e.detail.outcome_label}（${e.detail.record}）`
+  if (e.kind === 'money_confirmed') return e.detail?.summary || e.tool
   return e.detail?.flags?.join('、') || e.tool || ''
 }
+const QUIET = ['auth_passed', 'money_confirmed', 'money_propose']
 function trigger(t) {
   const cond = `${t.window_s ? `${Math.round(t.window_s / 60)} 分钟内` : t.scope === 'session' ? '同一会话' : ''}第 ${t.count} 次`
   const how = { readonly: '会话只读', freeze: '暂停办理', handoff: '转人工' }[t.level]
@@ -103,7 +106,7 @@ defineExpose({ refresh: load })
     <div v-if="!data.events.length" class="empty">暂无</div>
     <div v-for="e in data.events.slice(0, 12)" :key="e.id" class="event">
       <span class="at">{{ e.at.slice(11, 19) }}</span>
-      <span class="kind" :class="{ hot: e.kind !== 'auth_passed' && e.kind !== 'money_propose' }">{{ KIND[e.kind] || e.kind }}</span>
+      <span class="kind" :class="{ hot: !QUIET.includes(e.kind), ok: e.kind === 'support_review' && e.detail.outcome === 'released' }">{{ KIND[e.kind] || e.kind }}</span>
       <span class="det">{{ eventDetail(e) }}</span>
     </div>
 
@@ -115,7 +118,8 @@ defineExpose({ refresh: load })
       <div v-for="t in history" :key="t.id" class="event">
         <span class="at">{{ t.created_at.slice(11, 19) }}</span>
         <span class="kind">{{ t.level_label }}</span>
-        <span class="det">{{ t.reason }} · {{ t.status === 'released' ? `${t.released_by} 解除` : '已到期' }}</span>
+        <span class="det">{{ t.reason }} · {{ t.status === 'released' ? `${t.released_by} 解除` : '已到期' }}
+          <template v-if="t.released_via === 'support'"><br>{{ t.release_note }}</template></span>
       </div>
     </template>
 
@@ -147,6 +151,7 @@ defineExpose({ refresh: load })
 .at { color: var(--muted); flex-shrink: 0; }
 .kind { flex-shrink: 0; font-weight: 600; }
 .kind.hot { color: var(--red); }
+.kind.hot.ok { color: var(--green); }
 .det { color: #4a5160; word-break: break-all; }
 .rule { font-size: 12px; color: #4a5160; padding: 3px 0; }
 .appeal { font-size: 12px; margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--yellow-soft); color: #874d00; }

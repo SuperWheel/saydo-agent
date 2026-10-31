@@ -35,6 +35,8 @@ export const api = {
   traces: (limit = 30) => get(`/admin/traces?limit=${limit}`),
   riskEvents: () => get('/admin/risk-events'),
   releaseTrip: (tripId, note) => post(`/admin/breaker/trips/${tripId}/release`, { operator: '运营后台', note }),
+  breakerSupport: (tripId) => get(`/api/breaker/trips/${encodeURIComponent(tripId)}/support`),
+  breakerReview: (tripId, body) => post(`/api/breaker/trips/${encodeURIComponent(tripId)}/support`, body),
   resetCircuit: (tool) => post(`/admin/breaker/circuits/${encodeURIComponent(tool)}/reset`, { operator: '运营后台' }),
   killSwitch: (enabled, reason) => post('/admin/kill-switch', { enabled, reason }),
   reset: () => post('/dev/seed'),

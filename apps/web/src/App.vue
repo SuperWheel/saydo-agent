@@ -204,7 +204,7 @@ function tagText(m) {
           {{ tagText(m) }}<span v-if="m.trace" class="replay" @click="openAudit(m.trace)"> · 回放</span>
         </div>
         <CardHost v-for="(c, i) in m.cards" :key="i" :card="c"
-                  @outcome="onOutcome" @modify="onModify" @select="onSelect" />
+                  @outcome="onOutcome" @modify="onModify" @select="onSelect" @say="send" />
       </div>
       <div v-if="sending" class="msg assistant"><div class="bubble typing"><van-loading size="16" /> {{ waitText }}</div></div>
     </main>
