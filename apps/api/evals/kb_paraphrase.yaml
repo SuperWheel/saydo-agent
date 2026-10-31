@@ -67,6 +67,70 @@ cases:
   - {id: para-61, ask: 退回来的钱在账单里怎么显示, expect: faq-bill-refund}
   - {id: para-62, ask: 美团外卖在账单里算哪一类, expect: faq-bill-category}
 
+  # ---------- 第二批（扩到两倍，降低随机性） ----------
+  - {id: para-63, ask: 和银行有纠纷能找哪个部门评理, expect: reg-complaint-channels}
+  - {id: para-64, ask: 收到的退款会不会被算成收入, expect: faq-bill-refund}
+  - {id: para-65, ask: 我的卡号被别人知道了算泄露隐私吗, expect: [reg-pi-sensitive, reg-pi-rights, faq-ai-privacy]}
+  - {id: para-66, ask: 我作为金融消费者有权知道产品的真实风险吗, expect: reg-consumer-rights}
+  - {id: para-67, ask: 为啥给我妈打钱还要刷脸又要输短信, expect: [faq-transfer-verify, faq-ai-why-confirm]}
+  - {id: para-68, ask: 往自己另一张卡转钱在账单里算支出吗, expect: faq-bill-kinds}
+  - {id: para-69, ask: 机器人解决不了，能不能换个真人来跟我聊, expect: faq-handoff}
+  - {id: para-70, ask: 大额汇款被延迟到账，是不是被盯上了, expect: [reg-fraud-bank-measures, faq-transfer-cooling]}
+  - {id: para-71, ask: 验证短信的码隔了十分钟还能用吗, expect: faq-confirm-ttl}
+  - {id: para-72, ask: 跟室友分摊房租，怎么让他们把钱转给我, expect: faq-aa}
+  - {id: para-73, ask: 为什么打开这个助手每次都要先扫脸, expect: faq-entry-face}
+  - {id: para-74, ask: 在柜员机上转出去的钱能反悔吗, expect: reg-atm-24h}
+  - {id: para-75, ask: 银行能不能随便把我的信息给别的公司, expect: [reg-pi-bank-use, reg-pi-rights]}
+  - {id: para-76, ask: 想专门给旅行攒一笔钱有啥功能, expect: faq-wish-pot}
+  - {id: para-77, ask: 掉了的卡重新做一张要花钱不, expect: faq-card-loss-fee}
+  - {id: para-78, ask: 出差到香港想刷卡消费要先开什么, expect: faq-card-overseas}
+  - {id: para-79, ask: 想把网上支付的单笔额度调低一点, expect: faq-card-limit-rule}
+  - {id: para-80, ask: 只能在网上用、没有卡面的那种卡安全吗, expect: faq-virtual-card}
+  - {id: para-81, ask: 投诉到人民银行一般多久能有答复, expect: reg-pbc-complaint-time}
+  - {id: para-82, ask: 助手怎么突然只能查询不能转账了, expect: [faq-breaker, reg-fraud-bank-measures]}
+  - {id: para-83, ask: 半夜收到短信说我卡在外地消费了一笔, expect: [faq-card-fraud-steps, reg-card-fraud-liability]}
+  - {id: para-84, ask: 卡上被扣了一笔我从没开通过的服务费, expect: [reg-no-unilateral-fee, faq-sub-dispute]}
+  - {id: para-85, ask: 过年那几天手机银行还能用吗, expect: faq-service-hours}
+  - {id: para-86, ask: 能不能把别的银行的储蓄卡绑进来一起管理, expect: faq-card-bind}
+  - {id: para-87, ask: 不用的那张卡想从账户里移除, expect: faq-card-unbind}
+  - {id: para-88, ask: 想看完整的十六位卡号, expect: faq-card-full-number}
+  - {id: para-89, ask: 每次办事都要点一下确认好麻烦能不能省掉, expect: faq-ai-why-confirm}
+  - {id: para-90, ask: 买理财会不会把本钱亏掉, expect: reg-wm-not-guaranteed}
+  - {id: para-91, ask: 理财宣传页上写的参考收益率靠谱吗, expect: [faq-wm-benchmark, reg-wm-not-guaranteed]}
+  - {id: para-92, ask: 为什么系统不让我买那款高风险的, expect: [faq-wm-suitability, reg-wm-suitability]}
+  - {id: para-93, ask: 风险评估的问卷过期了怎么办, expect: faq-wm-assessment}
+  - {id: para-94, ask: 你这个助手都能干点啥, expect: faq-ai-scope}
+  - {id: para-95, ask: R5 级别的产品适合什么人, expect: [faq-wm-risk-level, reg-wm-risk-grades]}
+  - {id: para-96, ask: 理财赎回后多久能用这笔钱, expect: faq-wm-redeem-arrival}
+  - {id: para-97, ask: 还在封闭的理财临时要用钱怎么办, expect: faq-wm-closed-period}
+  - {id: para-98, ask: 买理财的时候要做人脸吗, expect: faq-wm-verify}
+  - {id: para-99, ask: 活钱宝的收益大概多少, expect: prod-wm01}
+  - {id: para-100, ask: 稳盈30天是保本的吗, expect: [prod-wm02, reg-wm-not-guaranteed]}
+  - {id: para-101, ask: 安享90天中途能卖吗, expect: prod-wm04-redeem}
+  - {id: para-102, ask: 不想再接银行的理财推销短信, expect: reg-marketing-optout}
+  - {id: para-103, ask: 均衡配置混合赎回要手续费吗, expect: prod-wm06-redeem}
+  - {id: para-104, ask: 科技成长股票提前卖出扣多少钱, expect: prod-wm07-redeem}
+  - {id: para-105, ask: 年年盈365天投资期多长, expect: prod-wm03}
+  - {id: para-106, ask: 停了代扣以后爱奇艺会员会马上没吗, expect: faq-sub-stop-vs-cancel}
+  - {id: para-107, ask: 免密支付是怎么回事，安全吗, expect: faq-sub-withhold}
+  - {id: para-108, ask: 自动续费扣了一个月，能把钱要回来吗, expect: [faq-sub-dispute, reg-auto-renew]}
+  - {id: para-109, ask: 腾讯视频怎么不让它每月自动扣, expect: mc-tencent-video}
+  - {id: para-110, ask: QQ音乐绿钻不想续了, expect: mc-qq-music}
+  - {id: para-111, ask: Keep 健身会员每月扣费怎么停, expect: mc-keep}
+  - {id: para-112, ask: 手机话费每个月自动充值怎么停, expect: mc-china-mobile}
+  - {id: para-113, ask: 优酷每月扣我钱，在哪取消, expect: mc-youku}
+  - {id: para-114, ask: 微信里有个每月自动扣款的服务想解除, expect: mc-wechat-pay}
+  - {id: para-115, ask: 支付宝的免密代扣怎么解约, expect: [mc-alipay, faq-sub-withhold]}
+  - {id: para-116, ask: 美团买的电影票能退吗, expect: faq-order-refund}
+  - {id: para-117, ask: 订蛋糕的时候为什么要我刷脸, expect: faq-order-verify}
+  - {id: para-118, ask: 自称公检法让我把钱转到指定账户, expect: [faq-anti-fraud, reg-fraud-emergency]}
+  - {id: para-119, ask: 转给骗子的钱银行能帮我拦下来吗, expect: reg-fraud-emergency}
+  - {id: para-120, ask: 有人收我的银行卡说帮忙走账给佣金, expect: reg-fraud-no-rent}
+  - {id: para-121, ask: 我的卡被银行限制了非柜面交易怎么解, expect: [reg-fraud-appeal, reg-fraud-bank-measures]}
+  - {id: para-122, ask: 三类户能存多少钱, expect: faq-account-class}
+  - {id: para-123, ask: 在网点买理财工作人员为什么要拍视频, expect: reg-wm-recording}
+  - {id: para-124, ask: 生鲜水果网购收到后不想要了能退吗, expect: [reg-seven-day-exceptions, reg-seven-day-return]}
+
   # ---------- 超范围：应拒答 ----------
   - {id: para-oos-1, ask: 房贷提前还款要违约金吗, expect: none}
   - {id: para-oos-2, ask: 信用卡额度能提到二十万吗, expect: none}
@@ -90,3 +154,26 @@ cases:
   - {id: para-oos-20, ask: 今天上证指数多少, expect: none}
   - {id: para-oos-21, ask: 帮我写一首诗, expect: none}
   - {id: para-oos-22, ask: 银行理财经理的提成是多少, expect: none}
+  # 第二批
+  - {id: para-oos-23, ask: 个人消费贷款年利率多少, expect: none}
+  - {id: para-oos-24, ask: 定期存款三年期利率是多少, expect: none}
+  - {id: para-oos-25, ask: 信用卡怎么申请提高临时额度, expect: none}
+  - {id: para-oos-26, ask: 美元现钞怎么兑换, expect: none}
+  - {id: para-oos-27, ask: 手机银行怎么买国债, expect: none}
+  - {id: para-oos-28, ask: 怎么开通证券账户炒股, expect: none}
+  - {id: para-oos-29, ask: 信用卡年费能免吗, expect: none}
+  - {id: para-oos-30, ask: 银行保险箱怎么租, expect: none}
+  - {id: para-oos-31, ask: 怎么办理房贷, expect: none}
+  - {id: para-oos-32, ask: ETC 怎么办理, expect: none}
+  - {id: para-oos-33, ask: 数字人民币钱包怎么开通, expect: none}
+  - {id: para-oos-34, ask: 个人养老金账户怎么开, expect: none}
+  - {id: para-oos-35, ask: 银行理财和余额宝哪个收益高, expect: none}
+  - {id: para-oos-36, ask: 今天黄金价格多少, expect: none}
+  - {id: para-oos-37, ask: 银行网点几点开门, expect: none}
+  - {id: para-oos-38, ask: 怎么给孩子开一张银行卡, expect: none}
+  - {id: para-oos-39, ask: 信用卡怎么办理附属卡, expect: none}
+  - {id: para-oos-40, ask: 跨境电商收款怎么结汇, expect: none}
+  - {id: para-oos-41, ask: 家人去世了存款怎么取出来, expect: none}
+  - {id: para-oos-42, ask: 存款证明怎么开, expect: none}
+  - {id: para-oos-43, ask: 明天天气怎么样, expect: none}
+  - {id: para-oos-44, ask: 帮我算一下房贷月供, expect: none}
