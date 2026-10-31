@@ -1,6 +1,6 @@
 <script setup>
 // 卡片注册表：后端卡片的 type → 前端组件。新场景加卡片：在 cards/ 下新建组件，再在 CARDS 里加一行。
-// 组件统一接收 card；需要回传结果的组件按需发出 outcome（确认 / 验证结果）、modify、select（澄清选项）。
+// 组件统一接收 card；需要回传结果的组件按需发出 outcome（确认 / 验证结果）、modify、select（澄清选项）、say（替用户说一句话）。
 import AACard from './cards/AACard.vue'
 import AnomalyCard from './cards/AnomalyCard.vue'
 import AuthCard from './cards/AuthCard.vue'
@@ -51,11 +51,12 @@ const CARDS = {
 }
 
 defineProps({ card: { type: Object, required: true } })
-const emit = defineEmits(['outcome', 'modify', 'select'])
+const emit = defineEmits(['outcome', 'modify', 'select', 'say'])
 </script>
 
 <template>
   <component :is="CARDS[card.type]" v-if="CARDS[card.type]" :card="card"
-             @outcome="emit('outcome', $event)" @modify="emit('modify')" @select="emit('select', $event)" />
+             @outcome="emit('outcome', $event)" @modify="emit('modify')" @select="emit('select', $event)"
+             @say="emit('say', $event)" />
   <NoticeCard v-else :card="{ level: 'warning', text: `这张卡片（${card.type}）当前版本还不能显示` }" />
 </template>

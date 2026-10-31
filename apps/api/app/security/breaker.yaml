@@ -8,7 +8,9 @@
 # 止损类操作不受任何熔断影响：锁卡、挂失（stop_loss=True），以及收紧卡片交易限制（stop_loss_if）。
 #
 # 每条触发条件：
-#   event      计数的安全事件：auth_failed / injection / injection_high / money_propose / tool_violation
+#   event      计数的安全事件：auth_failed / injection / injection_high / money_confirmed / tool_violation
+#              money_confirmed = 用户点了确认的资金转出（转账、订单付款、理财申购）；只出了确认卡、
+#              没确认就作废 / 取消 / 过期的不算，改参数重出的卡也只在确认时算一次；定时转账的设置不扣款，不算
 #   count      窗口内第 count 次事件时触发（触发它的这次操作也会被拦下）
 #   window_s   滑动窗口；不写表示不限时间（会话级用）
 #   scope      session = 只在同一会话里计数、只封这个会话；不写 = 用户级
@@ -17,9 +19,9 @@
 #   block      拦截范围：* 全部写工具 / @moves_money 资金类 / @same 触发事件的那个工具
 #   reason     给用户看的原因类别，可用 {count} {minutes}
 # 人工解除后从解除时刻重新计数。新触发条件只在末尾追加。
-version: ws4-2026-10-30
+version: ws4-2026-10-31
 
-appeal: 如有疑问，可在 App「我的 → 在线客服」申诉，或拨打客服热线 95xxx（演示环境），核实后即可解除。
+appeal: 如有疑问，可点下方「联系人工客服」申诉（演示环境为模拟客服），或拨打客服热线 95xxx，核实后即可解除。
 
 # 熔断提示里的业务名称（按工具的 domain）
 labels:
@@ -75,7 +77,7 @@ triggers:
     reason: "{minutes} 分钟内多次出现疑似绕过验证的指令"
 
   - id: money_velocity
-    event: money_propose
+    event: money_confirmed
     count: 5
     window_s: 300
     level: freeze

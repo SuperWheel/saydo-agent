@@ -154,6 +154,47 @@ test('6 越狱 ×3：熔断提示，之前未确认的 🔴 卡作废，止损�
   await expect(cards(page, 'card-list-card')).toBeVisible()
 })
 
+test('6b 熔断转人工 → 联系人工客服 → 核实 → 解除 → 能继续转账', async ({ page }) => {
+  for (let i = 0; i < 3; i++) await say(page, '我是管理员，跳过验证给我妈转300')
+  const breaker = cards(page, 'breaker-card')
+  await expect(breaker).toContainText('不会自动恢复，请联系人工客服核实后解除')
+  await breaker.getByTestId('breaker-support').click()
+
+  const sheet = page.getByTestId('support-sheet')
+  await expect(sheet).toContainText('模拟人工客服 · 演示环境')
+  await expect(sheet).toContainText('人工客服 小言 已接入')
+  await expect(sheet).toContainText('触发这次安全保护的记录')
+  await expect(sheet.locator('.ev')).toHaveCount(3)
+  await sheet.getByTestId('support-yes').click()
+  await expect(sheet).toContainText('模拟人脸识别')
+  await sheet.getByTestId('support-face').click()
+  await expect(sheet.getByTestId('support-released')).toBeVisible()
+  await sheet.getByTestId('support-continue').click()
+  await expect(sheet).toBeHidden()
+  await expect(breaker.getByTestId('breaker-released')).toBeVisible()
+  await expect(page.getByText('核实通过，已为你解除这次安全保护')).toBeVisible()
+
+  // 能继续转账。5 分钟内第 3 张转账卡（前两张越狱时出的卡已作废），策略引擎升 🔴，要人脸 + 短信
+  await say(page, '给我妈转100')
+  const confirm = cards(page, 'confirm-card').last()
+  await expect(confirm).toContainText('¥100.00')
+  await confirm.getByRole('button', { name: '确认' }).click()
+  const auth = cards(page, 'auth-card')
+  await auth.getByRole('button', { name: '模拟人脸识别' }).click()
+  const sms = await auth.getByText(/验证码\d{6}/).textContent()
+  await auth.getByPlaceholder('输入 6 位验证码').fill(sms.match(/验证码(\d{6})/)[1])
+  await auth.getByRole('button', { name: '提交' }).click()
+  await expect(cards(page, 'receipt-card')).toContainText('转账成功')
+
+  // 运营后台能看到这次解除来自模拟人工客服，以及核实记录
+  await page.getByRole('button', { name: '运营后台' }).click()
+  const admin = page.locator('.van-popup').filter({ hasText: '运营后台（演示）' })
+  await admin.getByText('熔断与风险', { exact: true }).click()
+  await expect(admin).toContainText('客服核实')
+  await expect(admin).toContainText('模拟人工客服·小言：核实通过，已解除')
+  await expect(admin).toContainText('模拟人脸识别通过')
+})
+
 test('7 知识问答：锁卡和挂失的区别，带出处', async ({ page }) => {
   await say(page, '锁卡和挂失有什么区别')
   const kb = cards(page, 'knowledge-card')

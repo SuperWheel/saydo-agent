@@ -233,6 +233,7 @@ def confirm(db: Session, *, action_id: str, digest: str, user_id: int) -> Outcom
         audit.record(db, a.trace_id, "cooling_off_reject", {"action_id": a.id, "seconds_left": left}, a.session_id)
         raise ActionError(409, f"冷静期还剩 {left} 秒，期间不能确认。请先核实对方身份")
     audit.record(db, a.trace_id, "action_confirmed", {"action_id": a.id, "level": a.level}, a.session_id)
+    breaker.on_money_confirmed(db, a)  # 资金转出在确认时计频率；这一笔触发熔断的话，下面的重新校验会拦下
     if (bad := _revalidate(db, a)) is not None:
         return bad
     if a.level == Risk.RED.name:

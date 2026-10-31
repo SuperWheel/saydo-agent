@@ -3,11 +3,12 @@
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app import clock
 from app.auth.tokens import issue_execution_token
 from app.db import new_session
-from app.models import BreakerTrip, PendingAction
+from app.models import BreakerTrip, PendingAction, SecurityEvent
 from app.security import breaker
 from app.tools.gateway import GatewayError, execute_write
 
@@ -142,20 +143,31 @@ def test_prompt_probe_does_not_count(client):
 
 # ---------- 操作频率 ----------
 
+def confirm_transfer(client, card) -> dict:
+    """确认一笔转账，🔴 的再过人脸 + 短信；返回最终结果。"""
+    out = confirm(client, card).json()
+    return pass_auth(client, out["card"]) if out["status"] == "awaiting_auth" else out
+
+
 def test_money_velocity_freezes_money_tools(llm_client, fake, demo_tools):
+    """5 分钟内确认 5 笔资金转出：第 5 笔确认时触发，这一笔作废、额度释放，之后的资金操作暂停 30 分钟。"""
     sid = None
-    cards = []
     for _ in range(4):
         r = transfer_via_llm(llm_client, fake, session_id=sid)
         sid = r["session_id"]
-        cards.append(r["cards"][0])
-    assert [c["type"] for c in cards] == ["confirm"] * 4
-    fifth = transfer_via_llm(llm_client, fake, session_id=sid)["cards"][0]  # 5 分钟内第 5 笔
-    assert is_breaker(fifth, "freeze") and fifth["breaker"]["affects"] == "你的账户转账等资金操作暂停办理"
-    out = confirm(llm_client, cards[0]).json()  # 冻结前出的卡，确认时也会作废并释放额度
+        assert confirm_transfer(llm_client, r["cards"][0])["status"] == "succeeded"
+    assert trips(llm_client) == []
+    cards = [None] * 4 + [transfer_via_llm(llm_client, fake, session_id=sid)["cards"][0] for _ in range(2)]
+    assert [c["type"] for c in cards[4:]] == ["confirm"] * 2  # 出卡本身不算
+    out = confirm(llm_client, cards[4]).json()  # 5 分钟内确认的第 5 笔
     assert out["status"] == "invalidated" and is_breaker(out["card"], "freeze")
+    assert out["card"]["breaker"]["affects"] == "你的账户转账等资金操作暂停办理"
+    assert "自动恢复，或联系人工客服提前解除" in out["card"]["breaker"]["recover"]
     with new_session() as db:
-        assert db.get(PendingAction, cards[0]["action_id"]).reserved_fen == 0
+        assert db.get(PendingAction, cards[4]["action_id"]).reserved_fen == 0
+    out = confirm(llm_client, cards[5]).json()  # 冻结前出的卡，确认时也会作废并释放额度
+    assert out["status"] == "invalidated" and is_breaker(out["card"], "freeze")
+    assert is_breaker(transfer_via_llm(llm_client, fake, session_id=sid)["cards"][0], "freeze")
 
     nick = propose_via_llm(llm_client, fake, "demo.nickname", "小李", sid)["cards"][0]  # 不动钱的操作不受影响
     assert nick["type"] == "confirm" and confirm(llm_client, nick).json()["status"] == "succeeded"
@@ -163,7 +175,52 @@ def test_money_velocity_freezes_money_tools(llm_client, fake, demo_tools):
 
     clock.travel(timedelta(minutes=31))
     assert transfer_via_llm(llm_client, fake)["cards"][0]["type"] == "confirm"
-    assert balance(llm_client) == BALANCE
+    assert ledger_ok(llm_client)
+
+
+def test_unconfirmed_money_cards_do_not_count(client):
+    """出了确认卡但没确认（放着、取消、过期、改参数作废）都不算发起转出。"""
+    sid = None
+    for i in range(3):
+        r = say(client, "给我妈转100", sid)
+        sid = r["session_id"]
+        assert r["cards"][0]["type"] == "confirm"
+        if i == 0:
+            assert client.post(f"/api/actions/{r['cards'][0]['action_id']}/cancel").json()["status"] == "cancelled"
+    clock.travel(timedelta(minutes=16))  # 前面几张过期
+    for _ in range(3):
+        assert say(client, "帮我订个蛋糕", sid)["cards"][0]["type"] == "confirm"
+    from .test_automation import edit
+    old = say(client, "帮我订个蛋糕", sid)["cards"][0]
+    for sku in ("C202", "C201", "C202"):  # 同一张订单卡改 3 次参数重出
+        old = edit(client, sid, old, sku)["cards"][0]
+        assert old["type"] == "confirm"
+    assert trips(client) == [] and say(client, "给我妈转100", sid)["cards"][0]["type"] == "confirm"
+    with new_session() as db:
+        assert db.scalars(select(SecurityEvent).where(SecurityEvent.kind == "money_confirmed")).all() == []
+    assert confirm(client, old).json()["status"] in ("succeeded", "awaiting_auth")  # 改过的卡确认时只算一笔
+    with new_session() as db:
+        (ev,) = db.scalars(select(SecurityEvent).where(SecurityEvent.kind == "money_confirmed")).all()
+        assert ev.tool == "order.pay" and ev.detail["action_id"] == old["action_id"]
+
+
+SHOPPING_ROUND = ["帮我买双鞋子", "帮我订一束花", "帮我订个蛋糕", "下周五我妈生日，帮我订束花和蛋糕，再存 500 进心愿罐"]
+
+
+def test_shopping_then_schedule_does_not_trip(client):
+    """用户报告的顺序：买鞋 / 订花 / 订蛋糕 / 生日计划说了几轮，一笔都没付，再设每月定时转账，不应触发。"""
+    sid = None
+    for _ in range(3):
+        for t in SHOPPING_ROUND:
+            r = say(client, t, sid)
+            sid = r["session_id"]
+            assert not any(c.get("breaker") for c in r["cards"]), (t, r["cards"])
+    for t in ["帮我设置一个每个月月初定时给我妈转账500的任务", "每月1号给我妈转500"]:
+        r = say(client, t, sid)
+        assert r["cards"] and r["cards"][0]["type"] == "confirm", (t, r["cards"])
+    assert r["cards"][0]["title"] == "定时转账确认"
+    assert confirm(client, r["cards"][0]).json()["status"] == "succeeded"  # 设置定时转账不扣款，也不算一笔转出
+    assert trips(client) == [] and say(client, "给我妈转100", sid)["cards"][0]["type"] == "confirm"
 
 
 # ---------- 工具异常 ----------
@@ -256,7 +313,7 @@ def _handoff(client, fake, sid):
 
 def _money_freeze(client, fake, sid):
     for _ in range(5):
-        transfer_via_llm(client, fake, session_id=sid)
+        confirm_transfer(client, transfer_via_llm(client, fake, session_id=sid)["cards"][0])
 
 
 @pytest.mark.parametrize("trip", [_kill_switch, _readonly, _handoff, _money_freeze],

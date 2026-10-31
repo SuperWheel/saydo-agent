@@ -20,7 +20,7 @@ from ..db import Base, get_db, get_engine, new_session
 from ..flags import kill_switch_on, set_flag
 from ..models import Account, AuditLog, PendingAction
 from ..money import fmt_yuan
-from ..security import breaker
+from ..security import breaker, support
 from ..tools.bill import DETAIL_MAX_DAYS, txn_detail
 from ..tools.wealth import product_detail
 
@@ -312,6 +312,25 @@ def breaker_release(trip_id: str, body: ReleaseIn, db: Session = Depends(get_db)
 def circuit_reset(tool: str, body: ReleaseIn, db: Session = Depends(get_db)):
     _breaker_op(breaker.reset_circuit, db, tool, operator=body.operator)
     return {"tool": tool, "state": "closed"}
+
+
+# 用户侧：熔断提示卡上「联系人工客服」，模拟客服核实后解除（security/support.py）。只能处理自己的熔断
+
+@api.get("/breaker/trips/{trip_id}/support")
+def breaker_support(trip_id: str, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    return _breaker_op(support.script, db, trip_id, user_id=user_id)
+
+
+class SupportReviewIn(BaseModel):
+    self_operated: bool
+    identity: str = Field(default="", max_length=64)
+
+
+@api.post("/breaker/trips/{trip_id}/support")
+def breaker_support_review(trip_id: str, body: SupportReviewIn, db: Session = Depends(get_db),
+                           user_id: int = Depends(current_user_id)):
+    return _breaker_op(support.review, db, trip_id, user_id=user_id, self_operated=body.self_operated,
+                       identity=body.identity)
 
 
 # ---------- 开发接口（仅演示模式） ----------
