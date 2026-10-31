@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, clock, embedding_setup, llm_setup, rerank_setup, wecom_setup
+from .. import agentic_setup, audit, clock, embedding_setup, llm_setup, rerank_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions, entry
 from ..channels import take_handoff, wecom
@@ -322,6 +322,24 @@ def rerank_config_save(body: EmbeddingConfigIn, db: Session = Depends(get_db)):
 @admin.post("/rerank-config/test")
 def rerank_config_test():
     return rerank_setup.test_connection()
+
+
+class AgenticIn(BaseModel):
+    enabled: bool
+
+
+@admin.get("/agentic-config")
+def agentic_config():
+    return agentic_setup.status()
+
+
+@admin.post("/agentic-config")
+def agentic_config_save(body: AgenticIn, db: Session = Depends(get_db)):
+    """知识库 agentic 重查开关（没查到时让对话模型改写问题再查一次）。"""
+    out = agentic_setup.save(body.enabled)
+    audit.record(db, "admin", "kb_agentic_config", {"enabled": body.enabled})
+    db.commit()
+    return out
 
 
 @admin.get("/audit")

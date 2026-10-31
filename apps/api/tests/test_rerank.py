@@ -79,7 +79,7 @@ def _settings(monkeypatch, **env) -> Settings:
 def test_presets_thresholds_and_aliases(monkeypatch):
     s = _settings(monkeypatch, RERANK_PROVIDER="siliconflow", SILICONFLOW_API_KEY=KEY_SF)
     assert (s.rerank_model, s.rerank_base_url, s.rerank_api_key, s.rerank_min_score, s.rerank_timeout_s) == (
-        "Qwen/Qwen3-Reranker-8B", "https://api.siliconflow.cn/v1", KEY_SF, 0.533, 3.0)
+        "Qwen/Qwen3-Reranker-4B", "https://api.siliconflow.cn/v1", KEY_SF, 0.525, 3.0)
     assert s.rerank_ready and s.rerank_format == "siliconflow"
     s = _settings(monkeypatch, RERANK_MODEL="Qwen/Qwen3-Reranker-0.6B")
     assert s.rerank_min_score == 0.502
@@ -137,7 +137,7 @@ def test_siliconflow_request_and_response(monkeypatch):
 
     assert _client_with(monkeypatch, "siliconflow", handler).rerank("问", ["甲", "乙"], 1.0) == [0.2, 0.9]
     assert seen["url"] == "https://api.siliconflow.cn/v1/rerank" and seen["auth"] == f"Bearer {KEY_SF}"
-    assert seen["body"] == {"model": "Qwen/Qwen3-Reranker-8B", "query": "问", "documents": ["甲", "乙"], "top_n": 2,
+    assert seen["body"] == {"model": "Qwen/Qwen3-Reranker-4B", "query": "问", "documents": ["甲", "乙"], "top_n": 2,
                             "return_documents": False}
 
 
@@ -305,7 +305,7 @@ def test_setup_save_siliconflow_takes_effect(client, env_file):
     r = client.post("/admin/rerank-config", json={"provider": "siliconflow", "api_key": KEY_SF})
     assert r.status_code == 200 and KEY_SF not in r.text  # 密钥不回传
     c = r.json()
-    assert c["ready"] and c["state"] == "ready" and c["model"] == "Qwen/Qwen3-Reranker-8B" and c["min_score"] == 0.533
+    assert c["ready"] and c["state"] == "ready" and c["model"] == "Qwen/Qwen3-Reranker-4B" and c["min_score"] == 0.525
     assert next(p for p in c["providers"] if p["id"] == "siliconflow")["key_tail"] == KEY_SF[-4:]
     text = env_file.read_text(encoding="utf-8")
     assert "RERANK_PROVIDER=siliconflow" in text and f"RERANK_API_KEY={KEY_SF}" in text and "APP_SECRET=keep-me" in text
@@ -364,7 +364,7 @@ def test_setup_connection_test(client, env_file, monkeypatch):
     assert not client.post("/admin/rerank-config/test").json()["ok"]  # 没配置
     client.post("/admin/rerank-config", json={"provider": "siliconflow", "api_key": KEY_SF})
     r = client.post("/admin/rerank-config/test").json()
-    assert r["ok"] and r["sensible"] and r["scores"] == [0.1, 0.9] and r["model"] == "Qwen/Qwen3-Reranker-8B"
+    assert r["ok"] and r["sensible"] and r["scores"] == [0.1, 0.9] and r["model"] == "Qwen/Qwen3-Reranker-4B"
     assert "latency_ms" in r
     monkeypatch.setattr(rerank, "make_client", lambda s: FakeReranker(fail=RuntimeError(f"401 invalid key {KEY_SF}")))
     r = client.post("/admin/rerank-config/test").json()

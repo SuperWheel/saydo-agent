@@ -34,7 +34,7 @@ def _no_lan(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_embedding(monkeypatch, tmp_path):
-    """本机 .env 开了知识库向量通道或重排时，测试里也不去调接口；要测的用例自己打开并换假客户端。
+    """本机 .env 开了知识库向量通道、重排或 agentic 重查时，测试里也不去调接口；要测的用例自己打开并换假客户端。
     向量缓存一律指到临时目录：哪条测试忘了改、或者后台线程在测试结束后才写完，都写不到开发者本机的 data/kb_embeddings.json。"""
     from app.knowledge import embedding, rerank
 
@@ -43,6 +43,7 @@ def _no_embedding(monkeypatch, tmp_path):
 
     monkeypatch.setenv("EMBEDDING_PROVIDER", "")
     monkeypatch.setenv("RERANK_PROVIDER", "")
+    monkeypatch.setenv("KB_AGENTIC_RETRY", "false")  # 没查到时改写重查要调对话模型；要测的用例自己打开并换假模型
     monkeypatch.setattr(embedding, "make_client", _no_network)
     monkeypatch.setattr(rerank, "make_client", _no_network)
     monkeypatch.setattr(embedding, "CACHE_FILE", tmp_path / "kb_embeddings.json")

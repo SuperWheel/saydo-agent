@@ -15,7 +15,7 @@ from .llm_setup import ConfigError, update_env
 
 LABELS = {"siliconflow": "硅基流动", "qwen": "千问（阿里云百炼）"}
 NOTES = {
-    "siliconflow": "推荐。Qwen3-Reranker-8B；不填密钥就复用硅基流动的密钥（和向量检索同一个）",
+    "siliconflow": "推荐。Qwen3-Reranker-4B（准确率和 8B 打平）；不填密钥就复用硅基流动的密钥（和向量检索同一个）",
     "qwen": "qwen3-rerank，百炼原生 text-rerank 接口；不填密钥就用 DASHSCOPE_API_KEY（未实测，门槛未校准）",
 }
 OWN_KEY = {"siliconflow": "siliconflow_api_key", "qwen": "dashscope_api_key"}

@@ -6,6 +6,8 @@
   uv run python scripts/kb_eval.py --bm25   只测检索，强制纯 BM25：不用向量、也不重排（对比用）
       --no-embedding                        不用向量（配了重排时就是「BM25 + 重排」）
       --no-rerank                           不重排（配了向量时就是现在的「BM25 + 向量混合」）
+      --agentic                             没查到时让 .env 里的对话模型改写问题再查一次（agentic 重查，
+                                            和对话里 kb.search 的逻辑相同；会调模型）
       --set paraphrase                      换题集：kb（默认，evals/kb.yaml）/ paraphrase（evals/kb_paraphrase.yaml，
                                             换说法难题集）/ all（两套都跑）
   uv run python scripts/kb_eval.py --llm    用 .env 里的真实模型走完整对话：该查知识库的调用了 kb.search、
@@ -29,6 +31,8 @@ TARGET = 0.9
 MODES: dict[str, int] = {}  # 离线评测里每题实际用的检索方式：rerank / hybrid / bm25 / 回退原因
 TOP1: list[bool] = []  # 离线评测里应命中题的第一条是否就是应命中的条目（Hit@1）
 LATENCY: list[float] = []  # 离线评测里每题检索用时（秒）
+AGENTIC = "--agentic" in sys.argv
+REWRITTEN: list[bool] = []  # agentic 重查：改写后查到的题是否答对
 
 
 def load_cases(path: Path = CASES) -> list[dict]:
@@ -47,8 +51,14 @@ def offline_case(case: dict) -> tuple[bool, str]:
 
     t = time.perf_counter()
     found = search(case["ask"])
-    LATENCY.append(time.perf_counter() - t)
     ids = [e.id for e in found.entries]
+    rewritten = ""
+    if AGENTIC and not ids:  # 走对话里同一个 lookup：原话没查到就让模型改写再查
+        from app.tools.knowledge import lookup
+
+        card = lookup(case["ask"]).card or {}
+        ids, rewritten = [i["id"] for i in card.get("items", [])], card.get("rewritten", "")
+    LATENCY.append(time.perf_counter() - t)
     mode = (found.rerank_fallback and f"重排回退（{found.rerank_fallback}）") or (
         found.fallback and f"回退（{found.fallback}）") or found.mode
     MODES[mode] = MODES.get(mode, 0) + 1
@@ -56,7 +66,10 @@ def offline_case(case: dict) -> tuple[bool, str]:
     rr = f"，重排分 {found.rerank_score:.3f}" if found.rerank_score is not None else ""
     note = (f"命中 {ids or '无'}（覆盖率 {found.coverage:.2f}{sim}{rr}"
             f"{'，向量没用上：' + found.fallback if found.fallback else ''}"
-            f"{'，重排没用上：' + found.rerank_fallback if found.rerank_fallback else ''}）")
+            f"{'，重排没用上：' + found.rerank_fallback if found.rerank_fallback else ''}）"
+            f"{f'；原话没查到，按改写「{rewritten}」查到' if rewritten else ''}")
+    if rewritten:
+        REWRITTEN.append(any(w in ids for w in case["want"]) if case["kind"] == "hit" else not ids)
     if case["kind"] == "hit":
         TOP1.append(bool(ids) and ids[0] in case["want"])
         return any(w in ids for w in case["want"]), note
@@ -95,6 +108,8 @@ def main() -> int:
         os.environ["EMBEDDING_PROVIDER"] = ""
     if "--bm25" in sys.argv or "--no-rerank" in sys.argv:
         os.environ["RERANK_PROVIDER"] = ""
+    if not use_llm and not AGENTIC:  # 离线只测检索、不耗模型 API；--llm 走完整对话时按 .env
+        os.environ["KB_AGENTIC_RETRY"] = "false"
     name = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "kb"
     if name not in (*CASE_SETS, "all"):
         print(f"--set 只能是 {' / '.join(CASE_SETS)} / all")
@@ -130,6 +145,8 @@ def main() -> int:
             mode = f"配了向量通道（{s.embedding_provider} / {s.embedding_model}）但条目向量没算出来，实际是纯 BM25"
         if s.rerank_ready:
             mode += f" + 重排（{s.rerank_provider} / {s.rerank_model}，门槛 {s.rerank_min_score}，时限 {s.rerank_timeout_s} 秒）"
+        if AGENTIC:
+            mode += f"，没查到时用 {s.llm_provider} / {s.llm_model} 改写再查" if s.llm_ready else "，--agentic 但对话模型没配好，不会改写"
         print(f"只测检索，{mode}，题集 {name}，{len(cases)} 条用例\n")
 
     rows, t0 = [], time.perf_counter()
@@ -154,6 +171,8 @@ def main() -> int:
         lat = sorted(LATENCY)
         print(f"单题检索用时：中位 {lat[len(lat) // 2] * 1000:.0f} ms，P90 {lat[int(len(lat) * .9)] * 1000:.0f} ms，"
               f"P95 {lat[int(len(lat) * .95)] * 1000:.0f} ms，最长 {lat[-1] * 1000:.0f} ms")
+    if REWRITTEN:
+        print(f"agentic 重查：{len(REWRITTEN)} 题原话没查到、按改写查到，其中 {sum(REWRITTEN)} 题判对")
     if MODES.keys() - {"bm25"}:  # 配了向量 / 重排：各用上了几题、回退了几题（冷却期内的、没切出词的算 bm25）
         print("检索方式：" + "，".join(f"{k} {v} 题" for k, v in sorted(MODES.items())))
     if name == "paraphrase":

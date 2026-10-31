@@ -1,5 +1,5 @@
 <script setup>
-// 知识检索 · 重排模型卡片（可选）：硅基流动（Qwen3-Reranker-8B）/ 千问（qwen3-rerank），密钥写进仓库根目录的 .env，保存后立即生效。
+// 知识检索 · 重排模型卡片（可选）：硅基流动（Qwen3-Reranker-4B）/ 千问（qwen3-rerank），密钥写进仓库根目录的 .env，保存后立即生效。
 // 重排把检索出的前 10 条候选逐条打相关性分，按分数重排，最高分过门槛才算查到。不配置或停用时不重排。
 // 密钥不会从后端回传，这里只显示「已填写 · 尾号 ab12」。状态变了就 emit('changed')，外层卡片头部跟着更新。
 import { computed, onMounted, ref, watch } from 'vue'
@@ -115,7 +115,7 @@ const testText = computed(() => {
     </div>
     <div v-if="testResult" class="result" :class="testResult.ok ? 'ok' : 'none'">{{ testText }}</div>
 
-    <div class="hint">重排在服务端调接口，提问先脱敏（卡号、手机号打码）再发；每问多一次网络请求（Qwen3-Reranker-8B 实测中位约 0.5 秒），
+    <div class="hint">重排在服务端调接口，提问先脱敏（卡号、手机号打码）再发；每问多一次网络请求（Qwen3-Reranker-4B 实测单题检索中位约 0.9 秒），
       超过时限没返回或出错时，这一问不重排、照常作答。千问 qwen3-rerank 按百炼文档接入，还没用真实密钥测过，门槛也没校准。</div>
     <div v-for="w in cfg.warnings" :key="w" class="warn"><IconText :text="`⚠️ ${w}`" /></div>
     <div class="foot">保存位置：{{ cfg.env_file }}。密钥只保存在本机，不会显示、不进审计日志。</div>

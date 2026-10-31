@@ -51,10 +51,11 @@ _EMBEDDING_ALIASES = {"glm": "zhipu", "zhipuai": "zhipu", "silicon": "siliconflo
 
 # 知识库检索的重排模型（knowledge/rerank.py，可选）。RERANK_PROVIDER 留空就不重排。
 # 候选是关键词（和向量，配了的话）检索的前 10 条，重排模型逐条打相关性分（0–1），最高分过 RERANK_MIN_SCORE 才算查到。
-# siliconflow：硅基流动 /rerank，预设 Qwen/Qwen3-Reranker-8B，没填 RERANK_API_KEY 时用 SILICONFLOW_API_KEY；
+# siliconflow：硅基流动 /rerank，预设 Qwen/Qwen3-Reranker-4B（168 题难题集 97.0%，和 8B 的 96.4% 打平，见 docs/06 §3.7），
+# 没填 RERANK_API_KEY 时用 SILICONFLOW_API_KEY；
 # qwen：阿里云百炼（千问）qwen3-rerank，DashScope 原生 text-rerank 接口，没填时用 DASHSCOPE_API_KEY（未实测）
 RERANK_PROVIDERS: dict[str, dict] = {
-    "siliconflow": {"rerank_base_url": "https://api.siliconflow.cn/v1", "rerank_model": "Qwen/Qwen3-Reranker-8B",
+    "siliconflow": {"rerank_base_url": "https://api.siliconflow.cn/v1", "rerank_model": "Qwen/Qwen3-Reranker-4B",
                     "format": "siliconflow", "key_field": "siliconflow_api_key"},
     "qwen": {"rerank_base_url": "https://dashscope.aliyuncs.com/api/v1", "rerank_model": "qwen3-rerank",
              "format": "dashscope", "key_field": "dashscope_api_key"},
@@ -104,6 +105,10 @@ class Settings(BaseSettings):
     rerank_api_key: str = ""
     rerank_min_score: float | None = None  # 「查到」门槛；不填按模型取 RERANK_MIN_SCORES
     rerank_timeout_s: float = 3.0  # 重排的时限，超时就这一问不重排（回到混合 / BM25）
+    # 知识库 agentic 重查：检索没查到时，让对话模型把原话改写成 1–2 个书面说法再查一次（tools/knowledge.py）。
+    # 要对话模型可用（llm_ready）；规则模式不改写。没查到的问题（含全部超范围问题）多等一次模型调用，实测约 2 秒
+    kb_agentic_retry: bool = True
+    kb_rewrite_timeout_s: float = 6.0  # 改写的时限，超时就照常回「没查到」
 
     database_url: str = f"sqlite:///{REPO_ROOT / 'data' / 'dev.db'}"
     app_secret: str = "dev-only-secret-change-me"

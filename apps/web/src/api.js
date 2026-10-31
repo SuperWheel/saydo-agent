@@ -86,4 +86,6 @@ export const api = {
   rerankConfig: () => get('/admin/rerank-config'),
   saveRerankConfig: (body) => post('/admin/rerank-config', body),
   testRerank: () => post('/admin/rerank-config/test'),
+  agenticConfig: () => get('/admin/agentic-config'),
+  saveAgenticConfig: (enabled) => post('/admin/agentic-config', { enabled }),
 }
