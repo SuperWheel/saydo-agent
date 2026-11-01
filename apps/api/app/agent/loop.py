@@ -247,6 +247,21 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
         if not reply.tool_calls:
             final = _plain(reply.content)
             break
+        # 普通对话里模型自行补了未来购物日期时，整组调用都不执行，避免夹带立即下单。
+        for tc in reply.tool_calls:
+            spec = by_llm_name(tc.function.name)
+            if spec is None or spec.name not in ("merchant.quote", "merchant.options"):
+                continue
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except (ValueError, TypeError):
+                continue
+            d = parse_date(str(args.get("date") or ""), now()) if isinstance(args, dict) else None
+            if d and d > now().date():
+                msg = "未来日期的购物需要先确认计划。请说明购买日期、商品和预算，我再生成到期执行的计划卡。"
+                audit.record(db, ctx.trace_id, "future_shopping_blocked", {"tool": spec.name, "date": str(d)}, ctx.session.id)
+                ctx.cards.append(notice_card(msg, "warning"))
+                return msg, "rule"
         assistant = {"role": "assistant", "content": reply.content,
                      "tool_calls": [tc.model_dump(exclude_none=True) for tc in reply.tool_calls]}
         if reply.reasoning:  # GLM 思考模式：交错思考 + 工具调用时必须把思考内容随工具结果一起带回

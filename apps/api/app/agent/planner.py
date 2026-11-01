@@ -228,6 +228,8 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
     # 定时购物不能被模型改成立即购买，也不能偷偷换付款账户、商品或预算。
     if not errors and "order" in action_kinds(source_text):
         by_id = {s["id"]: s for s in steps}
+        if not {"merchant.quote", "order.propose"} <= {s["tool"] for s in steps}:
+            errors.append("购物计划必须包含询价和下单步骤")
         deposit = auto.pot_slots(source_text)
         wants_pot = uses_pot(source_text) or bool(deposit)
         if deposit and not any(s["tool"] == "pot.lock_propose" for s in steps):
@@ -259,8 +261,8 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
                 if a.get("for_whom") and _person("给" + a["for_whom"]) != _person(source_text):
                     errors.append("收礼人和你说的不一致")
                 a["for_whom"] = _person(source_text)
-                a["item_hint"] = next((m.group() for m in re.finditer(auto._GOODS, source_text)
-                                       if auto.category_of(m.group()) == auto.category_of(a.get("category", ""))), "")
+                a["item_hint"] = next((item for item in shopping_items(source_text)
+                                       if auto.category_of(item) == auto.category_of(a.get("category", ""))), "")
             if s["tool"] == "order.propose":
                 ref = _REF.match(str(a.get("quote_id", "")))
                 if not ref or by_id[ref.group(1)]["tool"] != "merchant.quote":
@@ -284,12 +286,16 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
 
 _EVENT = re.compile(r"生日|纪念日|周年|过节|结婚")
 _PERSON = [("妈妈", re.compile(r"我妈|妈妈|老妈|母亲")), ("爸爸", re.compile(r"我爸|爸爸|老爸|父亲")),
-           ("爱人", re.compile(r"爱人|老婆|媳妇|妻子|太太")), ("妹妹", re.compile(r"我妹|妹妹"))]
-_ORDER_WORD = re.compile(rf"(?:订|买|预订|购买|准备|送|定)(?!了|过|阅|单|的)[^，,。；;]{{0,16}}?(?:{auto._GOODS})")
+           ("爱人", re.compile(r"爱人|老婆|媳妇|妻子|太太")), ("妹妹", re.compile(r"我妹|妹妹")),
+           ("弟弟", re.compile(r"我弟|弟弟")), ("姐姐", re.compile(r"我姐|姐姐")), ("哥哥", re.compile(r"我哥|哥哥"))]
+_ORDER_WORD = re.compile(r"(?:购买|预订|下单|订|买|送|准备|(?<!锁|确|决|指|固|约)定)(?!了|过|阅|单|的|时|期|投|达)")
 _HISTORY = re.compile(r"上个月|上月|去年|上周|花了多少|花多少钱|花多少|账单|明细|记录|消费统计|买过|买了")
 _UNTRUSTED = re.compile(r"收款备注|商户描述|商品描述|收款说明|知识库|引用|原文|备注.{0,5}[：:「“\"]")
 _FUTURE = re.compile(r"明天|后天|下.{0,2}(周|星期|礼拜|月)|周末|[\d一二三四五六七八九十]+[月日号]|生日|纪念日|周年")
 _MONEY = r"[¥￥]?[\d零〇一二两三四五六七八九十百千万wWkK.]+(?:块|元)?"
+_SHOP_QUESTION = re.compile(r"什么|吗|么|多少|哪|推荐|建议|好不好|能不能|要不要|便宜|划算|贵不贵|需要|怎样|如何|[？?]|提醒")
+_ITEM_QUANTITY = r"(?:一|两|[1-9])?(?:个|台|部|双|束|本|份|件|款|点|张)"
+_VAGUE_ITEMS = {"东西", "礼物", "礼品", "啥"}
 
 
 def shopping_date(text: str, at: datetime) -> date | None:
@@ -312,18 +318,50 @@ def shopping_budget(text: str) -> str | None:
     m = re.search(rf"({_MONEY})\s*(?:以内|以下|之内|预算)", text)
     m = m or re.search(rf"(?:预算|不超过|最多|上限)\s*({_MONEY})", text)
     # 「600块钱的鞋子」「300左右的花」：商品前面的价钱也当预算上限
-    m = m or re.search(rf"({_MONEY})\s*钱?\s*(?:左右|上下)?\s*的[^，,。；;]{{0,4}}?(?:{auto._GOODS})", text)
+    m = m or re.search(rf"({_MONEY})\s*钱?\s*(?:左右|上下)?\s*的\s*[^\s，,。；;]+", text)
     m = m or re.search(rf"({_MONEY})\s*钱?\s*(?:左右|上下)", text)
     return m.group(1) if m else None
 
 
-def shopping_categories(text: str) -> list[str]:
-    # 商品只从购买分句的动词后提取；「鲜花心愿罐里的钱买鞋」不能额外买一束花。
-    goods = []
+def shopping_items(text: str) -> list[str]:
+    """先提取购买动词后的宾语，未知商品也保留，交给目录校验。"""
+    # 后接「推荐一下」「贷款怎么办」也仍是咨询；提醒买东西不等于授权下单。
+    if _SHOP_QUESTION.search(text):
+        return []
+    items = []
     for clause in _clauses(text):
-        if order := _ORDER_WORD.search(clause):
-            goods.extend(auto.category_of(m.group()) for m in re.finditer(auto._GOODS, clause[order.start():]))
-    return list(dict.fromkeys(goods))
+        if _HISTORY.search(clause) or re.search(r"订阅|退款|退货|取消|不要|多少钱|花多少|消费|支出|几次|多少次", clause):
+            continue
+        # 理财产品和基金仍交回理财分流；理财书籍是商城商品。
+        if (rule_intent(clause).intent == "wealth" or re.search(r"理财|基金|定投", clause)) and not re.search(r"书|图书|绘本", clause):
+            continue
+        order = _ORDER_WORD.search(clause)
+        if not order:
+            continue
+        tail = re.sub(r"\s+", "", clause[order.end():])
+        tail = re.sub(r"^(?:给)?(?:我妈(?:妈)?|我爸(?:爸)?|我弟(?:弟)?|我姐(?:姐)?|妈妈|爸爸|孩子|爱人)", "", tail)
+        tail = re.split(r"送(?:给)?|给(?:我|妈|爸|孩子)|预算|不超过|最多|上限|花\s*[\d一二两三四五六七八九十百千]", tail)[0]
+        for part in re.split(r"和|及|、|跟", tail):
+            part = re.sub(r"\s+", "", part)
+            part = re.sub(r"^(?:给)?(?:我妈(?:妈)?|我爸(?:爸)?|我弟(?:弟)?|我姐(?:姐)?|妈妈|爸爸|孩子|爱人)", "", part)
+            verb = order.group()
+            if nested := _ORDER_WORD.match(part):
+                verb, part = nested.group(), part[nested.end():]
+            if re.match(r"去|到|一下", part):
+                continue
+            if verb in ("送", "准备") and not (auto.category_of(part) or re.match(_ITEM_QUANTITY, part)):
+                continue
+            # 去掉量词、预算和口语后缀，不靠商品词表猜宾语。
+            part = re.sub(rf"^(?:{_ITEM_QUANTITY}|(?:{_MONEY})钱?(?:以内|以下|之内|左右|上下)?的)+", "", part)
+            part = re.sub(r"(?:吧|呀|啊|呢|一下|就行)[。？！?!]*$", "", part).strip("。？！?!")
+            if part and not re.fullmatch(r"[\d元块钱以内以下左右上下]+", part):
+                items.append(part)
+    return list(dict.fromkeys(items))
+
+
+def shopping_categories(text: str) -> list[str]:
+    # 「鲜花心愿罐里的钱买鞋」只买鞋；未知品类在规划前明确拒绝。
+    return list(dict.fromkeys(cat for item in shopping_items(text) if (cat := auto.category_of(item))))
 
 
 def _person(text: str) -> str:
@@ -350,7 +388,8 @@ def action_kinds(text: str) -> dict[str, int]:
     if _HISTORY.search(text) or _UNTRUSTED.search(text):
         return {}
     kinds: dict[str, int] = {}
-    if _ORDER_WORD.search(text):
+    d = shopping_date(text, now())
+    if shopping_items(text) and (shopping_categories(text) or _FUTURE.search(text) or d and d > now().date()):
         kinds["order"] = len(shopping_categories(text)) or 1
     if auto.pot_slots(text):
         kinds["pot"] = 1
@@ -424,7 +463,7 @@ PLANNER_PROMPT = """你是手机银行助手的任务规划器。把用户的多
    quote_id、pot_id、order_id 只能这样引用，绝对不要自己编。
 3. 未来时间的购物（明天、后天、周末、下周五、月日等）询价和下单必须 at="due"，绝不能现在下单。
    生日、纪念日提前 2 天下单、当天送达；普通日期当天 10:00 下单，送达按商户最早时效。
-   category 支持 flower/cake/shoes/digital/daily/book/giftcard。budget_text 照抄预算金额，没有预算就省略。
+   category 支持 flower/cake/shoes/digital/daily/book/giftcard/appliance。budget_text 照抄预算金额，没有预算就省略。
    用户说用心愿罐，先 pot_select(pot_hint=用户原话的用途/收礼人)，订单的 pot_id 引用其输出，payment_source="pot"。
    用户明确存钱，或说「锁定 / 预留 / 存 / 留出 X 元（活期）」时，第一步 pot_lock_propose，再引用该步骤的 pot_id。
    即使未说「心愿罐」也不能漏掉存款步骤；用途取收礼人和事件（如爱人生日），until 可设为事件当天。
@@ -908,9 +947,11 @@ def _prepare_shopping(ctx: ToolContext, steps: list[dict], text: str, event: dat
         q = auto.plan_quote(a["category"], for_whom=a.get("for_whom", ""), delivery_date=event,
                             at=max(now(), run), budget_fen=budget, item_hint=a.get("item_hint", ""))
         if q is None:
-            items = [i for i in auto.shops.catalog(a["category"]) if not a.get("item_hint") or a["item_hint"] in i.name]
+            items = auto.matching_items(a["category"], a.get("item_hint", ""))
             low = min((i.price_fen for i in items), default=None)
             what = a.get("item_hint") or auto.shops.CATEGORY_LABELS.get(a["category"], "商品")
+            if not items:
+                raise PlanRejected([auto.unavailable_item(what)], actionable=True)
             tip = f"最便宜的{what}要 ¥{fmt_yuan(low)}，" if low else ""
             raise PlanRejected([f"{fmt_yuan(budget) if budget else ''}元以内买不到{what}。{tip}可以提高预算后再说一遍。"],
                                actionable=True)
@@ -952,6 +993,18 @@ def _prepare_shopping(ctx: ToolContext, steps: list[dict], text: str, event: dat
 
 def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str, str]:
     at, raw, source = now(), None, "rule"
+    try:
+        for item in shopping_items(text):
+            if item in _VAGUE_ITEMS:
+                who = _person(text) or "自己"
+                raise PlanRejected([f"想给{who}买什么？目前能买：{auto._SUPPORTED}。请说出具体商品，我再生成计划。"], actionable=True)
+            cat = auto.category_of(item)
+            if cat is None or not auto.matching_items(cat, item):
+                raise PlanRejected([auto.unavailable_item(item)], actionable=True)
+    except PlanRejected as e:
+        audit.record(ctx.db, ctx.trace_id, "plan_rejected", {"source": source, "reasons": e.reasons}, ctx.session.id)
+        ctx.cards.append(notice_card(e.reasons[0], "warning"))
+        return e.reasons[0], source
     if "order" in action_kinds(text) and _FUTURE.search(text) and shopping_date(text, at) is None:
         msg = "请说明购物或生日、纪念日的具体日期，我再生成待执行计划。"
         ctx.cards.append(notice_card(msg, "warning"))

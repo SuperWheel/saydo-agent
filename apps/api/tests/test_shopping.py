@@ -229,7 +229,7 @@ def test_large_digital_order_is_red_even_from_pot(client):
         pass_auth(client, out["card"])
     sid = options(client, "想买个耳机", r["session_id"])["session_id"]
     c = say(client, "要第三个", sid)["cards"][0]
-    assert c["amount"] == "2,199.00" and c["level"] == "RED"
+    assert c["amount"] == "1,999.00" and c["level"] == "RED"  # 新增手机后，第三款按价格排序为 1999 元
 
 
 # ---------- 生日计划主线不变 ----------

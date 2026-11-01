@@ -325,10 +325,16 @@ def pot_release(db: Session, args: dict, *, idempotency_key: str, user_id: int) 
 # ---------- 模拟商户：询价、下单、取消（F-XS-03） ----------
 
 # 先列长词：「超市购物卡」是礼品卡，不是日用超市
-_CATEGORY_WORDS = {"giftcard": ("礼品卡", "购物卡", "电子卡", "卡券"), "flower": ("鲜花", "花束", "花"), "cake": ("蛋糕",),
-                   "shoes": ("鞋", "衣服", "服装"), "digital": ("数码", "耳机", "充电宝", "平板", "电子产品"),
+_CATEGORY_WORDS = {"giftcard": ("礼品卡", "购物卡", "电子卡", "卡券"), "flower": ("鲜花", "花束", "康乃馨", "玫瑰", "向日葵", "花"), "cake": ("蛋糕",),
+                   "shoes": ("鞋", "衣服", "服装"),
+                   "digital": ("数码", "耳机", "充电宝", "平板", "电子产品", "手机", "电脑", "相机", "手表", "音箱"),
                    "daily": ("日用", "超市", "纸巾", "洗衣液", "水果", "粮油", "米面", "零食"),
-                   "book": ("图书", "绘本", "书")}
+                   "book": ("图书", "绘本", "书"), "appliance": ("家电", "按摩椅", "按摩仪", "电饭煲", "空气炸锅")}
+
+_CATEGORY_GENERIC = {"flower": ("花", "鲜花", "花束"), "cake": ("蛋糕",), "shoes": ("鞋", "鞋子", "鞋服"),
+                     "digital": ("数码", "数码产品", "电子产品"), "daily": ("日用", "日用品", "日用超市", "超市"),
+                     "book": ("书", "书籍", "图书"), "giftcard": ("礼品卡", "购物卡", "电子卡", "卡券"),
+                     "appliance": ("家电", "家用电器")}
 
 
 def category_of(word: str) -> str | None:
@@ -444,14 +450,17 @@ def merchant_quote(ctx: ToolContext, category: str, for_whom: str = "", date: st
         return ToolResult({"status": "bad_budget", "message": "预算必须来自你的原话"})
     q = plan_quote(cat, for_whom=_clean(for_whom, 10), delivery_date=d, at=at, budget_fen=budget, item_hint=item_hint)
     if q is None:
-        return ToolResult({"status": "out_of_stock", "message": f"{shops.CATEGORY_LABELS[cat]}暂时没有可售商品"})
+        items = matching_items(cat, item_hint)
+        msg = (f"预算内买不到{item_hint or shops.CATEGORY_LABELS[cat]}，最低价 ¥{fmt_yuan(min(i.price_fen for i in items))}。"
+               if items else unavailable_item(item_hint or shops.CATEGORY_LABELS[cat]))
+        return ToolResult({"status": "out_of_stock", "message": msg})
     return ToolResult({"status": "ok", **q.view()})
 
 
 def plan_quote(category: str, *, for_whom: str, delivery_date: date, at: datetime,
                budget_fen: int | None = None, item_hint: str = "") -> shops.Quote | None:
-    """类目内有用户点名的商品时优先按名称筛选，避免把耳机换成平板。"""
-    matches = [i for i in shops.catalog(category) if item_hint and item_hint in i.name]
+    """先按商品名筛选，再看预算和收礼人；点名商品缺货时不换成同类其他商品。"""
+    matches = matching_items(category, item_hint)
     if matches:
         matches = [i for i in matches if budget_fen is None or i.price_fen <= budget_fen]
         preferred = shops.quote(category, for_whom=for_whom, delivery_date=delivery_date, at=at, budget_fen=budget_fen)
@@ -459,7 +468,27 @@ def plan_quote(category: str, *, for_whom: str, delivery_date: date, at: datetim
             return preferred
         matches.sort(key=lambda i: (not any(w in for_whom for w in i.for_whom), i.price_fen))
         return shops.quote_item(matches[0].sku, delivery_date=delivery_date, at=at) if matches else None
-    return shops.quote(category, for_whom=for_whom, delivery_date=delivery_date, at=at, budget_fen=budget_fen)
+    return None
+
+
+def matching_items(category: str, item_hint: str = "") -> list[shops.Item]:
+    # 「箱水果」「束鲜花」「礼品卡给同事」：去掉量词和「给谁」再比；中文商品名的中心词在末尾，
+    # 所以「平板电脑」按平板、「箱水果」按水果找，「手机壳」不会被当成手机。
+    hint = re.sub(r"(?:给|送给?).*$", "", item_hint.strip())
+    hint = re.sub(r"^[箱双束盒台部本份件个张支瓶套款只条]", "", hint).replace("平板电脑", "平板")
+    items = shops.catalog(category)
+    generic = _CATEGORY_GENERIC.get(category, ())
+    if not hint or hint == category or hint in generic:
+        return items
+    if named := [i for i in items if hint in i.name]:
+        return named
+    if any(hint.endswith(w) for w in generic):  # 「红色运动鞋」没有同名商品：按品类报价，商品都是鞋
+        return items
+    return [i for i in items if any(hint.endswith(w) and w in i.name for w in _CATEGORY_WORDS.get(category, ()))]
+
+
+def unavailable_item(item: str) -> str:
+    return f"合作商户暂时没有{item}，目前能买：{_SUPPORTED}。可以换一种商品再设置计划。"
 
 
 def quote_problem(q: shops.Quote | None, at: datetime) -> str | None:
