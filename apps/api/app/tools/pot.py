@@ -32,10 +32,10 @@ def _resolve(value, steps: dict):
 def _plans(db, user_id: int, pot_id: str) -> tuple[list[dict], int]:
     items, reserved, counted = [], 0, set()
     for plan in db.scalars(select(TaskPlan).where(TaskPlan.user_id == user_id,
-                                                TaskPlan.status.not_in(("done", "cancelled", "handoff")))):
+                                                TaskPlan.status.not_in(("done", "cancelled", "handoff", "expired")))):
         steps = {s["id"]: s for s in plan.steps}
         for step in plan.steps:
-            if step.get("status") in ("done", "cancelled", "removed"):
+            if step.get("status") in ("done", "cancelled", "removed", "expired"):
                 continue
             args = step.get("args") or {}
             if _resolve(args.get("pot_id"), steps) != pot_id:

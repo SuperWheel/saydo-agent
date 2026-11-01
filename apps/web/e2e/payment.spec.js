@@ -179,3 +179,22 @@ test('17 后天用心愿罐的钱给妈妈买鞋：先出计划不付款 → 确
   await say(page, '我的心愿罐')
   await expect(cards(page, 'pots-card').last().getByTestId('pot-item').first()).toContainText('已支出')
 })
+
+test('18 活期付款的定时购物：先存入心愿罐锁定预算 → 计划改为从心愿罐付款，按钮消失', async ({ page }) => {
+  await say(page, '下周四给我爸买个充电宝')
+  const plan = cards(page, 'plan-card')
+  await expect(plan).toContainText('活期借记卡')
+  const lock = plan.getByTestId('plan-lock-budget')
+  await expect(lock).toContainText('先存入心愿罐锁定预算')
+  await lock.getByRole('button').click()
+  await settled(page)
+  const deposit = cards(page, 'confirm-card')
+  await expect(deposit).toContainText('存入心愿罐')
+  await deposit.getByRole('button', { name: '确认' }).click()
+  await cards(page, 'auth-card').getByRole('button', { name: '模拟人脸识别' }).click()
+  await expect(cards(page, 'receipt-card')).toContainText('存入心愿罐成功')
+
+  const v2 = cards(page, 'plan-card').last()
+  await expect(v2).toContainText('已改为从心愿罐「爸爸购物」付款')
+  await expect(v2.getByTestId('plan-lock-budget')).toHaveCount(0)
+})
