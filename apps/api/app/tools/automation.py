@@ -96,13 +96,17 @@ def pot_txns(db: Session, user_id: int, pot_id: str) -> dict:
     entries = db.execute(select(Transaction, LedgerEntry).join(LedgerEntry, LedgerEntry.txn_id == Transaction.id)
                          .where(LedgerEntry.account_code == f"DEP:{pot.account_id}", Transaction.status == "succeeded")
                          .order_by(Transaction.created_at.desc(), Transaction.id.desc(), LedgerEntry.id.desc()))
-    labels = {"deposit": "从活期存入", "pay": "付款", "refund": "退款", "release": "退回活期"}
+    withdraw_keys = set(db.scalars(select(PendingAction.id).where(
+        PendingAction.user_id == user_id, PendingAction.tool == "pot.withdraw")))
+    labels = {"deposit": "从活期存入", "pay": "付款", "refund": "退款", "release": "退回活期", "withdraw": "转出到活期"}
     for txn, line in entries:
         fen = line.cr_fen - line.dr_fen  # 存款负债：贷方增加余额、借方减少余额
         if not fen:
             continue
         internal = txn.category == "心愿罐"
         kind = ("deposit" if fen > 0 else "release") if internal else ("refund" if fen > 0 else "pay")
+        if internal and fen < 0 and txn.idempotency_key in withdraw_keys:
+            kind = "withdraw"
         items.append({"at": f"{txn.created_at:%Y-%m-%d %H:%M}", "kind": kind, "label": labels[kind],
                       "amount": ("+" if fen > 0 else "-") + fmt_yuan(abs(fen)), "amount_fen": fen})
     return {"pot": {"pot_id": pot.id, "purpose": pot.purpose, "balance": fmt_yuan(acct.balance_fen),
@@ -182,11 +186,11 @@ def pot_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
         block = "心愿罐不存在"
     elif args.get("pot_id") and _own_pot(db, env.user_id, args["pot_id"]).status != "active":
         block = "心愿罐已经释放"
-    return base_context(db, env, tool="pot.lock", block_reason=block)
+    return base_context(db, env, tool="pot.lock", block_reason=block, facts={"pot_lock": True})
 
 
 @bank_tool(
-    name="pot.lock", domain=DOMAIN, base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    name="pot.lock", domain=DOMAIN, base_risk=Risk.RED, side_effect=True, llm_visible=False,
     needs_payment_agreement=True,
     policy_context=pot_context, description="从活期划入心愿罐。只能由工具网关凭执行令牌调用。",
 )
@@ -221,6 +225,36 @@ def _pick_pot(db: Session, user_id: int, hint: str) -> tuple[WishPot | None, lis
     hint = (hint or "").strip()
     hits = [p for p in pots if hint and (p.purpose in hint or hint in p.purpose or p.id == hint)] or pots
     return (hits[0] if len(hits) == 1 else None), hits
+
+
+@bank_tool(
+    name="pot.select", domain=DOMAIN, base_risk=Risk.GREEN,
+    description="按用户说的用途选择已有心愿罐，只有一个活跃罐时可直接选；多个不明确时追问。只读，不存钱、不付款。",
+    parameters={"type": "object", "properties": {
+        "pot_hint": {"type": "string", "description": "用户原话中的用途或收礼人，不填编号"},
+    }},
+)
+def pot_select(ctx: ToolContext, pot_hint: str = "") -> ToolResult:
+    def normalized(s):
+        for alias, name in (("我妈妈", "妈妈"), ("我妈", "妈妈"), ("老妈", "妈妈"), ("母亲", "妈妈"),
+                            ("我爸爸", "爸爸"), ("我爸", "爸爸"), ("老爸", "爸爸"), ("父亲", "爸爸"),
+                            ("老婆", "爱人"), ("妻子", "爱人")):
+            s = s.replace(alias, name)
+        return s
+
+    pots = active_pots(ctx.db, ctx.user_id)
+    hint = normalized(pot_hint)
+    hits = [p for p in pots if normalized(p.purpose) in hint or hint and hint in normalized(p.purpose)]
+    if not hits:
+        people = [w for w in ("妈妈", "爸爸", "爱人", "孩子", "儿子", "女儿") if w in hint]
+        hits = [p for p in pots if any(w in normalized(p.purpose) for w in people)] or pots
+    if not hits:
+        msg = "你还没有活跃的心愿罐，请先说明要存入的金额和用途，再设置购物计划；不会改用活期付款。"
+        return ToolResult({"status": "no_pot", "message": msg}, notice_card(msg, "warning"))
+    if len(hits) != 1:
+        msg = "要用哪个心愿罐？请带上用途重新说购物计划：" + "、".join(p.purpose for p in hits)
+        return ToolResult({"status": "need_pot", "message": msg}, notice_card(msg, "warning"))
+    return ToolResult({**_pot_view(ctx.db, hits[0]), "status": "ok"})
 
 
 @bank_tool(
@@ -394,18 +428,38 @@ def _category_of_action(action: PendingAction) -> str | None:
         "category": _CATEGORY_ENUM,
         "for_whom": {"type": "string", "description": "送给谁，照抄用户原话，如「我妈」「爱人」"},
         "date": {"type": "string", "description": "送达日期 YYYY-MM-DD，没说就不填（默认明天）"},
+        "budget_text": {"type": "string", "description": "本件预算上限，照抄用户原话的金额"},
+        "item_hint": {"type": "string", "description": "点名的商品，如耳机、充电宝、平板"},
     }, "required": ["category"]},
 )
-def merchant_quote(ctx: ToolContext, category: str, for_whom: str = "", date: str | None = None) -> ToolResult:
+def merchant_quote(ctx: ToolContext, category: str, for_whom: str = "", date: str | None = None,
+                   budget_text: str | None = None, item_hint: str = "") -> ToolResult:
     cat = category_of(category)
     if cat is None:
         return ToolResult({"status": "unsupported", "message": f"目前能代购的有{_SUPPORTED}"})
     at = now()
-    d = _when(date, at) or at.date() + timedelta(days=1)
-    q = shops.quote(cat, for_whom=_clean(for_whom, 10), delivery_date=d, at=at)
+    d = _parse_iso_date(date) or at.date() + timedelta(days=1)
+    budget = parse_amount(budget_text) if budget_text else None
+    if budget_text and (budget is None or not amount_from_user(budget, ctx.user_texts)):
+        return ToolResult({"status": "bad_budget", "message": "预算必须来自你的原话"})
+    q = plan_quote(cat, for_whom=_clean(for_whom, 10), delivery_date=d, at=at, budget_fen=budget, item_hint=item_hint)
     if q is None:
         return ToolResult({"status": "out_of_stock", "message": f"{shops.CATEGORY_LABELS[cat]}暂时没有可售商品"})
     return ToolResult({"status": "ok", **q.view()})
+
+
+def plan_quote(category: str, *, for_whom: str, delivery_date: date, at: datetime,
+               budget_fen: int | None = None, item_hint: str = "") -> shops.Quote | None:
+    """类目内有用户点名的商品时优先按名称筛选，避免把耳机换成平板。"""
+    matches = [i for i in shops.catalog(category) if item_hint and item_hint in i.name]
+    if matches:
+        matches = [i for i in matches if budget_fen is None or i.price_fen <= budget_fen]
+        preferred = shops.quote(category, for_whom=for_whom, delivery_date=delivery_date, at=at, budget_fen=budget_fen)
+        if preferred and preferred.item in matches:
+            return preferred
+        matches.sort(key=lambda i: (not any(w in for_whom for w in i.for_whom), i.price_fen))
+        return shops.quote_item(matches[0].sku, delivery_date=delivery_date, at=at) if matches else None
+    return shops.quote(category, for_whom=for_whom, delivery_date=delivery_date, at=at, budget_fen=budget_fen)
 
 
 def quote_problem(q: shops.Quote | None, at: datetime) -> str | None:
@@ -424,18 +478,22 @@ def quote_problem(q: shops.Quote | None, at: datetime) -> str | None:
     parameters={"type": "object", "properties": {
         "quote_id": {"type": "string", "description": "merchant_options 候选里用户选中那一款、或 merchant_quote 返回的报价单号，原样填写"},
         "pot_id": {"type": "string", "description": "从哪个心愿罐付款，不填时自动选用唯一的心愿罐"},
+        "payment_source": {"type": "string", "enum": ["pot", "debit"], "description": "计划须明确付款来源；pot 必须同时传 pot_id"},
     }, "required": ["quote_id"]},
 )
-def order_propose(ctx: ToolContext, quote_id: str, pot_id: str | None = None) -> ToolResult:
+def order_propose(ctx: ToolContext, quote_id: str, pot_id: str | None = None,
+                  payment_source: str | None = None) -> ToolResult:
     db, at = ctx.db, now()
     q = shops.lookup_quote(quote_id or "")
     if problem := quote_problem(q, at):
         return ToolResult({"status": "quote_invalid", "message": problem}, notice_card(problem, "warning"))
     price = q.item.price_fen
+    if payment_source not in (None, "pot", "debit") or payment_source == "pot" and not pot_id or payment_source == "debit" and pot_id:
+        return ToolResult({"status": "bad_source"}, notice_card("付款来源不明确，请重新确认。", "warning"))
     pot = _own_pot(db, ctx.user_id, pot_id) if pot_id else None
     if pot_id and (pot is None or pot.status != "active"):
         return ToolResult({"status": "pot_unavailable"}, notice_card("这个心愿罐已经释放，订单可以改从活期付款，请重新说一下。", "warning"))
-    if pot is None and not pot_id:
+    if pot is None and not pot_id and payment_source != "debit":
         usable = [p for p in active_pots(db, ctx.user_id) if db.get(Account, p.account_id).balance_fen >= price]
         pot = usable[0] if len(usable) == 1 else None
     debit = _debit(db, ctx.user_id)
@@ -489,7 +547,8 @@ def edit_order(ctx: ToolContext, selection: dict) -> ToolResult:
     # 先作废旧卡再出新卡：旧卡占着的当日累计额度要先释放，新卡的定级和「今日累计」才对。新卡没出来（比如超出限额）就整体回滚，旧卡照旧可用
     sp = db.begin_nested()
     actions.cancel(db, action_id=old.id, user_id=ctx.user_id)
-    result = order_propose(ctx, q.quote_id, pot_id=old.args.get("pot_id"))
+    result = order_propose(ctx, q.quote_id, pot_id=old.args.get("pot_id"),
+                           payment_source="pot" if old.args.get("pot_id") else "debit")
     if not (result.card and result.card["type"] == "confirm"):
         sp.rollback()
         audit.record(db, ctx.trace_id, "action_modify_failed", {"action_id": old.id, "status": result.data.get("status")},
@@ -873,7 +932,7 @@ def run_authorized(db: Session, *, user_id: int, session_id: str | None, trace_i
                                                          "level": decision.level.name}, session_id)
         return "needs_confirm", confirm_card(action)
     out = actions._execute(db, action)  # 授权内：沿用安全外壳的执行步骤（签发令牌 → 网关核验 → 回执）
-    return out.status, out.card
+    return out.status, {**out.card, "action_id": action.id}
 
 
 def _advance_schedule(st: ScheduledTransfer, ran_at: datetime) -> None:
@@ -939,13 +998,17 @@ def release_expired_pots(db: Session, user_id: int, trace_id: str) -> list[tuple
 # ---------- 规则兜底：单步的心愿罐、订花订蛋糕、定时转账、总览 ----------
 
 _POT_LOCK = re.compile(r"(存|放|锁|攒|留|转|划|预留|锁定)[^，,。；;]{0,12}心愿罐|心愿罐[^，,。；;]{0,4}(存|放|锁|攒|留|转|划)")
+_POT_MONEY = r"[¥￥]?[\d零〇一壹二两贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟万萬wWkK.]+(?:块|元)?"
+_POT_AMOUNT = re.compile(rf"(?:锁定|预留|留出|存入|存|放|锁|攒|留|转入|转|划入|划)\s*({_POT_MONEY})")
+# 未说「心愿罐」时，只接明确预留资金或无其他存款去向的「存 X 元（活期）」。
+_POT_RESERVE = re.compile(rf"(?:锁定|预留|留出)\s*{_POT_MONEY}|存(?:入)?\s*{_POT_MONEY}(?:活期)?\s*$")
 _LIST = re.compile(r"自动任务|定时转账有哪些|有哪些定时|心愿罐.{0,6}(多少|余额|情况|还有)|我设了哪些|我的心愿罐|我的计划")
 _SCHEDULE_CANCEL = re.compile(r"(取消|停掉|关掉|不要了).{0,8}(定时|每月|每个月|自动)转账|(定时|每月|每个月|自动)转账.{0,6}(取消|停掉|不要了)")
 _SCHEDULE = re.compile(r"(?P<when>每个?月的?(?:[\d一二三四五六七八九十]{1,3}[日号]|月?[初底末])|下下?个?月[\d一二三四五六七八九十]{1,3}[日号]"
                        r"|[\d一二三四五六七八九十]{1,2}月[\d一二三四五六七八九十]{1,3}[日号]|下下?(?:个)?(?:周|星期|礼拜)[一二三四五六日天]"
                        r"|明天|后天|大后天)[^，,。]{0,6}?(?:给|向)(?P<payee>[^\s，,。！!？?]{1,10}?)(?:转账|转)(?!了)"
                        r"(?P<amount>[¥￥]?[\d零〇一壹二两贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟万萬wWkK.]+(?:块|元)?)")
-_GOODS = (r"鲜花|花束|花(?!钱|了|费|在|销|多少|的|掉|光)|蛋糕|鞋|衣服|服装|耳机|充电宝|平板|数码|纸巾|洗衣液|日用|水果|粮油|米面"
+_GOODS = (r"鲜花|花束|花(?!钱|了|费|在|销|多少|的|掉|光|\s*[\d一二两三四五六七八九十百千万])|蛋糕|鞋|衣服|服装|耳机|充电宝|平板|数码|纸巾|洗衣液|日用|水果|粮油|米面"
           r"|零食|图书|绘本|书|礼品卡|购物卡|电子卡|卡券")
 # 「买双鞋」「给我妈订一束花」「买点纸巾」：动词后面隔几个字（量词、修饰）就是商品；「买了」「订阅」「订单」不算
 _ORDER = re.compile(rf"(?:订|买|预订|定|下单|购买)(?!了|过|阅|单|的)[^，,。？?！!\s]{{0,4}}?(?P<what>{_GOODS})")
@@ -970,14 +1033,26 @@ def schedule_slots(text: str) -> dict | None:
 
 
 def pot_slots(text: str) -> dict | None:
-    if not _POT_LOCK.search(text):
+    clauses = re.split(r"[，,。；;！!]|再|然后", text)
+    clause = next((c for c in clauses if _POT_LOCK.search(c) or _POT_RESERVE.search(c)), None)
+    if clause is None:
         return None
-    clause = next((c for c in re.split(r"[，,。；;]|再|然后", text) if "心愿罐" in c), text)
-    found = [m.group() for m in re.finditer(r"[¥￥]?[\d零〇一壹二两贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟万萬wWkK.]+(?:块|元)?", clause)
-             if parse_amount(m.group())]
-    purpose = (x := re.search(r"(?:给|为)(?P<who>[^\s，,。]{1,6}?)(?:过)?(?P<what>生日|纪念日|旅行|旅游)", text)) and \
-        (x.group("who").removeprefix("我") + x.group("what"))
-    return {"amount_text": found[0] if found else "", "purpose": purpose or "", "until": None}
+    # 金额从存钱动词后取，避免把同句的「11月20号」当成存款金额。
+    amount = _POT_AMOUNT.search(clause)
+    found = [m.group() for m in re.finditer(_POT_MONEY, clause) if parse_amount(m.group())]
+    purpose = ""
+    if x := re.search(r"用途[是为:：]?\s*([^\s，,。；;！!？?]{1,12})", text):
+        purpose = x.group(1)
+    elif x := re.search(r"(?P<who>妈妈|我妈|老妈|爸爸|我爸|老爸|爱人|老婆|媳妇|妻子|老公|女朋友|孩子|儿子|女儿|妹妹)"
+                        r"[^，,。；;]{0,14}?(?P<what>生日|纪念日|旅行|旅游)", text):
+        who = {"我妈": "妈妈", "我爸": "爸爸"}.get(x.group("who"), x.group("who"))
+        purpose = who + x.group("what")
+    elif x := re.search(r"(?:给|为)(?P<who>[^\s，,。]{1,6}?)(?:过)?(?P<what>生日|纪念日|旅行|旅游)", text):
+        purpose = x.group("who").removeprefix("我") + x.group("what")
+    elif x := re.search(r"(?:给|为)(?P<who>[^\s，,。；;]{1,6}?)(?:买|准备|挑|选)(?:个|一份)?礼物", text):
+        purpose = x.group("who").removeprefix("我") + "礼物"
+    return {"amount_text": amount.group(1) if amount else (found[0] if found else ""),
+            "purpose": purpose, "until": None}
 
 
 def rule_turn(ctx: ToolContext, text: str) -> tuple[str | None, list[tuple[str, dict, ToolResult]]] | None:

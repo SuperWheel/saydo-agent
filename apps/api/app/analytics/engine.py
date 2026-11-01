@@ -110,11 +110,11 @@ def load(db: Session, user_id: int, start: datetime, end: datetime, *,
         elif t.category == "储蓄":  # 演示日历流水每月转存定期：钱还在本人名下，不算消费
             out.append(Txn(**base, kind=KIND_TRANSFER, category="储蓄", cat_source="交易码", party="转存定期",
                            display=quarantine.display_name(t.counterparty), merchant_key=None))
-        elif t.contact_id is not None:
+        elif t.contact_id is not None or t.category == "转账":  # 历史亲友转账可没有当前联系人主数据
             c = contacts.get(t.contact_id)
             name = f"{c.masked_name}（{c.relation or c.note}）" if c and (c.relation or c.note) else (
                 c.masked_name if c else _mask_name(t.counterparty))
-            out.append(Txn(**base, kind=KIND_TRANSFER, category="转账", cat_source="收款人", party=name, display=name,
+            out.append(Txn(**base, kind=KIND_TRANSFER, category="转账", cat_source="收款人" if c else "交易码", party=name, display=name,
                            merchant_key=None, contact_id=t.contact_id))
         else:
             reg = quarantine.registered(t.merchant)

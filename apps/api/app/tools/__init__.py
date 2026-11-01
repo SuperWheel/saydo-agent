@@ -100,3 +100,9 @@ def llm_tool_specs(domains: set[str] | None = None, extra: tuple[str, ...] = ())
 
 def by_llm_name(llm_name: str) -> ToolSpec | None:
     return next((s for s in REGISTRY.values() if s.llm_name == llm_name), None)
+
+
+def register_pot_tools():
+    """按需注册心愿罐管理工具，避免动作模块导入注册表时循环导入。"""
+    from . import pot
+    return pot

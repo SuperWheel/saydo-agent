@@ -12,7 +12,7 @@ const code = ref('')
 const busy = ref('')
 const done = ref(false)
 const faceDone = computed(() => cur.value.factors.find((f) => f.factor === 'face')?.passed)
-// any：🔴 小额只因额度升级，人脸、短信任选一种（默认人脸，可改用短信）；all：两步都要过
+// any：🔴 人脸、短信任选一种（小额只因额度升级、绑定亲密关系、转入心愿罐；默认人脸，可改用短信）；all：两步都要过
 const anyOne = computed(() => cur.value.mode === 'any')
 const useSms = ref(false)
 const showSms = computed(() => (anyOne.value ? useSms.value : faceDone.value))
@@ -78,7 +78,7 @@ async function verify(factor) {
       </div>
       <div class="meta">
         还可尝试 {{ cur.attempts_left }} 次 ·
-        {{ anyOne ? '小额只需一种验证，人脸不是唯一可选方式' : '人脸不能作为唯一验证方式' }} · 人脸断言和验证码都绑定本笔交易摘要
+        {{ anyOne ? '本笔只需一种验证，人脸不是唯一可选方式' : '人脸不能作为唯一验证方式' }} · 人脸断言和验证码都绑定本笔交易摘要
       </div>
     </template>
     <div v-else class="done-mask">验证流程已结束</div>

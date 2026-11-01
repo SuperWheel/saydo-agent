@@ -9,11 +9,14 @@ from app.db import new_session
 from app.models import PendingAction, ScheduledTransfer, Transaction, WishPot
 
 from .conftest import confirm, say
-from .helpers import BALANCE, after_travel, balance, events, ledger_ok, order
+from .helpers import BALANCE, after_travel, balance, events, ledger_ok, order, pass_auth
 
 
 def ok(client, card: dict) -> dict:
     out = confirm(client, card).json()
+    if card["title"] == "存入心愿罐":
+        assert out["status"] == "awaiting_auth" and out["card"]["mode"] == "any"
+        out = pass_auth(client, out["card"])
     assert out["status"] == "succeeded", out
     return out
 
@@ -134,7 +137,7 @@ def test_cancel_schedule(client):
 def test_pot_lock_and_auto_release(client):
     r = say(client, "存500进心愿罐，下周五妈妈生日用")
     c = r["cards"][0]
-    assert c["title"] == "存入心愿罐" and c["level"] == "YELLOW" and "到期日" in dict(c["rows"])
+    assert c["title"] == "存入心愿罐" and c["level"] == "RED" and "到期日" in dict(c["rows"])
     ok(client, c)
     accts = client.get("/api/accounts").json()
     assert [a["balance"] for a in accts] == ["28,150.32", "500.00"]  # 钱还在名下，只是划到了子账户
@@ -281,7 +284,8 @@ def test_edit_order_rolls_back_when_new_card_fails(client, monkeypatch):
     r = order(client, "帮我订个蛋糕")
     old = r["cards"][0]
     monkeypatch.setattr(automation, "order_propose",
-                        lambda ctx, quote_id, pot_id=None: ToolResult({"status": "blocked"}, notice_card("超出限额", "error")))
+                        lambda ctx, quote_id, pot_id=None, payment_source=None:
+                        ToolResult({"status": "blocked"}, notice_card("超出限额", "error")))
     assert edit(client, r["session_id"], old, "C202")["cards"][0]["text"] == "超出限额"
     with new_session() as db:
         assert db.get(PendingAction, old["action_id"]).status == "pending"

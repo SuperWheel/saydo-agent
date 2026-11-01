@@ -4,6 +4,7 @@
 """
 
 import re
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
@@ -20,6 +21,7 @@ class Period:
     prev_end: datetime
     prev_label: str
     recognized: bool = True
+    annual: bool = False
 
 
 def _int(s: str) -> int | None:
@@ -89,10 +91,23 @@ def _rolling(days: int, at: datetime, label: str) -> Period:
     return Period(start, at, label, start - timedelta(days=days), start, f"前{days}天")
 
 
+def _year(y: int, at: datetime, *, completed_months: bool = False) -> Period:
+    start, end = datetime(y, 1, 1), datetime(y + 1, 1, 1)
+    prev_start = datetime(y - 1, 1, 1)
+    if end <= at:
+        return Period(start, end, f"{y}年", prev_start, start, f"{y - 1}年", annual=True)
+    end = datetime(y, at.month, 1) if completed_months else at
+    prev_end = end.replace(year=y - 1, day=min(end.day, monthrange(y - 1, end.month)[1]))
+    cutoff = end - timedelta(microseconds=1) if completed_months else at
+    label = f"{y}年（截至{cutoff.month}月{cutoff.day}日）" if end > start else f"{y}年（尚无已过月份）"
+    return Period(start, end, label, prev_start, prev_end, f"{y - 1}年同期", annual=True)
+
+
 _M = r"(\d{1,2}|十[一二]?|[一二三四五六七八九])"
 _MONTH_RANGE = re.compile(rf"(今年|去年)?{_M}月份?(?:到|至|~|～|-|—|－)+{_M}月")
 _QUARTER = re.compile(r"(今年|去年)?第?([一二三四1-4])季度")
 _YM = re.compile(r"(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*月?")
+_YEAR = re.compile(r"(\d{4})年(?:全年|一年|以来)?|(?:今年|本年|去年)(?:全年|一年|以来)?")
 _N = r"(\d{1,3}|[一两二三四五六七八九十百零半]{1,5})"
 _UNIT = r"(天|日|周|星期|礼拜|月|年)"
 # 「近30天」「最近的两周」「过去这三个月」「最近一百天」
@@ -143,7 +158,7 @@ _WORDS = re.compile(r"上上个?月|上个?月|(本|这个?|当)月|上个?(周|
 def strip_period(text: str) -> str:
     """去掉 text 里所有的时间说法（明细查询判断「整句话规则都接得住」时用）。"""
     t = text.replace(" ", "")
-    for pat in (_YM, _MONTH_RANGE, _QUARTER, _RECENT, _THIS_N, _WITHIN, _WORDS, _MONTH):
+    for pat in (_YM, _MONTH_RANGE, _QUARTER, _RECENT, _THIS_N, _WITHIN, _YEAR, _WORDS, _MONTH):
         t = pat.sub("", t)
     return t
 
@@ -189,12 +204,12 @@ def _parse(text: str, at: datetime) -> Period | None:
         return Period(y, today, "昨天", y - timedelta(days=1), y, "前天")
     if "今天" in t or "今日" in t:
         return Period(today, at, "今天", today - timedelta(days=1), at - timedelta(days=1), "昨天同期")
-    if "今年" in t or "本年" in t:
-        start = datetime(at.year, 1, 1)
-        return Period(start, at, f"{at.year}年（截至{at.month}月{at.day}日）", datetime(at.year - 1, 1, 1),
-                      datetime(at.year - 1, at.month, 1) + (at - _month_start(at.year, at.month)), "去年同期")
-    if "去年" in t:
-        start = datetime(at.year - 1, 1, 1)
-        return Period(start, datetime(at.year, 1, 1), f"{at.year - 1}年", datetime(at.year - 2, 1, 1), start,
-                      f"{at.year - 2}年")
+    if m := _YEAR.search(t):
+        y = int(m.group(1)) if m.group(1) else at.year - ("去年" in m.group(0))
+        if 1 < y <= at.year:
+            p = _year(y, at, completed_months="以来" in m.group(0))
+            # 保留「今年」原来的同期标签。
+            if m.group(0) in ("今年", "本年"):
+                return Period(**{**p.__dict__, "prev_label": "去年同期"})
+            return p
     return None

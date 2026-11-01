@@ -1,7 +1,7 @@
 <script setup>
 // 心愿罐收支明细行（心愿罐明细卡、自动任务卡里点开的弹层共用）：时间、说明、金额。金额字符串由后端带好正负号。
 defineProps({ items: { type: Array, required: true } })
-const KIND = { deposit: '存入', pay: '付款', refund: '退款', release: '退回活期' }
+const KIND = { deposit: '存入', pay: '付款', refund: '退款', release: '退回活期', withdraw: '转出到活期' }
 </script>
 
 <template>

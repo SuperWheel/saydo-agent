@@ -18,9 +18,10 @@ from .conftest import confirm, say, text, tool
 from .helpers import events, factors, pass_auth, pass_face, sms_code, verify
 
 
-def setup_card(client, single=200_000, daily=500_000, card_id=1, session_id=None):
+def setup_card(client, single=200_000, daily=500_000, card_id=1, session_id=None, valid_days=None):
     return say(client, "开通免密支付", session_id, selection={"type": "mandate_setup", "card_id": card_id,
-               "single_max_fen": single, "daily_max_fen": daily})["cards"][0]
+               "single_max_fen": single, "daily_max_fen": daily,
+               **({"valid_days": valid_days} if valid_days is not None else {})})["cards"][0]
 
 
 def enable(client, single=200_000, daily=500_000):
@@ -37,7 +38,8 @@ def test_form_defaults_scope_and_explicit_intent(client):
         response = say(client, sentence)
         card = response["cards"][0]
         assert card["type"] == "mandate" and card["mode"] == "form", response
-        assert card["defaults"] == {"single_max_fen": 50_000, "daily_max_fen": 200_000}
+        assert card["defaults"] == {"single_max_fen": 50_000, "daily_max_fen": 200_000, "valid_days": 365}
+        assert card["validity_options"] == [30, 90, 180, 365]
         assert card["caps"] == {"single_max_fen": 200_000, "daily_max_fen": 500_000}
         assert {c["intimacy"] for c in card["scope"]["contacts"]} == {"父母", "兄弟姐妹", "伴侣"}
         assert any(c["payable"] for c in card["cards"])
@@ -259,7 +261,7 @@ def test_merchant_nopwd_and_pot_unchanged(client):
     assert card["level"] == "YELLOW" and card["nopwd"]
     assert confirm(client, card).json()["status"] == "succeeded"
     pot = say(client, "存500到心愿罐")["cards"][0]
-    assert confirm(client, pot).json()["status"] == "succeeded"
+    assert pass_auth(client, confirm(client, pot).json()["card"])["status"] == "succeeded"
     another = order(client, "给妈妈订花")["cards"][0]
     assert another["level"] == "YELLOW" and "nopwd" not in another
 
@@ -384,3 +386,72 @@ def test_old_confirmation_cannot_borrow_new_mandate(client):
     assert confirm(client, old).json()["status"] == "invalidated"
     with new_session() as db:
         assert "nopwd" not in db.get(PendingAction, old["action_id"]).args
+
+
+def test_validity_sign_thirty_days_and_current_defaults(client):
+    card = setup_card(client, valid_days=30)
+    assert any(label == "有效期" and value == "30天（至 2026-11-29）" for label, value in card["rows"])
+    result = pass_auth(client, confirm(client, card).json()["card"])
+    assert result["status"] == "succeeded"
+    assert "30天（至 2026-11-29）" in str(result["card"])
+    with new_session() as db:
+        mandate = active_mandate(db, 1)
+        assert mandate.valid_days == 30 and mandate.valid_until - mandate.signed_at == timedelta(days=30)
+    form = say(client, "修改免密支付")["cards"][0]
+    assert form["defaults"]["valid_days"] == form["current"]["valid_days"] == 30
+    assert setup_card(client)["level"] == "YELLOW"
+
+
+def test_validity_extend_red_and_shorten_yellow(client):
+    card = setup_card(client, valid_days=90)
+    assert pass_auth(client, confirm(client, card).json()["card"])["status"] == "succeeded"
+    longer = setup_card(client, valid_days=180)
+    assert longer["level"] == "RED"
+    auth = confirm(client, longer).json()["card"]
+    assert auth["mode"] == "all" and factors(auth) == ["face", "sms"]
+    assert pass_auth(client, auth)["status"] == "succeeded"
+    shorter = setup_card(client, valid_days=30)
+    assert shorter["level"] == "YELLOW"
+    assert confirm(client, shorter).json()["status"] == "succeeded"
+    with new_session() as db:
+        row = active_mandate(db, 1)
+        assert row.valid_days == 30 and row.valid_until == clock.now() + timedelta(days=30)
+
+
+def test_same_duration_later_expiry_is_looser(client):
+    enable(client)
+    clock.travel(timedelta(days=1))
+    # 显式提交原期限天数才从现在重算，哪怕额度调低仍属延长。
+    assert setup_card(client, 50_000, 100_000, valid_days=365)["level"] == "RED"
+
+
+@pytest.mark.parametrize("single,daily,level", [(100_000, 200_000, "YELLOW"),
+                                                (50_000, 100_000, "YELLOW"),
+                                                (150_000, 250_000, "RED")])
+def test_omitted_validity_preserves_expiry_after_time_passes(client, single, daily, level):
+    enable(client, 100_000, 200_000)
+    with new_session() as db:
+        original_until = active_mandate(db, 1).valid_until
+    clock.travel(timedelta(days=7))
+    card = setup_card(client, single, daily)
+    assert card["level"] == level
+    assert ["有效期", f"365天（至 {original_until:%Y-%m-%d}）"] in card["rows"]
+    with new_session() as db:
+        action = db.get(PendingAction, card["action_id"])
+        assert action.args["valid_until"] == original_until.isoformat()
+    result = confirm(client, card).json()
+    if level == "RED":
+        result = pass_auth(client, result["card"])
+    assert result["status"] == "succeeded"
+    with new_session() as db:
+        row = active_mandate(db, 1)
+        assert row.valid_until == original_until and row.valid_days == 365
+
+
+@pytest.mark.parametrize("days", [0, -1, 31, 366, True, 30.0, "30", None, [], {}])
+def test_invalid_validity_rejected(client, days):
+    card = say(client, "设置免密", selection={"type": "mandate_setup", "card_id": 1,
+               "single_max_fen": 50_000, "daily_max_fen": 100_000, "valid_days": days})["cards"][0]
+    assert card["type"] == "notice" and "有效期" in card["text"]
+    with new_session() as db:
+        assert active_mandate(db, 1) is None and db.scalar(select(PendingAction.id)) is None

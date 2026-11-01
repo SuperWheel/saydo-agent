@@ -12,7 +12,8 @@ from .money import fmt_yuan
 AGREEMENT_VERSION = "2026.11"
 INTIMACY_OPTIONS = ("父母", "伴侣", "子女", "兄弟姐妹", "密友")
 CAPS = {"single_max_fen": 200_000, "daily_max_fen": 500_000}
-DEFAULTS = {"single_max_fen": 50_000, "daily_max_fen": 200_000}
+VALIDITY_OPTIONS = (30, 90, 180, 365)
+DEFAULTS = {"single_max_fen": 50_000, "daily_max_fen": 200_000, "valid_days": 365}
 
 
 def consent(db, user_id: int) -> PaymentConsent:
@@ -126,7 +127,7 @@ def current_view(db, user_id: int) -> dict | None:
             "single_max_fen": row.single_max_fen, "daily_max_fen": row.daily_max_fen,
             "single_max": fmt_yuan(row.single_max_fen), "daily_max": fmt_yuan(row.daily_max_fen),
             "used_today_fen": used, "used_today": fmt_yuan(used), "signed_at": f"{row.signed_at:%Y-%m-%d %H:%M}",
-            "valid_until": f"{row.valid_until:%Y-%m-%d}"}
+            "valid_until": f"{row.valid_until:%Y-%m-%d}", "valid_days": row.valid_days}
 
 
 def card_label(card: Card) -> str:
@@ -146,12 +147,12 @@ def mandate_card(db, user_id: int, mode: str = "form") -> dict:
     defaults = {key: current[key] for key in DEFAULTS} if current else dict(DEFAULTS)
     card = {"type": "mandate", "mode": mode, "title": "免密支付授权", "cards": cards,
             "default_card_id": current["card_id"] if current else next((c["id"] for c in cards if c["payable"]), None),
-            "caps": dict(CAPS), "defaults": defaults, "current": current, "scope": scope(db, user_id),
+            "caps": dict(CAPS), "validity_options": list(VALIDITY_OPTIONS), "defaults": defaults, "current": current, "scope": scope(db, user_id),
             "rules": ["仅对已验证亲密关系的联系人和合作商户生效；新收款人仍需强验证",
                       "免验证不免确认：每一笔仍需您核对并点击确认",
                       "超过单笔或每日额度、或不用默认卡付款，自动升级为强验证",
-                      "开通、调高额度、换卡需人脸与短信验证；调低或关闭只需确认",
-                      "授权有效期365天；可在我的支付授权中修改或关闭，反诈和注入检测不予豁免"]}
+                      "开通、调高额度、换卡或延长到期日需人脸与短信验证；收紧或关闭只需确认",
+                      "授权有效期可选30/90/180/365天；可在我的支付授权中修改或关闭，反诈和注入检测不予豁免"]}
     if mode == "invite":
         card["invite_text"] = "以后给家人转账、在合作商户付款，额度内只需点确认，不用刷脸和输验证码。要开通吗？"
     return card
@@ -174,8 +175,8 @@ def agreement_card(db, user_id: int, action: PendingAction | None = None) -> dic
             ], "sections": [
                 {"title": "一、适用范围", "body": "适用于转账、商户付款、定时转账授权和存入心愿罐。理财按其独立协议办理。"},
                 {"title": "二、确认与验证", "body": "模型只能提议，不能代替您同意或完成验证。确认内容绑定交易摘要，过期或风险变化须重新办理。"},
-                {"title": "三、额度与免密", "body": "免密仅对授权卡及已验证亲密联系人、合作商户生效，有效期365天；每日额度包含已成功与待确认金额。超过单笔、每日额度或改用其他卡须强验证。新收款人、拆单、频繁交易、反诈和注入风险不豁免。"},
-                {"title": "四、授权变更与撤回", "body": "开通、提额、换卡需人脸加短信；调低或关闭只需确认。可在我的支付授权管理免密，联系人工客服申请撤回服务协议；撤回后须重新同意方可付款，已完成交易不受影响。"},
+                {"title": "三、额度与免密", "body": "免密仅对授权卡及已验证亲密联系人、合作商户生效，有效期可选30/90/180/365天；每日额度包含已成功与待确认金额。超过单笔、每日额度或改用其他卡须强验证。新收款人、拆单、频繁交易、反诈和注入风险不豁免。"},
+                {"title": "四、授权变更与撤回", "body": "开通、提额、换卡或延长到期日需人脸加短信；收紧或关闭只需确认。可在我的支付授权管理免密，联系人工客服申请撤回服务协议；撤回后须重新同意方可付款，已完成交易不受影响。"},
                 {"title": "五、演示说明", "body": "本系统为比赛模拟环境，金额及验证均为演示数据，支付操作与授权变更保留审计记录。"},
             ]}
 

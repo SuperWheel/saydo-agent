@@ -3,14 +3,14 @@
 入口只有 route()（agent/loop.py 在模型和规则之前调用）：
   1. 会话里有进行中的计划时，先认控制语：继续、「蛋糕不要了」（重新规划）、「撤销锁定」（补偿）、取消计划、转人工；
   2. 「撤销锁定」「转人工」「每月 15 号给我妈转 2000」这类必须确定性处理的话（否则规则会当成锁卡、立即转账）；
-  3. 多步请求（跨场景动作 ≥ 2 个，或「生日 / 纪念日」+ 订花 / 存钱）才进规划器：有模型用模型出计划，
+  3. 多步请求或未来日期的购物进入规划器：有模型用模型出计划，
      模型不可用时用规则模板出计划；两者都过同一个校验器，校验不过就不执行、退回追问；
   4. 刚出过候选商品卡时的「要第二个」（两种模式都确定性处理，按候选卡顺序选）；
   5. 规则模式下其余单步的心愿罐、买东西（出候选卡）、定时转账（tools/automation.py 的 rule_turn）。
 其余返回 None，照常走模型或规则。
 
 安全边界：计划里只能出现已注册的模型可见工具（只读工具和提议工具），写操作仍由提议工具生成确认卡，
-每一步都单独走确认 →（🔴 强验证）→ 令牌 → 网关，确认计划不等于确认任何一笔付款。
+普通日期购物可由计划确认授权 🟡 范围的到期付款；其他写步骤仍单独确认，🔴 仍须验证。
 金额只能来自用户原话，报价单号、心愿罐编号只能引用前序步骤的结果（{{s1.pot_id}}），模型不能自己填。
 """
 
@@ -34,6 +34,7 @@ from ..models import ChatMessage, ChatSession, PendingAction, TaskPlan
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, asks_rule, normalize_hint, rule_intent
 from ..nlu.when import parse_date, parse_when
+from ..policy import Risk
 from ..security import mask_pii
 from ..tools import REGISTRY, ToolContext, ToolResult, ToolSpec, by_llm_name, model_tools
 from ..tools import automation as auto
@@ -48,6 +49,7 @@ ACTIVE = ("draft", "running", "waiting", "rolling_back")
 # 规划器提示词里介绍的工具，以及每个工具可以被后续步骤引用的输出字段。校验器的白名单是全部模型可见工具，
 # 但只有这里声明过的输出字段才能被引用。
 PLAN_TOOLS = {
+    "pot.select": ("只读选择已有心愿罐，pot_hint 填用途或收礼人；不明确时追问", ("pot_id",)),
     "pot.lock_propose": ("把一笔钱存进心愿罐（生成确认卡）", ("pot_id",)),
     "merchant.quote": ("向合作商户询价（category 填 flower 鲜花 / cake 蛋糕 等类目代码），按收礼人挑一件，只读", ("quote_id",)),
     "order.propose": ("按报价下单（生成订单确认卡），pot_id 填心愿罐步骤的引用就从心愿罐付款", ("order_id",)),
@@ -55,12 +57,13 @@ PLAN_TOOLS = {
     "schedule.transfer_propose": ("设置定时 / 每月转账（生成确认卡）", ("schedule_id",)),
     "account.balance": ("查余额，只读", ()),
 }
-_AMOUNT_KEYS = ("amount_text",)
+_AMOUNT_KEYS = ("amount_text", "budget_text")
 _PAYEE_KEYS = ("payee_hint",)
 _ID_KEYS = ("quote_id", "pot_id", "order_id", "schedule_id")  # 只能来自前序步骤的输出
 _DATE_KEYS = ("until", "date")
 _REF = re.compile(r"^\{\{\s*(s\d{1,2})\.(\w+)\s*\}\}$")
 _SCALAR = (str, int, float, bool, type(None))
+_ARG_TYPES = {"string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,)}
 
 STEP_LABELS = {"pending": "待执行", "awaiting": "待你确认", "done": "已完成", "failed": "未完成",
                "cancelled": "已取消", "removed": "已移出计划"}
@@ -68,9 +71,10 @@ _TERMINAL = ("done", "cancelled", "removed")
 
 
 class PlanRejected(Exception):
-    def __init__(self, reasons: list[str]):
+    def __init__(self, reasons: list[str], *, actionable: bool = False):
         super().__init__("；".join(reasons))
         self.reasons = reasons
+        self.actionable = actionable
 
 
 def _is_write(spec: ToolSpec) -> bool:
@@ -151,10 +155,12 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
             event_date = date.fromisoformat(str(raw["event_date"])[:10])
         except ValueError:
             errors.append("事件日期格式不对")
-    said = parse_date(source_text, at)
+    said = shopping_date(source_text, at)
     if event_date and said and event_date != said:
         errors.append(f"事件日期 {event_date} 和你说的不一致")
     event_date = event_date or said
+    if event_date and (said is None or not at.date() <= event_date <= at.date() + timedelta(days=366)):
+        errors.append("日期必须来自你的原话且在未来一年内")
     allowed = {s.name for s in model_tools()}
     steps, seen = [], set()
     for i, s in enumerate(raw["steps"]):
@@ -186,6 +192,11 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
                 errors.append(f"{sid}.{k} 的引用格式不对")
             elif isinstance(v, str) and _REF.match(v):
                 continue
+            elif (v is not None and (expected := props.get(k, {}).get("type")) in _ARG_TYPES
+                  and type(v) not in _ARG_TYPES[expected]):
+                errors.append(f"{sid}.{k} 参数类型不对")
+            elif v is not None and "enum" in props.get(k, {}) and v not in props[k]["enum"]:
+                errors.append(f"{sid}.{k} 参数值不在允许范围")
             elif k in _ID_KEYS and v not in (None, ""):
                 errors.append(f"{sid}.{k} 只能引用前序步骤的结果，不能直接填写")
             elif k in _AMOUNT_KEYS and v not in (None, ""):
@@ -214,6 +225,54 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
                       "origin": "plan", "status": "pending"})
     if not errors:
         errors = check_structure(steps)
+    # 定时购物不能被模型改成立即购买，也不能偷偷换付款账户、商品或预算。
+    if not errors and "order" in action_kinds(source_text):
+        by_id = {s["id"]: s for s in steps}
+        deposit = auto.pot_slots(source_text)
+        wants_pot = uses_pot(source_text) or bool(deposit)
+        if deposit and not any(s["tool"] == "pot.lock_propose" for s in steps):
+            errors.append("你要求先存入心愿罐，计划不能省略存款步骤")
+        for s in steps:
+            a = s["args"]
+            if s["tool"] == "pot.select":
+                a["pot_hint"] = source_text
+            if s["tool"] == "pot.lock_propose":
+                if not deposit:
+                    errors.append("你没有要求存入心愿罐，不能自行新增存款步骤")
+                elif parse_amount(a.get("amount_text", "")) != parse_amount(deposit["amount_text"]):
+                    errors.append("存入金额和你说的不一致")
+                if s["at"] != "now":
+                    errors.append("请先确认存入心愿罐，再等待购物日期")
+            if s["tool"] in ("merchant.quote", "order.propose") and said and said > at.date() and s["at"] != "due":
+                errors.append("未来日期的购物只能安排到期执行")
+            if s["tool"] == "merchant.quote":
+                if auto.category_of(a.get("category", "")) not in shopping_categories(source_text):
+                    errors.append("商品品类不是你说的")
+                if a.get("date") and a["date"] != str(said):
+                    errors.append("送达日期和你说的不一致")
+                if said:
+                    a["date"] = str(said)
+                if a.get("budget_text") != shopping_budget(source_text):
+                    errors.append("预算和你说的不一致")
+                if a.get("for_whom") and _person("给" + a["for_whom"]) != _person(source_text):
+                    errors.append("收礼人和你说的不一致")
+                a["for_whom"] = _person(source_text)
+                a["item_hint"] = next((m.group() for m in re.finditer(auto._GOODS, source_text)
+                                       if auto.category_of(m.group()) == auto.category_of(a.get("category", ""))), "")
+            if s["tool"] == "order.propose":
+                ref = _REF.match(str(a.get("quote_id", "")))
+                if not ref or by_id[ref.group(1)]["tool"] != "merchant.quote":
+                    errors.append("订单只能引用询价步骤")
+                if bool(a.get("pot_id")) != wants_pot:
+                    errors.append("付款来源和你说的不一致")
+                pot_ref = _REF.match(str(a.get("pot_id", "")))
+                if pot_ref and by_id[pot_ref.group(1)]["tool"] not in ("pot.select", "pot.lock_propose"):
+                    errors.append("心愿罐只能来自选择或存入步骤")
+                if deposit and pot_ref and by_id[pot_ref.group(1)]["tool"] != "pot.lock_propose":
+                    errors.append("订单必须使用本次存入的心愿罐")
+                if a.get("payment_source", "pot" if wants_pot else "debit") != ("pot" if wants_pot else "debit"):
+                    errors.append("付款来源和你说的不一致")
+                a["payment_source"] = "pot" if wants_pot else "debit"
     if errors:
         raise PlanRejected(errors)
     return goal, event_date, steps
@@ -224,12 +283,42 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
 _EVENT = re.compile(r"生日|纪念日|周年|过节|结婚")
 _PERSON = [("妈妈", re.compile(r"我妈|妈妈|老妈|母亲")), ("爸爸", re.compile(r"我爸|爸爸|老爸|父亲")),
            ("爱人", re.compile(r"爱人|老婆|媳妇|妻子|太太")), ("妹妹", re.compile(r"我妹|妹妹"))]
-_ORDER_WORD = re.compile(r"(订|买|预订|准备|送|定)[^，,。；;]{0,8}(花|蛋糕)")
-_WANT = {"flower": re.compile(r"花(?!钱|了|费|在)"), "cake": re.compile(r"蛋糕")}
+_ORDER_WORD = re.compile(rf"(?:订|买|预订|购买|准备|送|定)(?!了|过|阅|单|的)[^，,。；;]{{0,16}}?(?:{auto._GOODS})")
+_HISTORY = re.compile(r"上个月|上月|去年|上周|花了多少|花多少钱|花多少|账单|明细|记录|消费统计|买过|买了")
+_UNTRUSTED = re.compile(r"收款备注|商户描述|商品描述|收款说明|知识库|引用|原文|备注.{0,5}[：:「“\"]")
+_FUTURE = re.compile(r"明天|后天|下.{0,2}(周|星期|礼拜|月)|周末|[\d一二三四五六七八九十]+[月日号]|生日|纪念日|周年")
+_MONEY = r"[¥￥]?[\d零〇一二两三四五六七八九十百千万wWkK.]+(?:块|元)?"
+
+
+def shopping_date(text: str, at: datetime) -> date | None:
+    """生日与普通购物共用日期口径：周一为一周起点，周日说下周五指随后那个周五。"""
+    if "周末" in text:
+        return parse_date(text.replace("周末", "周六"), at)
+    return parse_date(text, at)
+
+
+def uses_pot(text: str) -> bool:
+    return "心愿罐" in text and bool(re.search(r"用|从|里的钱|余额|付款|支付", text))
+
+
+def shopping_budget(text: str) -> str | None:
+    m = re.search(rf"({_MONEY})\s*(?:以内|以下|之内|预算)", text)
+    m = m or re.search(rf"(?:预算|不超过|最多|上限)\s*({_MONEY})", text)
+    return m.group(1) if m else None
+
+
+def shopping_categories(text: str) -> list[str]:
+    # 商品只从购买分句的动词后提取；「鲜花心愿罐里的钱买鞋」不能额外买一束花。
+    goods = []
+    for clause in _clauses(text):
+        if order := _ORDER_WORD.search(clause):
+            goods.extend(auto.category_of(m.group()) for m in re.finditer(auto._GOODS, clause[order.start():]))
+    return list(dict.fromkeys(goods))
 
 
 def _person(text: str) -> str:
-    return next((name for name, pat in _PERSON if pat.search(text)), "")
+    return next((name for name, pat in _PERSON if pat.search(text)),
+                (m.group("who") if (m := auto._FOR_WHOM.search(text)) else ""))
 
 
 def _clauses(text: str) -> list[str]:
@@ -248,9 +337,11 @@ def _transfer_clauses(text: str) -> list[dict]:
 
 
 def action_kinds(text: str) -> dict[str, int]:
+    if _HISTORY.search(text) or _UNTRUSTED.search(text):
+        return {}
     kinds: dict[str, int] = {}
     if _ORDER_WORD.search(text):
-        kinds["order"] = sum(bool(p.search(text)) for p in _WANT.values()) or 1
+        kinds["order"] = len(shopping_categories(text)) or 1
     if auto.pot_slots(text):
         kinds["pot"] = 1
     if auto.schedule_slots(text):
@@ -265,7 +356,8 @@ def is_multi_step(text: str) -> bool:
     kinds = action_kinds(text)
     if not kinds or set(kinds) == {"transfer"}:  # 纯转账（含「再给我妹转」）照旧单步处理
         return False
-    return sum(kinds.values()) >= 2 or bool(_EVENT.search(text) and "order" in kinds)
+    d = shopping_date(text, now())
+    return sum(kinds.values()) >= 2 or bool("order" in kinds and (_FUTURE.search(text) or d and d > now().date()))
 
 
 def template_plan(text: str, at: datetime) -> dict | None:
@@ -273,9 +365,9 @@ def template_plan(text: str, at: datetime) -> dict | None:
     if not kinds:
         return None
     who = _person(text)
-    event = parse_date(text, at) if _EVENT.search(text) else None
+    event = shopping_date(text, at)
     occasion = (m := _EVENT.search(text)) and m.group() or ""
-    goal = f"{who}{occasion}准备" if who and occasion else "多步任务"
+    goal = f"{who}{occasion}准备" if who and occasion else (f"{who}定时购物" if event else "多步任务")
     steps, n = [], 0
 
     def add(tool, args, depends=(), when="now"):
@@ -289,13 +381,14 @@ def template_plan(text: str, at: datetime) -> dict | None:
         pot_id = add("pot.lock_propose", {"amount_text": slots["amount_text"],
                                           "purpose": slots["purpose"] or (f"{who}{occasion}" if who else "心愿"),
                                           "until": f"{event}" if event else None})
+    elif uses_pot(text):
+        pot_id = add("pot.select", {"pot_hint": text})
     if "order" in kinds:
-        for cat, pat in _WANT.items():
-            if not pat.search(text):
-                continue
+        for cat in shopping_categories(text):
             when = "due" if event else "now"
-            q = add("merchant.quote", {"category": cat, "for_whom": who, "date": f"{event}" if event else None}, when=when)
-            args = {"quote_id": f"{{{{{q}.quote_id}}}}"}
+            q = add("merchant.quote", {"category": cat, "for_whom": who, "date": f"{event}" if event else None,
+                                       "budget_text": shopping_budget(text)}, when=when)
+            args = {"quote_id": f"{{{{{q}.quote_id}}}}", "payment_source": "pot" if pot_id else "debit"}
             if pot_id:
                 args["pot_id"] = f"{{{{{pot_id}.pot_id}}}}"
             add("order.propose", args, [q, *([pot_id] if pot_id else [])], when=when)
@@ -319,8 +412,16 @@ PLANNER_PROMPT = """你是手机银行助手的任务规划器。把用户的多
    收款人参数 payee_hint 也照抄原话（用户说「我妈」就写「我妈」，不要改成「妈妈」「母亲」）。
 2. 后面的步骤要用前面步骤的结果时，写成引用，例如 "{{{{s2.quote_id}}}}"、"{{{{s1.pot_id}}}}"，并把被引用的步骤写进 depends_on。
    quote_id、pot_id、order_id 只能这样引用，绝对不要自己编。
-3. 为某一天（生日、纪念日）准备的询价和下单，at 写 "due"（系统会在那天前 2 天自动执行，到时再请用户确认订单）；其他步骤写 "now"。
+3. 未来时间的购物（明天、后天、周末、下周五、月日等）询价和下单必须 at="due"，绝不能现在下单。
+   生日、纪念日提前 2 天下单、当天送达；普通日期当天 10:00 下单，送达按商户最早时效。
+   category 支持 flower/cake/shoes/digital/daily/book/giftcard。budget_text 照抄预算金额，没有预算就省略。
+   用户说用心愿罐，先 pot_select(pot_hint=用户原话的用途/收礼人)，订单的 pot_id 引用其输出，payment_source="pot"。
+   用户明确存钱，或说「锁定 / 预留 / 存 / 留出 X 元（活期）」时，第一步 pot_lock_propose，再引用该步骤的 pot_id。
+   即使未说「心愿罐」也不能漏掉存款步骤；用途取收礼人和事件（如爱人生日），until 可设为事件当天。
+   不用心愿罐时 payment_source="debit"。
+   pot_select、pot_lock_propose at="now"。不得自行改用活期，不明确时由工具追问。
 4. event_date 是那一天的日期 YYYY-MM-DD；没有就写 null。日期参数也写 YYYY-MM-DD。
+   一周从周一开始；2026-11-01（周日）说「下周五」是 2026-11-06。「当月」本身不是具体日期。
 5. 付款、转账、存钱都只是生成确认卡，用户逐笔确认后才执行。
 
 格式：{{"goal": "不超过 12 个字", "event_date": "YYYY-MM-DD 或 null", "steps": [
@@ -365,6 +466,8 @@ def _step_title(plan_steps: list[dict], s: dict) -> str:
     a = s["args"]
     by_id = {x["id"]: x for x in plan_steps}
     match s["tool"]:
+        case "pot.select":
+            return "选择付款心愿罐"
         case "pot.lock_propose":
             fen = parse_amount(str(a.get("amount_text", "")))
             return f"存 ¥{fmt_yuan(fen) if fen else a.get('amount_text')} 进心愿罐（{a.get('purpose') or '心愿'}）"
@@ -405,8 +508,10 @@ def _decorate(steps: list[dict]) -> None:
 def _risk(s: dict) -> str:
     if s["kind"] == "read":
         return "🟢 自动"
-    if s.get("level") == "RED":
+    if s.get("level") == "RED" or s["tool"] == "pot.lock_propose":
         return "🔴 需强验证"
+    if s.get("purchase", {}).get("auto_pay"):
+        return "🟡 确认计划授权"
     return "🟡 需你确认"
 
 
@@ -417,7 +522,8 @@ def plan_card(plan: TaskPlan) -> dict:
         at_label = f"临期 {due:%m-%d %H:%M}" if s["at"] == "due" and due and s["status"] == "pending" else ""
         steps.append({"id": s["id"], "title": s["title"], "status": s["status"],
                       "status_label": STEP_LABELS[s["status"]], "kind": s["kind"], "risk": _risk(s),
-                      "at_label": at_label, "detail": s.get("detail") or s.get("note") or ""})
+                      "at_label": at_label, "detail": s.get("note") or s.get("detail") or "",
+                      "purchase": s.get("purchase")})
     stuck = any(s["status"] == "failed" for s in plan.steps)  # 有没办成的步骤时才显示「继续」（重试）
     ops = {"draft": ["confirm", "cancel"], "running": ["advance"] * stuck + ["cancel", "handoff"],
            "waiting": ["fast_forward", "cancel", "handoff"], "rolling_back": ["advance"] * stuck + ["handoff"]
@@ -432,7 +538,10 @@ def plan_card(plan: TaskPlan) -> dict:
             # 移出计划、撤销的步骤：前端把对话里这些确认卡标成已作废（后端早已作废，这里只是让画面一致）
             "void_action_ids": [s["action_id"] for s in plan.steps
                                 if s.get("action_id") and s["status"] in ("removed", "cancelled")],
-            "hint": "确认计划不等于确认付款：每一笔存入、下单、转账都会单独出确认卡。"}
+            "hint": ("确认计划即授权到期按卡内商品和金额上限付款；风险升高时重新确认。存入心愿罐须单独确认并任选人脸或短信验证。"
+                     if any(s.get("purchase", {}).get("auto_pay") for s in plan.steps) else
+                     "确认计划不等于确认付款：每一笔存入、下单、转账都会单独出确认卡。"),
+            "payment_source": "心愿罐" if any(s["args"].get("pot_id") for s in plan.steps) else "活期借记卡"}
 
 
 # ---------- 执行器 ----------
@@ -468,12 +577,34 @@ def _run_step(ctx: ToolContext, plan: TaskPlan, s: dict) -> bool:
     spec = REGISTRY[s["tool"]]
     try:
         args = _resolve(plan, s["args"])
+        purchase = s.get("purchase")
+        if purchase and s["tool"] == "order.propose":
+            q = auto.shops.lookup_quote(args["quote_id"])
+            if not q or q.item.sku != purchase["sku"] or q.item.price_fen > purchase["budget_fen"]:
+                raise GatewayError("商品或金额超出计划授权，请取消计划后重新设置")
         result = run_read_tool(spec, ctx, args)  # 与模型调用工具同一个网关：白名单参数、断路器、保存点
     except GatewayError as e:
         s["status"], s["note"] = "failed", str(e)
         return False
     _audit_tool(ctx, spec.name, args, result, plan_id=plan.id, step=s["id"])
     card = result.card
+    if s.get("purchase", {}).get("auto_pay") and card and card["type"] == "confirm" and card["level"] == "YELLOW":
+        # 复用到期执行的安全外壳；先释放提议卡的预占，避免风控把本笔算两次。
+        pending = ctx.db.get(PendingAction, card["action_id"])
+        actions.cancel(ctx.db, action_id=pending.id, user_id=ctx.user_id)
+        status, card = auto.run_authorized(ctx.db, user_id=ctx.user_id, session_id=ctx.session.id,
+                                          trace_id=ctx.trace_id, tool=pending.tool, args=pending.args,
+                                          display=pending.display, authorized=Risk.YELLOW, label="定时购物")
+        if status == "succeeded":
+            s["status"], s["output"] = "done", _scalars(ctx.db.get(PendingAction, card["action_id"]).result)
+            s["detail"] = pending.display["summary"]
+            s["item"] = pending.display.get("fields", {}).get("item")
+            ctx.cards.append(card)
+            return True
+        if status != "needs_confirm":
+            s["status"], s["note"] = "failed", card.get("text") or "到期付款未成功"
+            ctx.cards.append(card)
+            return False
     if s["kind"] != "read":
         if card and card["type"] == "confirm":
             s["status"], s["action_id"], s["level"] = "awaiting", card["action_id"], card["level"]
@@ -588,6 +719,8 @@ def _progress_text(plan: TaskPlan) -> str:
     if failed:
         return f"这一步没办成：{failed['title']}（{failed['note']}）。可以说「继续」重试，或说「转人工」。"
     if plan.status == "waiting":
+        if any(s.get("purchase", {}).get("auto_pay") for s in plan.steps):
+            return f"计划将在 {plan.due_at:%m-%d %H:%M} 按卡内授权执行；风险升高时会重新请你确认。"
         return f"前面的步骤办好了。临期步骤会在 {plan.due_at:%m-%d %H:%M} 自动询价，到时请你确认订单。"
     if plan.status == "done":
         return "计划里的步骤都办完了。"
@@ -602,7 +735,8 @@ def _new_plan(ctx: ToolContext, *, goal: str, event_date: date | None, steps: li
               source: str) -> TaskPlan:
     due = None
     if event_date and any(s["at"] == "due" for s in steps):
-        due = datetime.combine(event_date - timedelta(days=DUE_DAYS_BEFORE), datetime.min.time()).replace(hour=DUE_HOUR)
+        lead = DUE_DAYS_BEFORE if _EVENT.search(text) else 0
+        due = datetime.combine(event_date - timedelta(days=lead), datetime.min.time()).replace(hour=DUE_HOUR)
         if due <= now():  # 日子太近：临期步骤确认计划后马上执行
             due = None
             for s in steps:
@@ -615,8 +749,77 @@ def _new_plan(ctx: ToolContext, *, goal: str, event_date: date | None, steps: li
     return plan
 
 
+def _prepare_shopping(ctx: ToolContext, steps: list[dict], text: str, event: date | None) -> None:
+    """只读预检：先绑定罐，再展示到期购物的授权范围；不创建订单或付款动作。"""
+    selected = {}
+    for s in steps:
+        if s["tool"] == "pot.select":
+            result = run_read_tool(REGISTRY[s["tool"]], ctx, s["args"])
+            _audit_tool(ctx, s["tool"], s["args"], result)
+            if result.data.get("status") != "ok":
+                raise PlanRejected([result.data.get("message") or (result.card or {}).get("text") or "心愿罐选择未成功"],
+                                   actionable=result.data.get("status") in ("no_pot", "need_pot"))
+            s["status"], s["output"] = "done", _scalars(result.data)
+            s["detail"] = f"心愿罐「{result.data['purpose']}」余额 ¥{fmt_yuan(result.data['balance_fen'])}"
+            selected[s["id"]] = result.data
+    if not event:
+        return
+    by_id = {s["id"]: s for s in steps}
+    budget_text = shopping_budget(text)
+    budget = parse_amount(budget_text) if budget_text else None
+    total, per_pot, orders = 0, {}, [s for s in steps if s["tool"] == "order.propose"]
+    for s in orders:
+        quote_step = by_id[_REF.match(s["args"]["quote_id"]).group(1)]
+        a = quote_step["args"]
+        # 普通日期当天才下单，预览送达日也按当天的最早配送时效算。
+        run = datetime.combine(event - timedelta(days=DUE_DAYS_BEFORE if _EVENT.search(text) else 0),
+                               datetime.min.time()).replace(hour=DUE_HOUR)
+        q = auto.plan_quote(a["category"], for_whom=a.get("for_whom", ""), delivery_date=event,
+                            at=max(now(), run), budget_fen=budget, item_hint=a.get("item_hint", ""))
+        if q is None:
+            raise PlanRejected(["预算内没有可售商品，请调整预算后重新设置计划"])
+        total += q.item.price_fen
+        pot_ref = _REF.match(s["args"].get("pot_id", ""))
+        if pot_ref:
+            pid = pot_ref.group(1)
+            per_pot[pid] = per_pot.get(pid, 0) + q.item.price_fen
+        cap = budget if budget and len(orders) == 1 else q.item.price_fen
+        source = f"心愿罐「{selected[pot_ref.group(1)]['purpose']}」" if pot_ref and pot_ref.group(1) in selected else (
+            "心愿罐" if pot_ref else "活期借记卡")
+        s["purchase"] = {"sku": q.item.sku, "item": q.item.name, "category": q.shop.category,
+                         "for_whom": a.get("for_whom", ""), "budget_fen": cap, "budget": fmt_yuan(cap),
+                         "estimated_fen": q.item.price_fen, "payment_source": source,
+                         "run_at": run.isoformat(), "delivery_date": str(q.delivery_date),
+                         "delivery": q.delivery, "authorized_level": "YELLOW", "auto_pay": not bool(_EVENT.search(text))}
+        s["detail"] = (f"{q.item.name}；给{a.get('for_whom') or '自己'}；上限 ¥{fmt_yuan(cap)}；"
+                       f"{source}付款；预计 {q.delivery} 送达；风险升高时重新确认")
+    if budget and total > budget:
+        raise PlanRejected(["这些商品的合计超过预算，请提高总预算或减少商品"])
+    for sid, required in per_pot.items():
+        if sid in selected:
+            pot = selected[sid]
+            if pot.get("until") and date.fromisoformat(pot["until"]) < event:
+                raise PlanRejected(["所选心愿罐在购物日期之前到期，请先调整心愿罐或购物日期"])
+            if pot["balance_fen"] < required:
+                missing = f"{(required - pot['balance_fen']) / 100:.2f}".rstrip("0").rstrip(".")
+                raise PlanRejected([f"心愿罐余额不足，预计需 ¥{fmt_yuan(required)}，现有 ¥{fmt_yuan(pot['balance_fen'])}。"
+                                    f"可以先说「存 {missing} 到心愿罐，用途{pot['purpose']}」补足后重新设置计划，"
+                                    "或明确说改用活期付款；不会改用活期自动付款。"], actionable=True)
+        elif by_id[sid]["tool"] == "pot.lock_propose":
+            planned = parse_amount(by_id[sid]["args"]["amount_text"])
+            existing = next((p for p in auto.active_pots(ctx.db, ctx.user_id)
+                             if p.purpose == by_id[sid]["args"].get("purpose", "心愿")), None)
+            available = planned + (auto._pot_view(ctx.db, existing)["balance_fen"] if existing else 0)
+            if available < required:
+                raise PlanRejected([f"计划存入金额不足，商品预计合计 ¥{fmt_yuan(required)}，请明确补足金额后重新设置"])
+
+
 def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str, str]:
     at, raw, source = now(), None, "rule"
+    if "order" in action_kinds(text) and _FUTURE.search(text) and shopping_date(text, at) is None:
+        msg = "请说明购物或生日、纪念日的具体日期，我再生成待执行计划。"
+        ctx.cards.append(notice_card(msg, "warning"))
+        return msg, source
     if llm is not None:
         try:
             raw, source = _llm_plan(llm(), ctx, text, at), "llm"
@@ -629,12 +832,16 @@ def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str,
         return "这件事要分几步办，我没能完整理解。可以分开说，比如先说「存500进心愿罐」，再说「帮我订一束花」。", source
     try:
         goal, event_date, steps = validate(raw, source_text=text, at=at)
-    except PlanRejected as e:
+        _prepare_shopping(ctx, steps, text, event_date)
+    except (PlanRejected, GatewayError) as e:
+        if isinstance(e, GatewayError):
+            e = PlanRejected([str(e)])
         audit.record(ctx.db, ctx.trace_id, "plan_rejected", {"source": source, "reasons": e.reasons,
                                                              "plan": mask_pii(json.dumps(raw, ensure_ascii=False))[:1500]},
                      ctx.session.id)
-        ctx.cards.append(notice_card(f"这个计划没有通过安全校验（{e.reasons[0]}），我先不执行。", "warning"))
-        return f"这个计划没有通过安全校验（{e.reasons[0]}），我先不执行。请把要办的事说具体一些，比如金额、收款人和日期。", source
+        message = e.reasons[0] if e.actionable else f"这个计划没有通过安全校验（{e.reasons[0]}），我先不执行。"
+        ctx.cards.append(notice_card(message, "warning"))
+        return message if e.actionable else message + "请把要办的事说具体一些，比如金额、收款人和日期。", source
     plan = _new_plan(ctx, goal=goal, event_date=event_date, steps=steps, text=text, source=source)
     audit.record(ctx.db, ctx.trace_id, "plan_created", {"plan_id": plan.id, "source": source, "goal": goal,
                                                         "steps": [{k: s[k] for k in ("id", "tool", "depends_on", "at")}
@@ -643,7 +850,9 @@ def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str,
     _audit_tool(ctx, "plan.create", {"steps": len(steps)}, ToolResult({"status": "draft"}, card), plan_id=plan.id)
     ctx.cards.append(card)
     writes = sum(s["kind"] == "write" for s in plan.steps)
-    due = f"其中询价和下单会在 {plan.due_at:%m-%d %H:%M}（{plan.event_date:%m-%d} 前 {DUE_DAYS_BEFORE} 天）自动开始。" if plan.due_at else ""
+    due = f"其中询价和下单会在 {plan.due_at:%m-%d %H:%M} 自动开始。" if plan.due_at else ""
+    if any(s.get("purchase", {}).get("auto_pay") for s in steps):
+        return f"请核对计划中的商品、对象、预算和付款来源。{due}确认计划后按卡内授权执行，风险升高时重新确认。", source
     return (f"我把这件事拆成了 {len(plan.steps)} 步，请先看一下计划。{due}"
             f"确认后我按步骤办，其中 {writes} 步涉及资金，每一步都会单独请你确认。"), source
 
@@ -891,6 +1100,10 @@ def route(ctx: ToolContext, guard, llm: Callable | None = None) -> tuple[str, st
     text = (guard.text or "").strip()
     if not text:
         return None
+    if (_UNTRUSTED.search(text) or guard.suspicious) and _ORDER_WORD.search(text):
+        msg = "备注、商户描述或引用内容不会作为购物指令执行。请单独说出你要办理的事项。"
+        ctx.cards.append(notice_card(msg, "warning"))
+        return msg, "rule"
     plan = active_plan(ctx.db, ctx.session.id, include_done=True)
     if plan is not None and (out := _control(ctx, plan, text)) is not None:
         touch(plan)
