@@ -137,6 +137,7 @@ def pot_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
 
 @bank_tool(
     name="pot.lock", domain=DOMAIN, base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    needs_payment_agreement=True,
     policy_context=pot_context, description="从活期划入心愿罐。只能由工具网关凭执行令牌调用。",
 )
 def pot_lock(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:
@@ -456,6 +457,8 @@ def edit_order(ctx: ToolContext, selection: dict) -> ToolResult:
 
 
 def order_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
+    from ..payments import apply_nopwd
+
     q = shops.lookup_quote(args["quote_id"])
     block = quote_problem(q, now())
     if block is None and (q.item.price_fen != args["amount_fen"] or q.shop.id != args["shop_id"]):
@@ -468,11 +471,14 @@ def order_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
         ctx.balance_fen = db.get(Account, pot.account_id).balance_fen
     after = ctx.outflow_today_fen + args["amount_fen"]
     ctx.facts["order_fast_path"] = bool(q and q.shop.whitelisted and pot is not None and after <= _YELLOW_MAX_FEN)
+    if not args.get("pot_id"):
+        apply_nopwd(db, args, env, ctx, q.shop if q else None)
     return ctx
 
 
 @bank_tool(
     name="order.pay", domain=DOMAIN, base_risk=Risk.YELLOW, side_effect=True, llm_visible=False, moves_money=True,
+    needs_payment_agreement=True,
     policy_context=order_context, description="向模拟商户下单并付款。只能由工具网关凭执行令牌调用。",
 )
 def order_pay(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:
@@ -640,6 +646,7 @@ def schedule_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
 
 @bank_tool(
     name="schedule.transfer_create", domain=DOMAIN, base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    needs_payment_agreement=True,
     policy_context=schedule_context, description="创建定时转账授权。只能由工具网关凭执行令牌调用。",
 )
 def schedule_transfer_create(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:

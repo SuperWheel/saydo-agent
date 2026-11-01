@@ -22,6 +22,7 @@ from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, fraud, narrow_payees, resolve_payee
 from ..nlu.transfer import ME_WORDS, is_phone_hint, mask_phone, resolve_phone, split_names
 from ..policy import PolicyContext, Risk, load_rules
+from ..payments import apply_nopwd
 from ..security import mask_pii
 from . import REGISTRY, ToolContext, ToolResult, bank_tool
 
@@ -239,7 +240,8 @@ def _window_facts(db: Session, args: dict, env: PolicyEnv, ctx: PolicyContext) -
 def transfer_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
     if args.get("contact_id") is not None:
         contact = db.get(Contact, args["contact_id"])
-        changed = contact is None or contact.account_no != args["account_no"]
+        changed = (contact is None or contact.user_id != env.user_id or contact.status != "active"
+                   or contact.account_no != args["account_no"])
         known = not changed and contact.first_transfer_at is not None
         block = "收款人信息已变化" if changed else None
     else:  # 按手机号查到的收款人：再核一次目录，户名或账号对不上就拒绝
@@ -251,11 +253,13 @@ def transfer_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
                        block_reason=block)
     ctx.facts |= _window_facts(db, args, env, ctx)
     ctx.facts["fraud_suspected"] = bool(args.get("fraud_hits"))
+    apply_nopwd(db, args, env, ctx, contact if args.get("contact_id") is not None else saved)
     return ctx
 
 
 @bank_tool(
     name="transfer.create", domain="transfer", base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    needs_payment_agreement=True,
     moves_money=True, policy_context=transfer_context, description="执行转账。只能由工具网关凭执行令牌调用。",
 )
 def transfer_create(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:

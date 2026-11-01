@@ -33,6 +33,7 @@ from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
 from ..tools.automation import edit_order, pick_option
+from ..tools import payment
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
@@ -81,7 +82,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     trace_id = secrets.token_hex(8)
     guard = inspect(text or "")
     audit.record(db, trace_id, "user_message", {"text": mask_pii(guard.text), "flags": guard.flags,
-                                                "selection": selection, "channel": channel}, session.id)
+                                                "selection": _mask_strings(selection), "channel": channel}, session.id)
     if guard.suspicious:
         audit.record(db, trace_id, "injection_suspected", {"flags": guard.flags}, session.id)
         breaker.on_injection(db, user_id=user_id, session_id=session.id, trace_id=trace_id, flags=guard.flags)
@@ -269,7 +270,7 @@ def _llm_turn(ctx: ToolContext, text: str) -> tuple[str, str] | None:
     # 对话轮次本身从不执行办理；本轮只有查询类卡片时，「已锁定」这类说法可能是在讲状态
     kinds = {c["type"] for c in ctx.cards}
     opts = {"executed": False, "has_card": bool(kinds),
-            "status_only": bool(kinds) and not kinds & {"confirm", "clarify"}}
+            "status_only": bool(kinds) and not kinds & {"confirm", "clarify", "mandate", "payment_agreement"}}
     g = check(final, facts, **opts)
     if g.ok:
         return _brief(ctx, final), "llm"
@@ -353,11 +354,12 @@ def _brief(ctx: ToolContext, text: str) -> str:
 
 NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
 # 候选商品卡也结束这一轮：等用户自己挑，不让模型接着替用户下单
-ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind"}
+ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind", "payment_agreement", "mandate", "payment_overview"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
-                  "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill", "faq": "knowledge"}
+                  "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill", "faq": "knowledge",
+                  "mandate": "payment"}
 _CLAUSE = re.compile(r"[，,。.？?！!；;\n]|再|另外|然后|顺便")
 
 
@@ -390,6 +392,7 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
 # 不在名单里的照常走模型：知识问答、自由分析、规划。
 # 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
 WORKFLOW_TOOLS = {
+    "mandate:form": "mandate.form", "mandate:revoke": "mandate.revoke_propose", "mandate:overview": "payment.overview",
     "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
     "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
     "bill_query": "bill.query",
@@ -498,6 +501,12 @@ def _template_reply(cards: list[dict]) -> str:
         return help_text()
     c = cards[-1]
     match c["type"]:
+        case "payment_agreement":
+            return "请先阅读并同意支付服务协议，再继续办理。" if c["status"] == "unsigned" else "这是您已签署的支付服务协议。"
+        case "mandate":
+            return "请选择付款卡和免密额度，提交后仍需确认和验证。"
+        case "payment_overview":
+            return "这是您的支付协议和免密授权情况。"
         case "balance":
             return f"你名下账户余额合计 {c['total']} 元。"
         case "confirm":
@@ -532,6 +541,9 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
                  ctx.session.id)
     if intent.intent == "balance":
         return prefix + _apply(ctx, get_balance(ctx)), "rule"
+    if intent.intent == "mandate":
+        handler = {"form": payment.mandate_form, "revoke": payment.revoke_propose, "overview": payment.overview}[intent.slots["op"]]
+        return prefix + _apply(ctx, handler(ctx)), "rule"
     if intent.intent == "transfer":
         s = intent.slots
         result = propose(ctx, payee_hint=s["payee_hint"], amount_text=s["amount_text"], memo=s.get("memo"))
@@ -566,6 +578,15 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 
 
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
+    if selection.get("type") in ("payment_agreement", "mandate_setup", "mandate_change", "mandate_offer"):
+        result = payment.selection_turn(ctx, selection)
+        reply = _apply(ctx, result)
+        if (selection.get("type") == "payment_agreement" and selection.get("action") == "sign"
+                and result.card and result.card["type"] == "confirm"):
+            return "已记录您的同意，请核对这笔交易。"
+        if selection.get("type") == "payment_agreement" and result.data.get("status") == "signed":
+            return "已签署《支付服务协议》。"
+        return reply
     if selection.get("type") == "risk_answers":  # 理财（WS5）：问卷卡回传用户逐题点选的答案
         return _apply(ctx, submit_quiz(ctx, selection))
     if selection.get("type") == "order_edit":  # 订单确认卡上「修改」：换商品或送达日期，出新的确认卡

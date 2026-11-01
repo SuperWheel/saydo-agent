@@ -80,7 +80,8 @@ def _outcome(fn, db: Session, **kwargs):
         db.commit()  # 拒绝事件也要落审计
         raise HTTPException(e.status_code, str(e)) from e
     db.commit()
-    return {"status": out.status, "card": out.card, "message": out.message}
+    return {"status": out.status, "card": out.card, "message": out.message,
+            **({"extra_cards": out.extra_cards} if out.extra_cards else {})}
 
 
 class ConfirmIn(BaseModel):

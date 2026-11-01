@@ -110,6 +110,8 @@ def rule_intent(text: str) -> RuleIntent:
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
     if wealth := _wealth_intent(text):  # 理财（WS5）：「理财这个月赚了多少」不能被账单的「赚了多少」抢走
         return wealth
+    if mandate := mandate_intent(text):
+        return mandate
     if sub := _sub_intent(text):  # 订阅（WS6）排在账单之前：「我每个月订阅花多少」不是查流水
         return sub
     if bill := next((name for name, pat in _BILL if pat.search(text)), None):  # 账单类问句排在「给我妈转了多少」之前
@@ -281,6 +283,22 @@ _SUB_LEAVE = re.compile(r"占比|分类|报告|饼图|月报|异常")  # 这些�
 def names_merchant(text: str) -> bool:
     """话里点名了是哪个订阅商户（「取消爱奇艺」），而不是「刚才那个」。"""
     return bool(_SUB_MERCHANT.search(text))
+
+
+def mandate_intent(text: str) -> RuleIntent | None:
+    if names_merchant(text) or re.search(r"备注|知识库|引用|原文|收款说明|[「“\"]", text):
+        return None
+    if re.search(r"怎么|如何|怎样|(?:不要|暂不|不想|拒绝|别|不)(?:再|帮我|给我)?(?:开通|开启|设置|修改|调整)", text):
+        return None
+    if re.search(r"(我的|查看|查询|看看|管理).{0,4}支付授权", text):
+        return RuleIntent("mandate", {"op": "overview"})
+    if "免密" not in text:
+        return None
+    if re.search(r"关闭|关掉|停用|取消|撤销", text):
+        return RuleIntent("mandate", {"op": "revoke"})
+    if re.search(r"开通|开启|设置|修改|调整|调高|调低", text):
+        return RuleIntent("mandate", {"op": "form"})
+    return None
 
 
 def _sub_intent(text: str) -> RuleIntent | None:

@@ -115,6 +115,7 @@ def main() -> int:
         print(f"--set 只能是 {' / '.join(CASE_SETS)} / all")
         return 1
     if use_llm:
+        os.environ["PAYMENT_AGREEMENT_PRESIGNED"] = "true"
         os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/kb_eval.db"
         # 同一个企业微信机器人只能有一个长连接：评测时不连，免得把正在演示的后端踢下线
         os.environ["WECOM_BOT_ID"] = os.environ["WECOM_BOT_SECRET"] = ""

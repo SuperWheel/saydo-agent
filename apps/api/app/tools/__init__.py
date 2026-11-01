@@ -15,6 +15,7 @@ from ..policy import Risk
 
 # 业务域在帮助语里的叫法，也是帮助语的先后顺序。新业务域在这里加一行；没加的用该域第一个工具的 capability，排在最后
 DOMAINS = {"account": "查余额", "transfer": "转账和 AA 收款", "bill": "分析账单", "card": "管理银行卡",
+           "payment": "管理支付协议与免密授权",
            "wealth": "推荐和买卖理财", "subscription": "管理订阅扣费", "automation": "代购鲜花蛋糕和常见商品、存心愿罐和定时转账",
            "knowledge": "解答业务规则和产品问题"}
 
@@ -30,6 +31,7 @@ class ToolSpec:
     parameters: dict
     fn: Callable
     moves_money: bool = False  # 资金转出：做余额 / 限额检查，生成确认卡时预占额度，args 里必须有 amount_fen
+    needs_payment_agreement: bool = False
     stop_loss: bool = False  # 止损类操作（锁卡、挂失），只读保护下仍可执行
     stop_loss_if: Callable[[dict], bool] | None = None  # 按参数判断的止损（如收紧限额）：返回 True 时同 stop_loss
     policy_context: Callable | None = None  # (db, args, env) -> PolicyContext；不填用 base_context
@@ -69,13 +71,14 @@ REGISTRY: dict[str, ToolSpec] = {}
 def bank_tool(*, name: str, domain: str, base_risk: Risk, side_effect: bool = False, llm_visible: bool = True,
               description: str = "", parameters: dict | None = None, moves_money: bool = False, stop_loss: bool = False,
               stop_loss_if: Callable[[dict], bool] | None = None, policy_context: Callable | None = None,
-              capability: str = "", examples: tuple[str, ...] = ()):
+              capability: str = "", examples: tuple[str, ...] = (), needs_payment_agreement: bool = False):
     def deco(fn: Callable) -> Callable:
         REGISTRY[name] = ToolSpec(
             name=name, domain=domain, base_risk=base_risk, side_effect=side_effect, llm_visible=llm_visible,
             description=description, parameters=parameters or {"type": "object", "properties": {}}, fn=fn,
             moves_money=moves_money, stop_loss=stop_loss, stop_loss_if=stop_loss_if, policy_context=policy_context,
             capability=capability, examples=examples,
+            needs_payment_agreement=needs_payment_agreement,
         )
         return fn
 

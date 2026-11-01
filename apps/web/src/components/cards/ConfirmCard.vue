@@ -88,6 +88,10 @@ async function act(kind) {
       <span class="money">¥{{ card.amount }}</span>
       <div class="capital">{{ card.amount_capital }}</div>
     </div>
+    <div v-if="card.nopwd" class="nopwd" data-testid="confirm-nopwd">
+      <van-tag type="success" plain size="medium">免密支付 · 今日已用 {{ card.nopwd.used_today }} / {{ card.nopwd.daily_max }} 元</van-tag>
+      <span class="nopwd-note">免验证，仍需你点确认</span>
+    </div>
     <div v-for="[k, v] in card.rows" :key="k" class="row"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></div>
     <div v-if="card.today_after" class="row"><span class="k">今日累计转出</span><span class="v">¥{{ card.today_after }}</span></div>
     <div class="reasons">
@@ -135,6 +139,8 @@ async function act(kind) {
 
 <style scoped>
 .amount { margin: 2px 0 var(--space-2); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.nopwd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 6px; }
+.nopwd-note { font-size: var(--fs-xs); color: var(--muted); }
 .voided .amount .money { text-decoration: line-through; text-decoration-thickness: 2px; }
 .reasons { background: var(--yellow-soft); color: var(--yellow-ink); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); margin-top: var(--space-2); line-height: 1.6; }
 .red .reasons { background: var(--red-soft); color: var(--red-ink); }

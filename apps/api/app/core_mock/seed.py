@@ -18,8 +18,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..clock import now
+from ..config import get_settings
 from ..flags import get_flag, set_flag
-from ..models import Account, Contact, User
+from ..models import Account, Contact, PaymentConsent, User
 from .ledger import LedgerError, post
 
 TARGET_BALANCE_FEN = 2_865_032  # 建库当天余额 28,650.32 元
@@ -142,6 +143,16 @@ def seed(db: Session) -> None:
         for n, no, b, a, r, note, _ in CONTACTS
     ]
     db.add_all(contacts)
+    intimacy = {"母亲": "父母", "妹妹": "兄弟姐妹", "爱人": "伴侣"}
+    for index, contact in enumerate(contacts):
+        contact.phone = "13912345678" if contact.relation == "母亲" else f"1380000{index + 1001}"
+        contact.intimacy = intimacy.get(contact.relation)
+        contact.intimacy_verified_at = today if contact.intimacy else None
+    from ..payments import AGREEMENT_VERSION
+
+    presigned = get_settings().payment_agreement_presigned
+    db.add(PaymentConsent(user_id=1, agreement_version=AGREEMENT_VERSION if presigned else None,
+                          agreement_signed_at=today if presigned else None))
     db.flush()
     mom, sister, zw_colleague, zw_classmate, wife, _landlord = contacts
 

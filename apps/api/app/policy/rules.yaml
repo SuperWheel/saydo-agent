@@ -10,6 +10,7 @@ version: p0-2026-10-30
 
 rules:
   - id: cumulative_outflow
+    waived_by: nopwd_ok
     tool_in: [transfer.create]
     window: natural_day              # natural_day；rolling_24h 在 M1 加
     yellow_max_fen: 100000           # 当日累计转出（已成功 + 待确认预占）≤ 1000 元走 🟡
@@ -34,6 +35,7 @@ rules:
 
   # ---------- WS1 转账补全 ----------
   - id: rolling_24h_outflow
+    waived_by: nopwd_ok
     tool_in: [transfer.create]
     window_s: 86400
     yellow_max_fen: 100000           # 与当日累计同一阈值；只在「当日累计没超、跨零点的 24 小时累计超了」时命中，避免两条原因重复
@@ -125,6 +127,7 @@ rules:
   # ---------- 跨场景联动（WS7）：心愿罐存入 / 释放、订单、定时转账都是 🟡 起步 ----------
   # order_fast_path 由系统算出：白名单商户 + 从心愿罐付款 + 今日累计转出（含本笔）≤ 1000 元
   - id: order_strong_auth
+    waived_by: nopwd_ok
     tool_in: [order.pay]
     when: {order_fast_path: false}
     elevate_to: RED
@@ -150,6 +153,18 @@ rules:
     elevate_to: RED
     reason: "解绑后这张卡不能再在这里查看和管理，需要本人强验证"
 
+  - id: nopwd_over_limit
+    tool_in: [transfer.create, order.pay]
+    when: {nopwd_over: true}
+    elevate_to: RED
+    reason: "免密授权不适用：{nopwd_reason}，需要本人强验证"
+
+  - id: mandate_loosen
+    tool_in: [mandate.sign, mandate.update]
+    when: {mandate_loosen: true}
+    elevate_to: RED
+    reason: "开通免密、调高额度或更换付款卡，需要人脸与短信验证"
+
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000
   reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"
@@ -162,7 +177,7 @@ auth:
   # 新收款人、频繁转账、注入 / 诈骗嫌疑、拆单、卡片放宽与绑卡、理财、大额，以及工具本身就是 🔴 的，仍要人脸 + 短信
   RED_ONE_FACTOR:
     any_of: [face, sms]
-    rules: [cumulative_outflow, rolling_24h_outflow, order_strong_auth]
+    rules: [cumulative_outflow, rolling_24h_outflow, order_strong_auth, nopwd_over_limit]
     max_single_fen: 100000           # 单笔 ≤ 1000 元
     max_daily_fen: 500000            # 当日累计转出（含本笔）≤ 5000 元
   sms_max_attempts: 3

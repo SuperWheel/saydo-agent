@@ -50,6 +50,7 @@ export default defineConfig({
         GLM_API_KEY: '',
         ADMIN_PASSWORD: '',
         DEMO_MODE: 'true',
+        PAYMENT_AGREEMENT_PRESIGNED: 'true', // 原有用例不走《支付服务协议》；协议流程的用例自己先撤回签署
         DEMO_DATE: '2026-10-30', // 和一键启动一样按演示日期跑：月初那天「这个月」还没有流水，报告卡用例会失败
       },
     },
