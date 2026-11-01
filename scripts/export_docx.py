@@ -1,0 +1,166 @@
+"""导出提交材料：docs/*.md → Word（mermaid 图转 PNG 插进去），再打一个源码压缩包。
+
+赛方要求文档以 Word 提交（线上答疑会），Markdown 原文随源码包一起交。输出到 dist/submission/（不进仓库）：
+  文档/NN-xxx.docx          每份文档一个 Word
+  言行-参赛文档合集.docx      PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页
+  言行-源码.zip              git archive 当前提交：只含进了仓库的文件，.env、data/*.db、node_modules 都不在里面
+
+用法：make docx（或 python3 scripts/export_docx.py）。需要 pandoc（brew install pandoc）、
+apps/web 装好依赖和 Playwright Chromium（npx playwright install chromium），渲染 mermaid 要联网（从 jsDelivr 加载）。
+只用标准库。
+"""
+
+import hashlib
+import json
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import zipfile
+import zlib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DOCS = ROOT / "docs"
+OUT = ROOT / "dist" / "submission"
+COLLECTION = ["01-产品需求文档-PRD", "02-产品技术文档", "07-架构图", "05-安全自评报告", "06-测试报告", "04-部署说明"]
+
+MERMAID = re.compile(r"^```mermaid\n(.*?)^```\n", re.S | re.M)
+# 指向仓库里其他文件的相对链接（Word 里点不开）只留文字；http 链接照常保留
+LOCAL_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\((?!https?://|mailto:|#)[^)]*\)")
+MAX_IMAGE_HEIGHT = 21 * 360000  # 图最高 21 cm（A4 去掉上下边距约 24.6 cm，留出标题和图下文字），单位 EMU
+PAGE_BREAK = '\n```{=openxml}\n<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n```\n'
+
+
+def fail(text: str) -> None:
+    print(f"✗ {text}")
+    sys.exit(1)
+
+
+def prepare(md: str, images: Path, jobs: list[dict]) -> str:
+    """mermaid 代码块换成图片引用（同一张图只渲染一次），本地链接去掉链接只留文字。"""
+
+    def image(m: re.Match) -> str:
+        code = m.group(1)
+        png = images / f"{hashlib.sha1(code.encode()).hexdigest()[:12]}.png"
+        if not any(j["out"] == str(png) for j in jobs):
+            jobs.append({"code": code, "out": str(png)})
+        return f"![]({png})\n"
+
+    def local_image(m: re.Match) -> str:
+        """文档里引用的本地截图：按 docs/ 解析相对路径；webp 转成 PNG（旧版 Word 不认 webp），用 macOS 自带的 sips。"""
+        alt, src = m.group(1), m.group(2)
+        path = (DOCS / src).resolve()
+        if path.suffix.lower() == ".webp":
+            png = images / f"{path.stem}.png"
+            subprocess.run(["sips", "-s", "format", "png", str(path), "--out", str(png)], capture_output=True, check=True)
+            path = png
+        return f"![{alt}]({path})"
+
+    md = re.sub(r"!\[([^\]]*)\]\((?!https?://|/)([^)\s]+)\)", local_image, MERMAID.sub(image, md))
+    return LOCAL_LINK.sub(r"\1", md)
+
+
+def set_dpi(png: Path, dpi: int) -> None:
+    """写 PNG 的 pHYs 块：mermaid 图按 2 倍像素截的，标成 192 DPI，pandoc 才会按原尺寸放进 Word。"""
+    data = png.read_bytes()
+    chunks, pos = [], 8
+    while pos < len(data):
+        size = struct.unpack(">I", data[pos:pos + 4])[0]
+        chunk = data[pos:pos + 12 + size]
+        if chunk[4:8] != b"pHYs":
+            chunks.append(chunk)
+        pos += 12 + size
+    ppm = round(dpi / 0.0254)
+    body = b"pHYs" + struct.pack(">IIB", ppm, ppm, 1)
+    phys = struct.pack(">I", 9) + body + struct.pack(">I", zlib.crc32(body))
+    png.write_bytes(data[:8] + chunks[0] + phys + b"".join(chunks[1:]))
+
+
+def fit_height(docx: Path) -> None:
+    """pandoc 只按页宽缩图，很高的流程图会超出一页：按最大高度等比缩小。"""
+    with zipfile.ZipFile(docx) as z:
+        files = {n: z.read(n) for n in z.namelist()}
+
+    def shrink(m: re.Match) -> str:
+        block = m.group(0)
+        cy = int(re.search(r'cy="(\d+)"', block).group(1))
+        if cy <= MAX_IMAGE_HEIGHT:
+            return block
+        k = MAX_IMAGE_HEIGHT / cy
+        return re.sub(r'(c[xy])="(\d+)"', lambda a: f'{a.group(1)}="{round(int(a.group(2)) * k)}"', block)
+
+    files["word/document.xml"] = re.sub(r"<w:drawing>.*?</w:drawing>", shrink,
+                                        files["word/document.xml"].decode(), flags=re.S).encode()
+    with zipfile.ZipFile(docx, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, data in files.items():
+            z.writestr(n, data)
+
+
+def reference_doc(path: Path) -> None:
+    """pandoc 默认样式上改三处：A4 纸、2.54 cm 页边距；中文字体用微软雅黑（Windows 和装了 Office 的 Mac 都有）；表格加细边框。"""
+    subprocess.run(["pandoc", "-o", str(path), "--print-default-data-file", "reference.docx"], check=True)
+    with zipfile.ZipFile(path) as z:
+        files = {n: z.read(n) for n in z.namelist()}
+    page = ('<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" '
+            'w:left="1440" w:header="851" w:footer="992" w:gutter="0"/>')
+    files["word/document.xml"] = files["word/document.xml"].decode().replace(
+        "</w:footnotePr>", "</w:footnotePr>" + page, 1).encode()
+    styles = files["word/styles.xml"].decode()
+    styles = re.sub(r'w:eastAsiaTheme="minorEastAsia"', 'w:eastAsia="Microsoft YaHei"', styles)
+    border = "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>'
+                     for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    styles = re.sub(r'(<w:style w:type="table"[^>]*w:styleId="Table">.*?<w:tblPr>)',
+                    rf"\1<w:tblBorders>{border}</w:tblBorders>", styles, count=1, flags=re.S)
+    files["word/styles.xml"] = styles.encode()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, data in files.items():
+            z.writestr(n, data)
+
+
+def to_docx(md: str, out: Path, ref: Path) -> None:
+    subprocess.run(["pandoc", "-f", "gfm+raw_attribute", "-t", "docx", "--reference-doc", str(ref),
+                    "--toc", "--toc-depth=2", "-M", "toc-title=目录", "-o", str(out)],
+                   input=md.encode(), check=True)
+    fit_height(out)
+
+
+def main() -> None:
+    if shutil.which("pandoc") is None:
+        fail("没找到 pandoc：brew install pandoc")
+    if not (ROOT / "apps/web/node_modules/playwright").exists():
+        fail("apps/web 没装依赖：cd apps/web && npm install && npx playwright install chromium")
+    shutil.rmtree(OUT, ignore_errors=True)
+    (OUT / "文档").mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix="saydo-docx-") as tmp:
+        tmp = Path(tmp)
+        images = tmp / "images"
+        images.mkdir()
+        jobs: list[dict] = []
+        docs = {p.stem: prepare(p.read_text(), images, jobs) for p in sorted(DOCS.glob("[0-9][0-9]-*.md"))}
+
+        (tmp / "jobs.json").write_text(json.dumps(jobs, ensure_ascii=False))
+        if subprocess.run(["node", str(ROOT / "scripts/render_mermaid.mjs"), str(tmp / "jobs.json")]).returncode != 0:
+            fail("有 mermaid 图没渲染出来，看上面的报错")
+        for job in jobs:
+            set_dpi(Path(job["out"]), 192)
+
+        ref = tmp / "reference.docx"
+        reference_doc(ref)
+        for stem, md in docs.items():
+            to_docx(md, OUT / "文档" / f"{stem}.docx", ref)
+            print(f"  文档/{stem}.docx")
+        to_docx(PAGE_BREAK.join(docs[s] for s in COLLECTION), OUT / "言行-参赛文档合集.docx", ref)
+        print("  言行-参赛文档合集.docx")
+
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    subprocess.run(["git", "archive", "--format=zip", "--prefix=saydo/", "-o", str(OUT / "言行-源码.zip"), "HEAD"], cwd=ROOT, check=True)
+    print(f"  言行-源码.zip（提交 {head}{'；工作区还有没提交的改动，不在包里' if dirty else ''}）")
+    print(f"\n✓ 输出在 {OUT.relative_to(ROOT)}/")
+
+
+if __name__ == "__main__":
+    main()

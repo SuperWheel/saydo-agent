@@ -199,6 +199,19 @@ scripts/start.py           一键启动（make demo）；一键启动.command（
 | [08 PPT 大纲](docs/08-PPT大纲.md) | 答辩 PPT 逐页大纲 |
 | [09 演示视频脚本](docs/09-演示视频脚本.md) | 5 分钟演示：口播、输入、预期画面 |
 | [research/](docs/research/) | 原始调研材料 |
+| [10 企业微信配置教程](docs/10-企业微信配置教程.md) | 接入企业微信智能机器人的步骤和截图 |
+
+## 提交材料清单
+
+赛方要求文档以 Word 提交。`make docx` 把文档导出到 `dist/submission/`（这个目录不进仓库）：
+
+| 文件 | 内容 |
+|---|---|
+| `言行-参赛文档合集.docx` | PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页 |
+| `文档/00～10-*.docx` | 每份文档各一个 Word，mermaid 图已转成图片 |
+| `言行-源码.zip` | 当前提交的源码（`git archive`），只含进了仓库的文件：没有 `.env`、数据库和 `node_modules` |
+
+导出需要 pandoc（`brew install pandoc`）和 apps/web 里的 Playwright Chromium，渲染图时要联网。源码包取的是最新一次提交，导出前先提交改动。Word 打开后如果目录显示「没有目录项」，右键目录选「更新域」。
 
 ## 已知限制
 

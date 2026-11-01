@@ -1,4 +1,4 @@
-.PHONY: install api web dev dev-lan demo test smoke-llm eval-llm workflow-vs-llm seed
+.PHONY: install api web dev dev-lan demo test smoke-llm eval-llm workflow-vs-llm seed docx
 
 install:
 	cd apps/api && uv sync
@@ -38,6 +38,9 @@ workflow-vs-llm:
 	cd apps/api && uv run python scripts/workflow_vs_llm.py
 
 # 重置演示数据（后端需在运行）
+docx:
+	python3 scripts/export_docx.py
+
 seed:
 	curl -s -X POST http://127.0.0.1:8000/dev/seed
 
