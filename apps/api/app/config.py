@@ -49,7 +49,8 @@ _QWEN_ALIASES = {"dashscope": "qwen", "bailian": "qwen", "aliyun": "qwen", "qian
 _EMBEDDING_ALIASES = {"glm": "zhipu", "zhipuai": "zhipu", "silicon": "siliconflow", **_QWEN_ALIASES,
                       "off": "", "none": "", "bm25": ""}
 
-# 知识库检索的重排模型（knowledge/rerank.py，可选）。RERANK_PROVIDER 留空就不重排。
+# 知识库检索的重排模型（knowledge/rerank.py）。默认用硅基流动，有密钥（RERANK_API_KEY 或 SILICONFLOW_API_KEY）就重排；
+# RERANK_PROVIDER=off 关闭，没有密钥时自动不重排。
 # 候选是关键词（和向量，配了的话）检索的前 10 条，重排模型逐条打相关性分（0–1），最高分过 RERANK_MIN_SCORE 才算查到。
 # siliconflow：硅基流动 /rerank，预设 Qwen/Qwen3-Reranker-4B（168 题难题集 97.0%，和 8B 的 96.4% 打平，见 docs/06 §3.7），
 # 没填 RERANK_API_KEY 时用 SILICONFLOW_API_KEY；
@@ -99,7 +100,7 @@ class Settings(BaseSettings):
     embedding_timeout_s: float = 2.0  # 查询取向量的时限，超时就这一问只用 BM25
 
     # 知识库重排（可选）：留空 = 不重排，行为和不配一样
-    rerank_provider: str = ""
+    rerank_provider: str = "siliconflow"  # 留空也按默认；off / none 关闭
     rerank_model: str | None = None
     rerank_base_url: str | None = None
     rerank_api_key: str = ""
@@ -165,12 +166,12 @@ class Settings(BaseSettings):
                     setattr(self, key, value)
             if not self.embedding_api_key and emb["key_field"]:
                 self.embedding_api_key = getattr(self, emb["key_field"])
-        p = self.rerank_provider.strip().lower()
+        p = self.rerank_provider.strip().lower() or "siliconflow"  # 旧版设置页停用时写的是空值，现在空值也按默认打开
         self.rerank_provider = _RERANK_ALIASES.get(p, p)
         if self.rerank_provider:
             rr = RERANK_PROVIDERS.get(self.rerank_provider)
             if rr is None:
-                raise ValueError(f"RERANK_PROVIDER 只支持 {' / '.join(RERANK_PROVIDERS)}（留空 = 不重排），"
+                raise ValueError(f"RERANK_PROVIDER 只支持 {' / '.join(RERANK_PROVIDERS)}（off = 不重排），"
                                  f"收到 {self.rerank_provider!r}")
             self.rerank_model = self.rerank_model or rr["rerank_model"]
             self.rerank_base_url = self.rerank_base_url or rr["rerank_base_url"]

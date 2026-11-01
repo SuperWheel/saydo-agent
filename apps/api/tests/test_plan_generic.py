@@ -141,6 +141,8 @@ def test_due_rechecks_authorization(client, monkeypatch, change):
     assert plan_of(evs[0])['status'] == 'running'
     if change == 'risk':
         assert card(evs[0])['level'] == 'RED'
+    elif change == 'balance':
+        assert any(s['status'] == 'awaiting_funds' for s in plan_of(evs[0])['steps'])
     else:
         assert any(s['status'] == 'failed' for s in plan_of(evs[0])['steps'])
 

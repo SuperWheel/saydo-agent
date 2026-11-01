@@ -11,16 +11,23 @@ const emit = defineEmits(['select', 'outcome'])
 const busy = ref(false)
 
 const STATUS_TAG = { draft: 'primary', running: 'warning', waiting: 'primary', rolling_back: 'warning',
-  done: 'success', cancelled: 'default', handoff: 'danger' }
-const ICON = { pending: '○', awaiting: '◔', done: '✓', failed: '!', cancelled: '–', removed: '✕' }
+  awaiting_funds: 'warning', done: 'success', cancelled: 'default', expired: 'default', handoff: 'danger' }
+const ICON = { pending: '○', awaiting: '◔', awaiting_funds: '¥', expired: '×', done: '✓', failed: '!', cancelled: '–', removed: '✕' }
 const OPS = {
   confirm: { label: '确认计划', type: 'danger', detail: '按步骤办理，每笔资金操作仍单独确认' },
   advance: { label: '继续', type: 'primary', detail: '推进下一步' },
   cancel: { label: '取消计划', type: 'default', detail: '已办的步骤会按相反顺序回退' },
   handoff: { label: '转人工', type: 'default', detail: '坐席接手，办理暂停' },
+  resume: { label: '补款后继续', type: 'danger', detail: '重新核对余额后按原授权下单' },
 }
 const ops = computed(() => props.card.ops.filter((o) => OPS[o]))
-const live = computed(() => ['draft', 'running', 'waiting', 'rolling_back'].includes(props.card.status))
+const live = computed(() => ['draft', 'running', 'waiting', 'awaiting_funds', 'rolling_back'].includes(props.card.status))
+
+function lockBudget() { // 活期付款的计划：先把预算存进心愿罐，到期从罐里付，不怕那天钱不够
+  const b = props.card.budget_lock
+  emit('select', { label: `先存 ¥${b.amount} 进心愿罐`, detail: `用途「${b.purpose}」，计划改为从心愿罐付款`,
+    selection: { type: 'plan', plan_id: props.card.plan_id, op: 'lock_budget' } })
+}
 
 function act(op) {
   emit('select', { label: OPS[op].label, detail: OPS[op].detail,
@@ -66,8 +73,12 @@ async function fastForward() { // 演示：快进到临期时间，触发自动�
       </li>
     </ol>
     <div class="hint">{{ card.hint }}</div>
+    <div v-if="live && card.budget_lock && card.ops.includes('lock_budget')" class="lock" data-testid="plan-lock-budget">
+      <div class="lock-text">现在从活期付款，到期那天余额不够就付不了。可以先把 ¥{{ card.budget_lock.amount }} 存进心愿罐专款专用。</div>
+      <van-button size="small" plain type="danger" block @click="lockBudget">先存入心愿罐锁定预算</van-button>
+    </div>
     <div v-if="live && (ops.length || card.ops.includes('fast_forward'))" class="btns">
-      <van-button v-for="o in ops" :key="o" size="small" :type="OPS[o].type" @click="act(o)">{{ OPS[o].label }}</van-button>
+      <van-button v-for="o in ops" :key="o" size="small" :type="OPS[o].type" :data-testid="`plan-op-${o}`" @click="act(o)">{{ OPS[o].label }}</van-button>
     </div>
     <van-button v-if="live && card.ops.includes('fast_forward')" class="ff" size="small" plain block :icon="icon('fast-forward', 'clock-o')"
                 :loading="busy" @click="fastForward">快进到 {{ card.due_label }}（演示）</van-button>
@@ -83,15 +94,17 @@ async function fastForward() { // 演示：快进到临期时间，触发自动�
 .icon { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   font-size: var(--fs-xs); font-weight: 700; color: var(--muted); background: var(--surface-2); }
 .done .icon { color: var(--green-ink); background: var(--green-soft); }
-.awaiting .icon, .failed .icon { color: var(--yellow-ink); background: var(--yellow-soft); }
+.awaiting .icon, .failed .icon, .awaiting_funds .icon { color: var(--yellow-ink); background: var(--yellow-soft); }
 .body { flex: 1; min-width: 0; }
 .line { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-body); line-height: 22px; }
 .title { word-break: break-all; }
-.removed .title, .cancelled .title { text-decoration: line-through; color: var(--muted); }
+.removed .title, .cancelled .title, .expired .title { text-decoration: line-through; color: var(--muted); }
 .risk { flex-shrink: 0; font-size: var(--fs-xs); color: var(--yellow-ink); }
 .risk.read { color: var(--green-ink); }
 .risk.compensate { color: var(--brand); }
 .sub { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; line-height: 1.5; }
 .hint { font-size: var(--fs-xs); color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 10px; margin-top: 8px; }
 .ff { margin-top: 8px; }
+.lock { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--yellow-soft); }
+.lock-text { font-size: var(--fs-xs); color: var(--yellow-ink); line-height: 1.5; margin-bottom: 6px; }
 </style>

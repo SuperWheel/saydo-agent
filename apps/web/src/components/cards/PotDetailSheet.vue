@@ -28,7 +28,7 @@ watch(() => props.potId, async (id) => {
       <van-loading v-else-if="!d" class="loading" />
       <template v-else>
         <PotTxnRows :items="d.items" />
-        <div class="meta">存入不用验证；从心愿罐付款只限合作商户，每笔仍要你确认</div>
+        <div class="meta">转入需人脸或短信验证（任选其一），转出到活期只需确认；罐里的钱只能在合作商户消费</div>
       </template>
     </div>
   </div>

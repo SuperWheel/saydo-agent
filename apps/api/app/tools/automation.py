@@ -837,7 +837,7 @@ def schedule_cancel(db: Session, args: dict, *, idempotency_key: str, user_id: i
 # ---------- 自动任务总览（F-XS-06） ----------
 
 PLAN_STATUS_LABELS = {"draft": "待确认", "running": "进行中", "waiting": "等待临期执行", "rolling_back": "回退中",
-                      "done": "已完成", "cancelled": "已取消", "handoff": "已转人工"}
+                      "done": "已完成", "cancelled": "已取消", "handoff": "已转人工", "expired": "已过期"}
 
 
 @bank_tool(

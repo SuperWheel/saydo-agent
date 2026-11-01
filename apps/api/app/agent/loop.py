@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from .. import audit, knowledge
 from ..cards import auth_reply, notice_card
 from ..clock import now
+from ..nlu.when import parse_date
 from ..config import get_settings
 from ..models import ChatMessage, ChatSession, Contact, PendingAction, User
 from ..nlu import amounts_in, names_merchant, narrow_payees, parse_amount, resolve_payee, rule_intent
@@ -34,7 +35,7 @@ from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
 from ..tools.automation import edit_order, pick_option
 from ..tools import contact, payment, register_pot_tools
-from ..tools.automation import pot_detail
+from ..tools.automation import pot_detail, pot_lock_propose, pot_slots
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
@@ -114,6 +115,7 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     elif get_settings().llm_ready:
         try:
             out = _llm_turn(ctx, guard.text)
+            _dedupe_cards(ctx.cards)
             _order_cards(ctx.cards, guard.text)
         except LLMError as e:
             audit.record(db, trace_id, "llm_error", {"error": str(e)[:300]}, session.id)
@@ -402,7 +404,7 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
 # 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
 WORKFLOW_TOOLS = {
     "contact:manage": "contact.manage", "pot:detail": "pot.detail",
-    "pot:manage": "pot.manage", "pot:withdraw": "pot.withdraw_propose",
+    "pot:manage": "pot.manage", "pot:withdraw": "pot.withdraw_propose", "pot:deposit": "pot.lock_propose",
     "mandate:form": "mandate.form", "mandate:revoke": "mandate.revoke_propose", "mandate:overview": "payment.overview",
     "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
     "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
@@ -484,6 +486,18 @@ def _record_workflow(ctx: ToolContext, tool_name: str, args: dict) -> None:
                            content=json.dumps(_masked_exchange(exchange), ensure_ascii=False)))
 
 
+def _dedupe_cards(cards: list[dict]) -> None:
+    """模型偶尔把同一个查询调两遍（「近一年的收支统计」出两张一样的报告）：内容相同的查询卡片只留一张。"""
+    seen: set[str] = set()
+    kept = []
+    for card in cards:
+        key = json.dumps({k: v for k, v in card.items() if k != "as_of"}, sort_keys=True, ensure_ascii=False, default=str)
+        if "action_id" in card or key not in seen:
+            kept.append(card)
+        seen.add(key)
+    cards[:] = kept
+
+
 def _order_cards(cards: list[dict], text: str) -> None:
     """一句话问了几件事（「我还有多少钱？这个月钱怎么花这么快？」）时，查询卡片按用户说的先后排，
     不按模型调用工具的先后。有确认卡、澄清卡时不动：那一轮的卡片顺序就是办理顺序。"""
@@ -561,7 +575,12 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
     if intent.intent == "contact":
         return prefix + _apply(ctx, contact.manage(ctx)), "rule"
     if intent.intent == "pot":
-        if intent.slots.get("op") == "withdraw":
+        if intent.slots.get("op") == "deposit":
+            slots = pot_slots(text) or {"amount_text": intent.slots["amount_text"], "purpose": ""}
+            until = parse_date(text, now())  # 和自动任务的规则一样：说了未来日期就作为到期日
+            result = pot_lock_propose(ctx, amount_text=slots["amount_text"], purpose=slots["purpose"],
+                                      until=f"{until}" if until and until >= now().date() else None)
+        elif intent.slots.get("op") == "withdraw":
             result = pot.withdraw_propose(ctx, intent.slots.get("amount_text", ""))
         else:
             result = pot_detail(ctx) if intent.slots.get("op") == "detail" else pot.manage(ctx)

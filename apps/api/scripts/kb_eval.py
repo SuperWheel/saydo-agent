@@ -107,7 +107,7 @@ def main() -> int:
     if "--bm25" in sys.argv or "--no-embedding" in sys.argv:
         os.environ["EMBEDDING_PROVIDER"] = ""
     if "--bm25" in sys.argv or "--no-rerank" in sys.argv:
-        os.environ["RERANK_PROVIDER"] = ""
+        os.environ["RERANK_PROVIDER"] = "off"
     if not use_llm and not AGENTIC:  # 离线只测检索、不耗模型 API；--llm 走完整对话时按 .env
         os.environ["KB_AGENTIC_RETRY"] = "false"
     name = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "kb"

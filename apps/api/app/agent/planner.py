@@ -30,7 +30,7 @@ from ..cards import auth_reply, notice_card
 from ..clock import now
 from ..config import get_settings
 from ..core_mock.shops import CATEGORY_LABELS, SHOPS
-from ..models import ChatMessage, ChatSession, PendingAction, TaskPlan
+from ..models import Account, ChatMessage, ChatSession, PendingAction, TaskPlan
 from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, asks_rule, normalize_hint, rule_intent
 from ..nlu.when import parse_date, parse_when
@@ -66,8 +66,8 @@ _SCALAR = (str, int, float, bool, type(None))
 _ARG_TYPES = {"string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,)}
 
 STEP_LABELS = {"pending": "待执行", "awaiting": "待你确认", "done": "已完成", "failed": "未完成",
-               "cancelled": "已取消", "removed": "已移出计划"}
-_TERMINAL = ("done", "cancelled", "removed")
+               "cancelled": "已取消", "removed": "已移出计划", "awaiting_funds": "待补款", "expired": "已过期"}
+_TERMINAL = ("done", "cancelled", "removed", "expired")
 
 
 class PlanRejected(Exception):
@@ -515,6 +515,22 @@ def _risk(s: dict) -> str:
     return "🟡 需你确认"
 
 
+def _debit_orders(plan: TaskPlan) -> list[dict]:
+    return [s for s in plan.steps if s["tool"] == "order.propose" and s["status"] not in _TERMINAL
+            and s.get("purchase") and not s["args"].get("pot_id")]
+
+
+def _budget_lock(plan: TaskPlan) -> dict | None:
+    orders = _debit_orders(plan)
+    if plan.status not in ("draft", "running", "waiting") or not orders or any(s.get("budget_lock_pending") for s in plan.steps):
+        return None
+    amount = sum(s["purchase"]["budget_fen"] for s in orders)
+    who = orders[0]["purchase"].get("for_whom") or ""
+    occasion = _EVENT.search(plan.source_text)
+    purpose = (who + occasion.group() if occasion else who + "购物" if who else plan.goal)[:12]
+    return {"amount": fmt_yuan(amount), "amount_fen": amount, "purpose": purpose}
+
+
 def plan_card(plan: TaskPlan) -> dict:
     due = plan.due_at
     steps = []
@@ -530,11 +546,16 @@ def plan_card(plan: TaskPlan) -> dict:
            }.get(plan.status, [])
     if plan.status == "waiting" and not get_settings().demo_mode:
         ops.remove("fast_forward")
+    budget_lock = _budget_lock(plan)
+    if budget_lock:
+        ops.append("lock_budget")
+    if plan.status in ("running", "waiting") and any(s["status"] == "awaiting_funds" for s in plan.steps):
+        ops.append("resume")
     return {"type": "plan", "plan_id": plan.id, "goal": plan.goal, "status": plan.status,
             "status_label": auto.PLAN_STATUS_LABELS[plan.status], "version": plan.version, "note": plan.note or "",
             "event_date": f"{plan.event_date}" if plan.event_date else None,
             "due_at": due.isoformat() if due else None, "due_label": f"{due:%m-%d %H:%M}" if due else "",
-            "steps": steps, "ops": ops, "source": plan.source,
+            "steps": steps, "ops": ops, "source": plan.source, "budget_lock": budget_lock,
             # 移出计划、撤销的步骤：前端把对话里这些确认卡标成已作废（后端早已作废，这里只是让画面一致）
             "void_action_ids": [s["action_id"] for s in plan.steps
                                 if s.get("action_id") and s["status"] in ("removed", "cancelled")],
@@ -572,23 +593,70 @@ def _audit_tool(ctx: ToolContext, tool: str, args: dict, result: ToolResult, **e
     }, ctx.session.id)
 
 
+def _funds(db: Session, plan: TaskPlan, s: dict) -> tuple[int, str]:
+    ref = s["args"].get("pot_id")
+    if ref:
+        try:
+            pid = _resolve(plan, {"pot_id": ref})["pot_id"]
+        except GatewayError:
+            return 0, "心愿罐"
+        pot = auto._own_pot(db, plan.user_id, pid)
+        return (db.get(Account, pot.account_id).balance_fen if pot and pot.status == "active" else 0), "心愿罐"
+    return auto._debit(db, plan.user_id).balance_fen, "活期"
+
+
+def _awaiting_funds(ctx: ToolContext, plan: TaskPlan, s: dict, amount: int) -> None:
+    balance, source = _funds(ctx.db, plan, s)
+    s["status"] = "awaiting_funds"
+    s["note"] = (f"{source}可用余额 ¥{fmt_yuan(balance)} 不够，还差 ¥{fmt_yuan(max(0, amount - balance))}。"
+                 "补足后说「继续」或点「补款后继续」就接着下单。")
+    ctx.cards.append(notice_card(s["note"], "warning"))
+    audit.record(ctx.db, ctx.trace_id, "plan_awaiting_funds",
+                 {"plan_id": plan.id, "step": s["id"], "amount_fen": amount, "balance_fen": balance}, ctx.session.id)
+
+
+def _expire_purchase(s: dict) -> bool:
+    delivery = s.get("purchase", {}).get("delivery_date")
+    if delivery and now().date() > date.fromisoformat(delivery):
+        s["status"], s["note"] = "expired", "已超过原定送达日，计划订单已过期，不再自动付款；请重新设置计划。"
+        return True
+    return False
+
+
 def _run_step(ctx: ToolContext, plan: TaskPlan, s: dict) -> bool:
     """执行一步。只读步骤直接拿结果；写步骤由提议工具生成确认卡，等用户确认。返回这一步是否已完成。"""
     spec = REGISTRY[s["tool"]]
+    force_confirm = False
     try:
         args = _resolve(plan, s["args"])
         purchase = s.get("purchase")
         if purchase and s["tool"] == "order.propose":
+            if _expire_purchase(s):
+                ctx.cards.append(notice_card(s["note"], "warning"))
+                return False
             q = auto.shops.lookup_quote(args["quote_id"])
+            if s.get("resuming_funds"):
+                q = auto.shops.quote_item(purchase["sku"], delivery_date=date.fromisoformat(purchase["delivery_date"]), at=now())
+                if q is None:
+                    raise GatewayError("原商品已不可售，请重新设置计划")
+                quote_step = next(x for x in plan.steps if x["id"] == _REF.match(s["args"]["quote_id"]).group(1))
+                quote_step["output"] = {"quote_id": q.quote_id, **q.view()}
+                args["quote_id"] = q.quote_id
+                force_confirm = (q.item.price_fen != purchase["estimated_fen"] or q.item.price_fen > purchase["budget_fen"]
+                                 or str(q.delivery_date) != purchase["delivery_date"])
             if not q or q.item.sku != purchase["sku"] or q.item.price_fen > purchase["budget_fen"]:
-                raise GatewayError("商品或金额超出计划授权，请取消计划后重新设置")
+                if not (s.get("resuming_funds") and q and q.item.sku == purchase["sku"]):
+                    raise GatewayError("商品或金额超出计划授权，请取消计划后重新设置")
         result = run_read_tool(spec, ctx, args)  # 与模型调用工具同一个网关：白名单参数、断路器、保存点
     except GatewayError as e:
         s["status"], s["note"] = "failed", str(e)
         return False
     _audit_tool(ctx, spec.name, args, result, plan_id=plan.id, step=s["id"])
     card = result.card
-    if s.get("purchase", {}).get("auto_pay") and card and card["type"] == "confirm" and card["level"] == "YELLOW":
+    if purchase and result.data.get("status") == "blocked" and "余额不足" in result.data.get("reason", ""):
+        _awaiting_funds(ctx, plan, s, q.item.price_fen)
+        return False
+    if s.get("purchase", {}).get("auto_pay") and not force_confirm and card and card["type"] == "confirm" and card["level"] == "YELLOW":
         # 复用到期执行的安全外壳；先释放提议卡的预占，避免风控把本笔算两次。
         pending = ctx.db.get(PendingAction, card["action_id"])
         actions.cancel(ctx.db, action_id=pending.id, user_id=ctx.user_id)
@@ -602,6 +670,9 @@ def _run_step(ctx: ToolContext, plan: TaskPlan, s: dict) -> bool:
             ctx.cards.append(card)
             return True
         if status != "needs_confirm":
+            if status == "needs_user" and "余额不足" in card.get("text", ""):
+                _awaiting_funds(ctx, plan, s, pending.args["amount_fen"])
+                return False
             s["status"], s["note"] = "failed", card.get("text") or "到期付款未成功"
             ctx.cards.append(card)
             return False
@@ -650,7 +721,47 @@ def _sync(db: Session, plan: TaskPlan) -> bool:
             s["status"] = "failed"
             s["note"] = {"expired": "确认卡已过期", "invalidated": "授权已作废（情况有变化）"}.get(
                 a.status, (a.result or {}).get("error") or "没有办成")
+    changed = _sync_budget_lock(db, plan) or changed
+    if changed:
+        touch(plan)
     return changed
+
+
+def _sync_budget_lock(db: Session, plan: TaskPlan) -> bool:
+    holder = next((s for s in plan.steps if s.get("budget_lock_pending")), None)
+    if holder is None:
+        return False
+    lock = holder["budget_lock_pending"]
+    action = db.get(PendingAction, lock["action_id"])
+    if action and (action.status in actions.ACTIVE or action.status in ("executing", "unknown")):
+        return False
+    holder.pop("budget_lock_pending")
+    if not action or action.status != "succeeded":
+        return True
+    sid = f"s{max(int(s['id'][1:]) for s in plan.steps) + 1}"
+    source = f"心愿罐「{lock['purpose']}」"
+    for s in _debit_orders(plan):
+        if s["id"] not in lock["step_ids"]:
+            continue
+        old = db.get(PendingAction, s.get("action_id") or "")
+        if old and old.status in actions.ACTIVE:
+            actions.cancel(db, action_id=old.id, user_id=plan.user_id)
+        if s["status"] == "awaiting":
+            s["status"] = "pending"
+        s["args"].update(pot_id=f"{{{{{sid}.pot_id}}}}", payment_source="pot")
+        s["depends_on"].append(sid)
+        s["purchase"]["payment_source"] = source
+        s["detail"] = s.get("detail", "").replace("活期借记卡", source)
+        s["note"] = ""
+    plan.steps.insert(0, {"id": sid, "tool": "pot.lock_propose", "args": {"amount_text": str(lock['amount_fen'] / 100),
+                         "purpose": lock["purpose"]}, "depends_on": [], "at": "now", "kind": "write",
+                         "origin": "system", "status": "done", "output": _scalars(action.result), "action_id": action.id})
+    _decorate(plan.steps)
+    plan.version += 1
+    plan.note = f"已改为从{source}付款"
+    audit.record(db, action.trace_id, "plan_budget_locked", {"plan_id": plan.id, "pot_id": action.result["pot_id"],
+                                                           "amount_fen": lock["amount_fen"]}, plan.session_id)
+    return True
 
 
 def _cascade(plan: TaskPlan) -> None:
@@ -677,7 +788,8 @@ def _finish(plan: TaskPlan) -> None:
                 s["status"], s["note"] = "cancelled", "计划已撤销"
     live = [s for s in plan.steps if s["status"] not in _TERMINAL]
     if not live:
-        plan.status = "cancelled" if plan.status == "rolling_back" else "done"
+        plan.status = "cancelled" if plan.status == "rolling_back" else (
+            "expired" if any(s["status"] == "expired" for s in plan.steps) else "done")
     elif plan.status != "rolling_back":
         waiting = all(s["status"] == "pending" and s["at"] == "due" for s in live)
         plan.status = "waiting" if waiting and plan.due_at and now() < plan.due_at else "running"
@@ -687,6 +799,9 @@ def advance(ctx: ToolContext, plan: TaskPlan) -> None:
     """按拓扑顺序推进：只读步骤直接执行，写步骤一次只出一张确认卡（写操作串行，顺序确定）。"""
     ctx.user_texts = [plan.source_text, *ctx.user_texts]  # 参数来源校验：计划里的金额来自当初那句话
     _sync(ctx.db, plan)
+    if any(s.get("budget_lock_pending") for s in plan.steps):
+        touch(plan)
+        return  # 等锁定确认结束，避免存款与活期订单同时扣款
     by_id = {s["id"]: s for s in plan.steps}
     order = _topo([s for s in plan.steps]) or [s["id"] for s in plan.steps]
     for _ in range(MAX_STEPS * 2):
@@ -714,6 +829,11 @@ def advance(ctx: ToolContext, plan: TaskPlan) -> None:
 def _progress_text(plan: TaskPlan) -> str:
     awaiting = next((s for s in plan.steps if s["status"] == "awaiting"), None)
     failed = next((s for s in plan.steps if s["status"] == "failed"), None)
+    funds = next((s for s in plan.steps if s["status"] == "awaiting_funds"), None)
+    if funds:
+        return funds.get("note") or "预算已准备好，可以说「继续」接着下单。"
+    if plan.status == "expired":
+        return "已超过原定送达日，未付款订单已过期，不再自动付款；请重新设置计划。"
     if awaiting:
         return f"下一步：{awaiting['title']}，请核对下方确认卡。{auth_reply(awaiting)}"
     if failed:
@@ -958,12 +1078,15 @@ def undo_lock(ctx: ToolContext, plan: TaskPlan | None) -> tuple[str, str] | None
         if pots:
             ids = {s["id"] for s in pots}
             deps = _dependents(plan, ids) - ids
-            if plan.status == "draft":  # 还没确认计划：去掉存钱这步，订单改从活期付款
+            if plan.status == "draft" and not any(s["status"] == "done" for s in pots):  # 没有实际存款才直接去掉步骤
                 for s in plan.steps:
                     if s["id"] in ids:
                         s["status"] = "removed"
                     if s["id"] in deps:
                         s["args"].pop("pot_id", None)
+                        s["args"]["payment_source"] = "debit"
+                        if s.get("purchase"):
+                            s["purchase"]["payment_source"] = "活期借记卡"
                         s["depends_on"] = [d for d in s["depends_on"] if d not in ids]
                         s["title"] = _step_title(plan.steps, s)
                 return _replan(ctx, plan, "去掉了心愿罐，订单改从活期付款")
@@ -995,7 +1118,13 @@ def _order_done(plan: TaskPlan, sid: str) -> bool:
 
 def cancel_plan(ctx: ToolContext, plan: TaskPlan) -> tuple[str, str]:
     _sync(ctx.db, plan)
-    if plan.status == "draft":
+    for s in plan.steps:
+        if lock := s.pop("budget_lock_pending", None):
+            a = ctx.db.get(PendingAction, lock["action_id"])
+            if a and a.status in actions.ACTIVE:
+                actions.cancel(ctx.db, action_id=a.id, user_id=ctx.user_id)
+    touch(plan)
+    if plan.status == "draft" and not any(s["kind"] == "write" and s["status"] == "done" for s in plan.steps):
         plan.status = "cancelled"
         card = plan_card(plan)
         _audit_tool(ctx, "plan.cancel", {}, ToolResult({"status": "cancelled"}, card), plan_id=plan.id)
@@ -1041,12 +1170,40 @@ def continue_plan(ctx: ToolContext, plan: TaskPlan) -> tuple[str, str]:
     if plan.status == "draft":
         return confirm_plan(ctx, plan)
     _sync(ctx.db, plan)
+    resumed = []
     for s in plan.steps:  # 「继续」= 重试没办成的步骤（重新出确认卡）
+        if s["status"] == "awaiting_funds":
+            resumed.append(s["id"])
+            if _expire_purchase(s):
+                ctx.cards.append(notice_card(s["note"], "warning"))
+                continue
+            s["status"], s["note"], s["resuming_funds"] = "pending", "", True
         if s["status"] == "failed":
             s["status"], s["note"] = "pending", ""
+    if resumed:
+        audit.record(ctx.db, ctx.trace_id, "plan_resumed", {"plan_id": plan.id, "steps": resumed}, ctx.session.id)
     advance(ctx, plan)
     ctx.cards.insert(0, plan_card(plan))
     return _progress_text(plan), "rule"
+
+
+def lock_budget(ctx: ToolContext, plan: TaskPlan) -> tuple[str, str]:
+    _sync(ctx.db, plan)
+    budget = _budget_lock(plan)
+    if budget is None:
+        ctx.cards.append(plan_card(plan))
+        return "这个计划无需再次锁定预算，或正在等待存入确认。", "rule"
+    # 卡片金额来自已展示的订单预算；用户点击或说锁定预算，授权的是这笔确定金额。
+    amount = f"{budget['amount_fen'] / 100:.2f}"
+    ctx.user_texts = [*ctx.user_texts, f"存{amount}进心愿罐，用途{budget['purpose']}"]
+    result = auto.pot_lock_propose(ctx, amount_text=amount, purpose=budget["purpose"])
+    _audit_tool(ctx, "pot.lock_propose", budget, result, plan_id=plan.id)
+    if result.card and result.card.get("type") == "confirm":
+        orders = _debit_orders(plan)
+        orders[0]["budget_lock_pending"] = {**budget, "action_id": result.card["action_id"],
+                                            "step_ids": [s["id"] for s in orders]}
+        touch(plan)
+    return _reply_for(ctx, result), "rule"
 
 
 # ---------- 入口 ----------
@@ -1082,6 +1239,8 @@ def _reply_for(ctx: ToolContext, result: ToolResult) -> str:
 
 
 def _control(ctx: ToolContext, plan: TaskPlan, text: str) -> tuple[str, str] | None:
+    if text.strip().rstrip("。！!") in ("锁定预算", "先把预算存进心愿罐"):
+        return lock_budget(ctx, plan)
     if _HANDOFF.search(text):
         return request_handoff(ctx, plan)
     if _CANCEL_PLAN.search(text):
@@ -1145,6 +1304,7 @@ def route(ctx: ToolContext, guard, llm: Callable | None = None) -> tuple[str, st
 
 
 _OPS = {"confirm": confirm_plan, "advance": continue_plan, "cancel": cancel_plan,
+        "lock_budget": lock_budget, "resume": continue_plan,
         "handoff": lambda ctx, plan: request_handoff(ctx, plan)}
 
 
@@ -1176,12 +1336,13 @@ def sync_session(db: Session, *, user_id: int, session_id: str | None) -> dict:
     """确认卡办完（成功、取消、过期）后前端调一次：计划里的步骤跟着推进，出下一张确认卡。"""
     session = db.get(ChatSession, session_id) if session_id else None
     plan = active_plan(db, session_id) if session is not None and session.user_id == user_id else None
-    if plan is None or plan.status == "draft" or not _sync(db, plan):
+    if plan is None or not _sync(db, plan):
         return {"text": None, "cards": []}
     trace_id = secrets.token_hex(8)
     ctx = _context(db, session, trace_id)
-    advance(ctx, plan)
-    text = _progress_text(plan)
+    if plan.status != "draft":
+        advance(ctx, plan)
+    text = (plan.note + "。" if plan.note else "") + _progress_text(plan)
     audit.record(db, trace_id, "plan_synced", {"plan_id": plan.id, "status": plan.status}, session_id)
     _say(db, session_id, text, trace_id)
     return {"text": text, "trace_id": trace_id, "cards": [plan_card(plan), *ctx.cards]}
@@ -1195,10 +1356,34 @@ def tick(db: Session, *, user_id: int) -> list[dict]:
               for sid, text, card in auto.run_due_transfers(db, user_id, trace_id)]
     for plan in db.scalars(select(TaskPlan).where(TaskPlan.user_id == user_id,
                                                   TaskPlan.status.in_(("running", "waiting")),
+                                                  TaskPlan.due_at > now(),
+                                                  TaskPlan.due_at <= now() + timedelta(hours=24))).all():
+        _sync(db, plan)
+        for s in plan.steps:
+            if s["status"] != "pending" or not s.get("purchase") or s.get("funds_reminded_at"):
+                continue
+            balance, source = _funds(db, plan, s)
+            amount = s["purchase"]["estimated_fen"]
+            if balance >= amount:
+                continue
+            day = "明天" if plan.due_at.date() > now().date() else "今天"
+            text = (f"{day} {plan.due_at:%m-%d %H:%M} 要为「{plan.goal}」付款约 ¥{fmt_yuan(amount)}，"
+                    f"{source}可用余额 ¥{fmt_yuan(balance)} 不够。可以先补足"
+                    + ("，或说「锁定预算」存进心愿罐。" if source == "活期" else "心愿罐余额。"))
+            s["funds_reminded_at"] = now().isoformat()
+            touch(plan)
+            audit.record(db, trace_id, "plan_funds_reminder", {"plan_id": plan.id, "step": s["id"],
+                         "amount_fen": amount, "balance_fen": balance}, plan.session_id)
+            events.append({"session_id": plan.session_id, "text": text, "cards": [notice_card(text, "warning")]})
+    for plan in db.scalars(select(TaskPlan).where(TaskPlan.user_id == user_id,
+                                                  TaskPlan.status.in_(("running", "waiting")),
                                                   TaskPlan.due_at <= now())).all():
         session = db.get(ChatSession, plan.session_id)
         ctx = _context(db, session, trace_id)
         before = [s["status"] for s in plan.steps]
+        for s in plan.steps:
+            if s["status"] == "awaiting_funds" and _expire_purchase(s):
+                ctx.cards.append(notice_card(s["note"], "warning"))
         advance(ctx, plan)
         if [s["status"] for s in plan.steps] == before:
             continue  # 还在等用户确认前面的步骤

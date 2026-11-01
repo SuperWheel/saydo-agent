@@ -1,4 +1,4 @@
-"""知识库重排（可选）：默认关闭、供应商预设和门槛、两种接口格式、重排决定查到还是拒答、超时 / 报错回退且结果和不开一致、
+"""知识库重排：默认用硅基流动、有密钥即开、off 关闭、供应商预设和门槛、两种接口格式、重排决定查到还是拒答、超时 / 报错回退且结果和不开一致、
 冷却、查询脱敏、审计；以及设置页（保存 / 停用 / 切换供应商 / 测试连接，密钥不回传、不进审计）。全部用假客户端，不联网。"""
 
 import json
@@ -61,7 +61,22 @@ def _baseline(query):
 
 # ---------- 配置 ----------
 
-def test_off_by_default_even_with_key(monkeypatch):
+def test_on_by_default_with_siliconflow_key(monkeypatch):
+    monkeypatch.delenv("RERANK_PROVIDER", raising=False)
+    monkeypatch.setenv("SILICONFLOW_API_KEY", KEY_SF)
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.rerank_provider == "siliconflow" and s.rerank_ready and s.rerank_model == "Qwen/Qwen3-Reranker-4B"
+    monkeypatch.setenv("RERANK_PROVIDER", "")  # 旧版设置页停用时写的空值也按默认打开
+    get_settings.cache_clear()
+    assert get_settings().rerank_ready
+    monkeypatch.delenv("SILICONFLOW_API_KEY")
+    get_settings.cache_clear()
+    assert not get_settings().rerank_ready  # 没有密钥就不重排
+
+
+def test_off_disables_even_with_key(monkeypatch):
+    monkeypatch.setenv("RERANK_PROVIDER", "off")
     monkeypatch.setenv("SILICONFLOW_API_KEY", KEY_SF)
     get_settings.cache_clear()
     s = get_settings()
@@ -252,7 +267,7 @@ def test_vector_candidates_reach_reranker_when_bm25_finds_nothing(rr_on, monkeyp
     assert r.mode == "rerank" and _ids(r) == ["faq-handoff"] and r.similarity == 1.0
     (_, docs), = fake.calls
     assert len(docs) == knowledge.RERANK_POOL
-    monkeypatch.setenv("RERANK_PROVIDER", "")
+    monkeypatch.setenv("RERANK_PROVIDER", "off")
     get_settings.cache_clear()
     assert not knowledge.search(q).hits
 
@@ -295,9 +310,9 @@ def env_file(client, tmp_path, monkeypatch):
     rerank.reset()
 
 
-def test_setup_default_off(client, env_file):
-    c = client.get("/admin/rerank-config").json()
-    assert c["provider"] == "" and not c["ready"] and c["state"] == "off" and c["state_text"] == "不重排"
+def test_setup_default_siliconflow_waits_for_key(client, env_file):
+    c = client.get("/admin/rerank-config").json()  # 默认选硅基流动，没有密钥时不重排
+    assert c["provider"] == "siliconflow" and not c["ready"] and c["state"] == "off" and c["state_text"] == "不重排"
     assert [p["id"] for p in c["providers"]] == ["siliconflow", "qwen"] and not any(p["has_key"] for p in c["providers"])
 
 
