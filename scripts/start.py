@@ -56,6 +56,8 @@ def free_port(start: int) -> int:
     """从 start 往后找一个本机和局域网都没人占的端口。"""
     for port in range(start, start + 50):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # 刚停掉的服务留下的 TIME_WAIT 连接不算占用（uvicorn / vite 自己也带 SO_REUSEADDR），否则重启会挪到下一个端口
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("0.0.0.0", port))
             except OSError:
