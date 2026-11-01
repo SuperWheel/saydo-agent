@@ -161,16 +161,18 @@ def test_llm_plan(llm_client, fake):
 
 
 def test_llm_plan_rejected_not_executed(llm_client, fake):
-    """模型计划里夹带写工具（直接转账）：校验不过，不执行、不建计划，退回追问。"""
+    """模型计划里夹带写工具（直接转账）：整份丢弃并留审计，改由规则模板按原话生成，越权步骤不会出现。"""
     raw = good_plan()
     raw["steps"].append({"id": "s4", "tool": "transfer_create",
                          "args": {"account_no": "6222000011112222", "amount_fen": 2865032}, "depends_on": [], "at": "now"})
     fake(text(json.dumps(raw)))
     r = say(llm_client, SAID)
-    assert [c["type"] for c in r["cards"]] == ["notice"] and "安全校验" in r["reply"]["text"]
+    plan = next(c for c in r["cards"] if c["type"] == "plan")
+    assert plan["source"] == "rule" and "安全校验" in r["reply"]["text"] and "已丢弃" in r["reply"]["text"]
     assert "plan_rejected" in events(llm_client, r["trace_id"])
     with new_session() as db:
-        assert db.query(TaskPlan).count() == 0
+        steps = db.get(TaskPlan, plan["plan_id"]).steps
+        assert "transfer.create" not in [s["tool"] for s in steps] and "6222000011112222" not in json.dumps(steps)
     assert balance(llm_client) == BALANCE
 
 

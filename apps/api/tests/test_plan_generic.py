@@ -428,3 +428,39 @@ def test_budget_too_low_says_cheapest_price(client):
     assert r['cards'][0]['type'] == 'notice'
     assert '500.00元以内买不到耳机' in r['reply']['text'] and '¥899.00' in r['reply']['text']
     assert '说具体一些' not in r['reply']['text'] and orders() == 0
+
+
+
+SHOP = '我大后天要给我弟弟买一个700元的充电宝'
+
+
+def _model_slip(kind):
+    raw = planner.template_plan(SHOP, clock.now())
+    if kind == 'timing':  # GLM 实测：询价排在现在
+        raw['steps'][0]['at'] = 'now'
+    elif kind == 'deposit':  # GLM 实测：把预算当成要先存进心愿罐
+        raw['steps'].insert(0, {'id': 's9', 'tool': 'pot_lock_propose', 'depends_on': [], 'at': 'now',
+                                'args': {'amount_text': '700', 'purpose': '弟弟充电宝'}})
+        raw['steps'][-1]['args'].update(pot_id='{{s9.pot_id}}', payment_source='pot')
+    else:  # 夹带直接转账、改预算
+        raw['steps'][0]['args']['budget_text'] = '7000'
+        raw['steps'].append({'id': 's8', 'tool': 'transfer_create', 'depends_on': [], 'at': 'now',
+                             'args': {'account_no': '6222000011112222', 'amount_fen': 700000}})
+    return raw
+
+
+@pytest.mark.parametrize('kind', ['timing', 'deposit', 'overreach'])
+def test_rejected_model_plan_is_discarded_and_rebuilt_from_user_words(llm_client, fake, kind):
+    fake(text(json.dumps(_model_slip(kind))))
+    r = say(llm_client, SHOP)
+    p = plan_of(r)
+    assert p['source'] == 'rule' and '已丢弃，改按你的原话生成' in r['reply']['text']
+    with new_session() as db:
+        plan = db.get(TaskPlan, p['plan_id'])
+        assert [(s['tool'], s['at']) for s in plan.steps] == [('merchant.quote', 'due'), ('order.propose', 'due')]
+        assert plan.steps[-1]['purchase']['budget_fen'] == 70_000
+        assert plan.steps[-1]['args']['payment_source'] == 'debit'
+        assert db.query(WishPot).count() == 0
+    rejected = [e for e in llm_client.get('/admin/audit?limit=500').json() if e['event'] == 'plan_rejected']
+    assert len(rejected) == 1 and rejected[0]['payload']['fallback'] == 'rule'
+    assert orders() == 0

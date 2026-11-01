@@ -428,7 +428,8 @@ PLANNER_PROMPT = """你是手机银行助手的任务规划器。把用户的多
    用户说用心愿罐，先 pot_select(pot_hint=用户原话的用途/收礼人)，订单的 pot_id 引用其输出，payment_source="pot"。
    用户明确存钱，或说「锁定 / 预留 / 存 / 留出 X 元（活期）」时，第一步 pot_lock_propose，再引用该步骤的 pot_id。
    即使未说「心愿罐」也不能漏掉存款步骤；用途取收礼人和事件（如爱人生日），until 可设为事件当天。
-   不用心愿罐时 payment_source="debit"。
+   用户没说存钱、锁定、预留，也没提心愿罐时，不要加 pot_select / pot_lock_propose，订单 payment_source="debit"。
+   预算（如「700元的充电宝」）只填 budget_text，不是存款金额。
    pot_select、pot_lock_propose at="now"。不得自行改用活期，不明确时由工具追问。
 4. event_date 是那一天的日期 YYYY-MM-DD；没有就写 null。日期参数也写 YYYY-MM-DD。
    一周从周一开始；2026-11-01（周日）说「下周五」是 2026-11-06。「当月」本身不是具体日期。
@@ -965,8 +966,20 @@ def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str,
         raw, source = template_plan(text, at), "rule"
     if raw is None:
         return "这件事要分几步办，我没能完整理解。可以分开说，比如先说「存500进心愿罐」，再说「帮我订一束花」。", source
+    discarded = ""
     try:
-        goal, event_date, steps = validate(raw, source_text=text, at=at)
+        try:
+            goal, event_date, steps = validate(raw, source_text=text, at=at)
+        except PlanRejected as e:
+            # 模型计划没过校验（排错时机、自行加存款步骤、夹带越权工具……）：整份丢弃并留审计，
+            # 改由规则模板只按用户原话重新生成，模板同样要过校验。模型给的内容一项都不沿用。
+            if source != "llm" or (fallback := template_plan(text, at)) is None:
+                raise
+            audit.record(ctx.db, ctx.trace_id, "plan_rejected", {"source": source, "reasons": e.reasons, "fallback": "rule",
+                                                                 "plan": mask_pii(json.dumps(raw, ensure_ascii=False))[:1500]},
+                         ctx.session.id)
+            discarded, raw, source = e.reasons[0], fallback, "rule"
+            goal, event_date, steps = validate(raw, source_text=text, at=at)
         _prepare_shopping(ctx, steps, text, event_date)
     except (PlanRejected, GatewayError) as e:
         if isinstance(e, GatewayError):
@@ -986,9 +999,10 @@ def create_plan(ctx: ToolContext, text: str, llm: Callable | None) -> tuple[str,
     ctx.cards.append(card)
     writes = sum(s["kind"] == "write" for s in plan.steps)
     due = f"其中询价和下单会在 {plan.due_at:%m-%d %H:%M} 自动开始。" if plan.due_at else ""
+    note = f"模型给出的计划没有通过安全校验（{discarded}），已丢弃，改按你的原话生成。" if discarded else ""
     if any(s.get("purchase", {}).get("auto_pay") for s in steps):
-        return f"请核对计划中的商品、对象、预算和付款来源。{due}确认计划后按卡内授权执行，风险升高时重新确认。", source
-    return (f"我把这件事拆成了 {len(plan.steps)} 步，请先看一下计划。{due}"
+        return f"{note}请核对计划中的商品、对象、预算和付款来源。{due}确认计划后按卡内授权执行，风险升高时重新确认。", source
+    return (f"{note}我把这件事拆成了 {len(plan.steps)} 步，请先看一下计划。{due}"
             f"确认后我按步骤办，其中 {writes} 步涉及资金，每一步都会单独请你确认。"), source
 
 
