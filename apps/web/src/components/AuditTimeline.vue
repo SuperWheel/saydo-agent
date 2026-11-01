@@ -69,6 +69,8 @@ const EVENTS = {
   contact_deleted: ['删除联系人', (p) => [contact(p), '对 TA 的免密支付立即失效'].filter(Boolean).join(' · ')],
   contact_intimacy_bound: ['绑定亲密关系', contact],
   contact_intimacy_unbound: ['解除亲密关系', (p) => [contact(p), '免密支付对 TA 立即失效'].filter(Boolean).join(' · ')],
+  pot_withdrawn: ['心愿罐转出', (p) => [p.purpose && `「${p.purpose}」`, yuan(p.amount, p.amount_fen) && `转回活期 ${yuan(p.amount, p.amount_fen)} 元`,
+    yuan(p.balance, p.balance_fen) && `罐内剩余 ${yuan(p.balance, p.balance_fen)} 元`].filter(Boolean).join(' · ')],
 }
 const BAD = new Set(['injection_suspected', 'llm_error', 'provenance_reject', 'grounding_failed', 'breaker_tripped',
   'breaker_blocked', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated', 'auth_failed',
@@ -83,7 +85,7 @@ const STAGES = [
   ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed', 'card_number_viewed', 'entry_face_passed', 'entry_face_failed']],
   ['token', '令牌', ['policy_revalidated', 'token_issued']],
   ['exec', '执行', ['execution', 'execution_failed', 'circuit_open', 'mandate_signed', 'mandate_updated', 'mandate_revoked',
-    'contact_added', 'contact_updated', 'contact_deleted', 'contact_intimacy_bound', 'contact_intimacy_unbound']],
+    'contact_added', 'contact_updated', 'contact_deleted', 'contact_intimacy_bound', 'contact_intimacy_unbound', 'pot_withdrawn']],
 ]
 const KNOWN = new Set(STAGES.flatMap((s) => s[2]))
 

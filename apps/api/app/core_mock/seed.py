@@ -4,6 +4,7 @@
 （每天单独一个随机种子），「3 月花了多少」在任何一天问都是同一个数。数据库里只有今天之前的，
 今天及以后的不入库，不需要到处加「只看今天之前」的过滤；时间快进或隔天再打开时，catch_up() 把新过去的日子补进来，
 余额跟着变。用户自己办的转账、申购照常记账，和日历流水互不覆盖。
+另用独立随机流补齐 2024–2025 全年历史；历史期初与留存抵消，不改变当前余额和现有联系人的首次转账时间。
 
 自动配平：每月 11 日（发工资的第二天）把卡里超过 3 万的部分「转存定期」，长期下来余额稳定在 2 万到 4 万之间；
 建库时再按目标余额倒推期初余额，所以不管哪天建库，当天余额都是 28,650.32 元。
@@ -14,17 +15,18 @@
 import random
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.orm import Session
 
 from ..clock import now
 from ..config import get_settings
 from ..flags import get_flag, set_flag
-from ..models import Account, Contact, PaymentConsent, User
+from ..models import Account, Contact, LedgerEntry, PaymentConsent, Transaction, User
 from .ledger import LedgerError, post
 
 TARGET_BALANCE_FEN = 2_865_032  # 建库当天余额 28,650.32 元
 CALENDAR_START = date(2026, 1, 1)
+HISTORY_START = date(2024, 1, 1)
 CALENDAR_END = date(2027, 12, 31)
 SWEEP_DAY, SWEEP_KEEP_FEN = 11, 3_000_000  # 每月 11 日把超过 3 万的部分转存定期
 CALENDAR_FLAG = "calendar_through"  # 日历流水已经生成到哪一天（不含）
@@ -129,6 +131,80 @@ def _mom(db: Session) -> Contact:
     return db.scalar(select(Contact).where(Contact.user_id == 1, Contact.account_no == CONTACTS[0][1]))
 
 
+def historical_calendar(until: date) -> list[dict]:
+    """独立随机流的 2024–2025 历史；不参与 2026 日历配平，也不使用现有联系人。"""
+    out = []
+    day = HISTORY_START
+    while day < min(until, CALENDAR_START):
+        rnd = random.Random(f"saydo-history-v1:{day.isoformat()}")
+        growth = 100 if day.year == 2024 else 105
+        for merchant, mcc, cat, (lo, hi), probability in DAILY_MERCHANTS:
+            if rnd.random() < probability:
+                out.append(_spend(_at(day, rnd.randint(7, 21), rnd.randint(0, 59)), merchant, mcc, cat,
+                                  rnd.randint(lo * 100, hi * 100)))
+        if day.weekday() == 5:
+            for merchant, mcc, cat, (lo, hi) in WEEKLY_MERCHANTS:
+                out.append(_spend(_at(day, rnd.randint(10, 20), rnd.randint(0, 59)), merchant, mcc, cat,
+                                  rnd.randint(lo * 100, hi * 100)))
+        if day.day == 10:
+            out.append(_income(_at(day, 9, 30), "星海科技有限公司", 1_600_000 * growth // 100,
+                               memo=f"{day.month}月工资", category="工资"))
+        if day.day == 5:
+            out.append(_spend(_at(day, 10, 0), "自如房租", "6513", "居住", 420_000 if day.year == 2024 else 440_000))
+        if day.day == 1:
+            out.append(dict(at=_at(day, 20, 15), direction="out", amount_fen=80_000,
+                            counterparty="历史亲友往来", category="转账", memo="亲友生活费", contra_code="CLEARING:INTERBANK"))
+        for merchant, mcc, fen, dom in SUBSCRIPTIONS:
+            if day.day == dom:
+                out.append(_spend(_at(day, 2, 10), merchant, mcc, "订阅", fen, channel="auto"))
+        if day.day == 18:
+            out.append(_income(_at(day, 15, 0), "星海科技有限公司", rnd.randint(18000, 48000), memo="差旅报销"))
+        if day.day == 28:
+            out.append(_income(_at(day, 9, 0), "理财收益入账", rnd.randint(8000, 16000) * growth // 100, memo="理财收益"))
+        if day.month in (3, 6, 9, 12) and day.day == 20:
+            out.append(_income(_at(day, 10, 0), "星海科技有限公司", 200_000 * growth // 100, memo="季度奖金"))
+        if (day.month, day.day) == (1, 25):
+            out.append(_income(_at(day, 10, 0), "星海科技有限公司", 2_400_000 * growth // 100, memo="年终奖"))
+        if (day.month, day.day) in ((1, 16), (4, 3), (7, 24), (10, 7)):
+            out.append(_spend(_at(day, 20, 0), "城市影院", "7832", "娱乐", rnd.randint(6000, 18000)))
+        if day.month in (3, 8, 12) and day.day == 22:
+            out.append(_spend(_at(day, 14, 0), "社区医院", "8011", "医疗", rnd.randint(16000, 46000)))
+        if day.month in (4, 9) and day.day == 23:
+            out.append(_spend(_at(day, 19, 0), "职业教育课程", "8299", "教育", rnd.randint(50000, 98000)))
+        # 春节年货、暑期出行、双十一；分开入账，金额符合日常消费水平。
+        spring = (2, 10) if day.year == 2024 else (1, 29)
+        if (day.month, day.day) == spring:
+            out.append(_spend(_at(day, 12, 0), "盒马鲜生", "5411", "购物", rnd.randint(70000, 100000)))
+            out.append(_spend(_at(day, 17, 0), "春节聚餐", "5812", "餐饮", rnd.randint(60000, 90000)))
+        if day.month in (7, 8) and day.day in (12, 14):
+            out.append(_spend(_at(day, 14, 0), "暑期旅行酒店", "7011", "旅行", rnd.randint(85000, 160000)))
+        if day.month == 11 and day.day in (10, 11, 12):
+            out.append(_spend(_at(day, 20, 0), "京东", "5311", "购物", rnd.randint(85000, 160000)))
+        day += timedelta(days=1)
+    return sorted(out, key=lambda e: e["at"])
+
+
+def _seed_posts(db: Session, account: Account, events: list[dict]) -> None:
+    """只用于空库建种子：批量写交易及双分录，逐笔校验金额和余额，免去每笔 flush。"""
+    rows, entries = [], []
+    balance = account.balance_fen
+    for txn_id, e in enumerate(events, 1):
+        amount, at = e["amount_fen"], e["at"]
+        if amount <= 0 or (e["direction"] == "out" and balance < amount):
+            raise LedgerError("种子金额或余额不合法")
+        balance += _signed(e)
+        rows.append({"contact_id": None, "merchant": None, "mcc": None, "memo": None, "channel": "app",
+                     "id": txn_id, "txn_no": f"T{at:%Y%m%d%H%M%S}S{txn_id:08d}", "account_id": account.id,
+                     "created_at": at, **{k: v for k, v in e.items() if k not in ("at", "contra_code")}})
+        dep, contra = f"DEP:{account.id}", e["contra_code"]
+        dr, cr = (dep, contra) if e["direction"] == "out" else (contra, dep)
+        entries.extend([{"txn_id": txn_id, "account_code": dr, "dr_fen": amount, "cr_fen": 0},
+                        {"txn_id": txn_id, "account_code": cr, "dr_fen": 0, "cr_fen": amount}])
+    db.execute(insert(Transaction).execution_options(render_nulls=True), rows)
+    db.execute(insert(LedgerEntry), entries)
+    account.balance_fen = balance
+
+
 def seed(db: Session) -> None:
     if db.scalar(select(User.id).limit(1)) is not None:
         return
@@ -188,11 +264,23 @@ def seed(db: Session) -> None:
         if known:
             c.first_transfer_at = min((e["at"] for e in events if e.get("contact_id") == c.id), default=opened_at)
 
-    post(db, account=acct, direction="in", amount_fen=opening, counterparty="期初余额",
-         contra_code="EQUITY:OPENING", category="期初", channel="system", at=opened_at)
-    for e in events:
-        at = e.pop("at")
-        post(db, account=acct, at=at, **e)
+    posts = [dict(direction="in", amount_fen=opening, counterparty="期初余额",
+                  contra_code="EQUITY:OPENING", category="期初", channel="system", at=opened_at), *events]
+    history = historical_calendar(today.date())
+    if history:
+        running, low = 0, 0
+        for e in history:
+            running += _signed(e)
+            low = min(low, running)
+        historical_opening = max(100_000, -low + 100_000, -running + 1)
+        # 历史独立账段先补期初，末尾转回历史留存；系统流水不计收入/消费，当前账户余额不变。
+        posts += [dict(at=_at(HISTORY_START - timedelta(days=1), 0, 0), direction="in",
+                       amount_fen=historical_opening, counterparty="历史期初余额", contra_code="EQUITY:OPENING",
+                       category="期初", channel="system"), *history,
+                  dict(at=datetime.combine(min(today.date(), CALENDAR_START), time()) - timedelta(seconds=1),
+                       direction="out", amount_fen=historical_opening + running, counterparty="历史留存资金",
+                       contra_code="EQUITY:HISTORY", category="期初", channel="system")]
+    _seed_posts(db, acct, posts)
     set_flag(db, CALENDAR_FLAG, {"date": today.date().isoformat(), "seeded": today.date().isoformat()})
     db.commit()
     _seed_cards(db, acct)

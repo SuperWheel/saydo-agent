@@ -30,6 +30,7 @@ import MandateCard from './cards/MandateCard.vue'
 import PaymentOverviewCard from './cards/PaymentOverviewCard.vue'
 import ContactsCard from './cards/ContactsCard.vue'
 import PotDetailCard from './cards/PotDetailCard.vue'
+import PotsCard from './cards/PotsCard.vue'
 
 const CARDS = {
   confirm: ConfirmCard,
@@ -62,6 +63,7 @@ const CARDS = {
   payment_overview: PaymentOverviewCard,
   contacts: ContactsCard,
   pot_detail: PotDetailCard,
+  pots: PotsCard,
 }
 
 defineProps({ card: { type: Object, required: true } })

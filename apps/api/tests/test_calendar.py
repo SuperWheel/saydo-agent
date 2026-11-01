@@ -9,7 +9,7 @@ from app import clock
 from app.analytics import engine
 from app.analytics.periods import parse_period
 from app.clock import now
-from app.core_mock.seed import (CALENDAR_END, CALENDAR_START, SUBSCRIPTIONS, SWEEP_DAY, SWEEP_KEEP_FEN, _mom, _signed,
+from app.core_mock.seed import (CALENDAR_END, HISTORY_START, SUBSCRIPTIONS, SWEEP_DAY, SWEEP_KEEP_FEN, _mom, _signed,
                                 calendar)
 from app.db import new_session
 from app.models import Account, Transaction
@@ -46,7 +46,7 @@ def test_same_month_same_numbers_whatever_day_seeded(client, monkeypatch):
 def test_history_from_january_and_nothing_from_today_on(client, monkeypatch):
     at_date(client, monkeypatch, "2026-10-30")
     ts = [t.created_at for t in rows()]
-    assert min(ts).date() == CALENDAR_START
+    assert min(ts).date() == HISTORY_START
     assert max(ts) < datetime.combine(now().date(), time())  # 今天及以后的一笔都不在库里
     for month in range(1, 10):  # 1 到 9 月每个月都有工资和房租
         card = say(client, f"2026年{month}月的账单报告")["cards"][0]

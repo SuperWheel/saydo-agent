@@ -157,9 +157,10 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
 def _factors(auth: dict, ctx: PolicyContext, level: Risk, hits: list[str], after: int) -> tuple[list[str], str]:
     """🔴 要哪些验证因子：小额、只因额度规则升级的任选一种（人脸或短信），其余人脸 + 短信（rules.yaml 的 auth）。"""
     lite = auth.get("RED_ONE_FACTOR")
-    # 亲密关系绑定不动钱；只有这一条规则命中时任选一个因子，注入等风险仍需两个因子。
-    if (level == Risk.RED and ctx.tool == "contact.bind_intimacy" and lite
-            and hits == ["contact_bind_intimacy"]):
+    # 本人账户内存入、亲密关系绑定：只有本条规则时任选一个因子，注入等风险仍需两个。
+    one_factor = {"contact.bind_intimacy": "contact_bind_intimacy", "pot.lock": "pot_lock"}
+    if (level == Risk.RED and ctx.tool in one_factor and lite
+            and hits == [one_factor[ctx.tool]]):
         return list(lite["any_of"]), "any"
     if (level == Risk.RED and lite and ctx.base_level < Risk.RED and hits and set(hits) <= set(lite["rules"])
             and ctx.moves_money and ctx.amount_fen <= lite["max_single_fen"] and after <= lite["max_daily_fen"]):

@@ -79,6 +79,7 @@ class PaymentMandate(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(16), default="active")
     signed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    valid_days: Mapped[int] = mapped_column(Integer, default=365)
     valid_until: Mapped[datetime] = mapped_column(DateTime, default=lambda: now() + timedelta(days=365))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
 

@@ -94,11 +94,28 @@ _TRANSFER_NO_AMOUNT = re.compile(r"(?:给|向)(?P<payee>[^\s，,。！!？?]{1,1
 _MEMO = re.compile(r"(?:备注|用途|写上)[是为:：]?\s*(?P<memo>[^\s，,。！!？?]{1,20})")
 
 
+def pot_intent(text: str) -> RuleIntent | None:
+    # 备注、引文等只作为数据；不能把里面的资金指令当作用户办理意图。
+    text = re.split(r"备注|收款说明|引用|知识库|[「“\"]", text, maxsplit=1)[0].strip()
+    if "心愿罐" not in text or re.search(r"不要|别|不能|怎么|如何|是否|能否", text):
+        return None
+    if re.search(r"心愿罐.*(明细|收支|记录|流水|花(?:到|在)?哪|用(?:到|在)?哪|去哪|进出)", text):
+        return RuleIntent("pot", {"op": "detail"})
+    if re.search(r"心愿罐.*(?:取出|转出|转回来|转回|取回)|从心愿罐.*取", text):
+        m = re.search(rf"(?:取出|转出|转回来|转回|取回)\s*{_AMT}", text)
+        return RuleIntent("pot", {"op": "withdraw", "amount_text": m.group("amount") if m else ""})
+    if re.search(r"我的心愿罐|管理心愿罐|心愿罐.{0,8}(?:余额|还有多少|还剩多少|多少|情况)", text):
+        return RuleIntent("pot", {"op": "manage"})
+    return None
+
+
 def rule_intent(text: str) -> RuleIntent:
     """模型不可用时的兜底识别，只覆盖 M0 的两条链路。"""
     memo = (m := _MEMO.search(text)) and m.group("memo")
     from .transfer import asks_aa_status, parse_aa, phone_transfer_slots  # 转账补全：手机号、AA
 
+    if pot := pot_intent(text):
+        return pot
     if slots := phone_transfer_slots(text):  # 槽位里是脱敏号码，提议工具再从原话还原
         return RuleIntent("transfer", {**slots, "memo": memo})
     if _faq_intent(text) or asks_rule(text):  # 知识问答（WS9）排在 AA、理财、订阅、卡片之前：「AA 收款怎么操作」「信用卡挂失要钱吗」问的是规则，不是办理
@@ -136,7 +153,10 @@ def rule_intent(text: str) -> RuleIntent:
 _SPENDING = r"(?:^|(?<=[的我月年天周近]))(?:消费|支出|开销|花销)"
 _WHEN = r"(这个?月|上个?月|本月|今年|去年|最近|近期|\d{1,2}月份?|[一二三四五六七八九十]{1,2}月份?)"
 _BILL = [
-    ("bill_report", re.compile(r"报告|月报|年报|账单总结|收支(情况|总结)|总结一下.{0,6}(账单|消费|收支)"
+    ("bill_report", re.compile(r"报告|月报|年报|年度账单|账单总结|收支(情况|总结)|总结一下.{0,6}(账单|消费|收支)"
+                               r"|(?:\d{4}年|去年|今年|本年)(?:全年|一年|以来)?的?每个?月的?(?:收入|支出|收支|消费)"
+                               r"|^(?:请|帮我|给我|我|看看|看一下|查一下)*(?:\d{4}年|去年|今年|本年)(?:全年|一年|以来)?的?"
+                               r"(?:收支|收入(?:和|与|及|、)?支出|花了?多少(?:钱)?)[？?。！!]*$"
                                rf"|{_SPENDING}的?(总结|分析)|分析(一下)?(我的?)?{_WHEN}?的?(消费|支出|开销|花销|收支|账单)")),
     ("bill_anomalies", re.compile(r"异常|可疑|盗刷|被刷|不是我(本人)?(花|消费|买)|重复扣|扣了两次|多扣")),
     ("bill_categories", re.compile(r"分类|类别|占比|饼图|花(在|到)哪|都花(在)?哪|钱去哪|消费结构|各类|哪类"

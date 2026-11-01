@@ -152,7 +152,8 @@ def test_ordinal_answers_pending_question_not_pick(client):
 def test_whitelisted_shop_from_pot_is_yellow_and_edit_to_unknown_shop_is_red(client):
     """合作商户 + 心愿罐 + 小额 🟡；「修改」换成非合作商户（天猫旗舰店）升 🔴，规则和订花蛋糕一样。"""
     r = say(client, "存500进心愿罐")
-    assert confirm(client, r["cards"][0]).json()["status"] == "succeeded"
+    auth = confirm(client, r["cards"][0]).json()["card"]
+    assert pass_auth(client, auth)["status"] == "succeeded"
     r = order(client, "帮我买双鞋", r["session_id"])
     c = r["cards"][0]
     assert c["level"] == "YELLOW" and dict(c["rows"])["付款方式"] == "心愿罐「心愿」"

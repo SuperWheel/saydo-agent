@@ -11,15 +11,17 @@ from app.payments import used_today
 from app.tools import REGISTRY
 
 from .conftest import confirm, say
-from .helpers import ledger_ok, order
+from .helpers import ledger_ok, order, pass_auth
 from .test_mandate import enable
 
 
 def deposit(client, amount=500, purpose="心愿"):
     response = say(client, f"存{amount}进心愿罐，用途{purpose}")
     card = response["cards"][0]
-    assert card["type"] == "confirm" and card["level"] == "YELLOW", response
+    assert card["type"] == "confirm" and card["level"] == "RED", response
     result = confirm(client, card).json()
+    assert result["status"] == "awaiting_auth" and result["card"]["mode"] == "any"
+    result = pass_auth(client, result["card"])
     assert result["status"] == "succeeded", result
     with new_session() as db:
         pot_id = db.get(PendingAction, card["action_id"]).result["pot_id"]
@@ -98,7 +100,7 @@ def test_requires_entry_and_owns_pot_for_http_and_selection(client):
         assert say(client, "选择", selection={"type": "pot_detail", "pot_id": key})["cards"][0]["type"] == "notice"
 
 
-def test_pot_lock_release_yellow_no_outflow_or_nopwd_usage(client):
+def test_pot_lock_red_release_yellow_no_outflow_or_nopwd_usage(client):
     enable(client)
     transfer = say(client, "给我妈转100")["cards"][0]
     assert confirm(client, transfer).json()["status"] == "succeeded"
@@ -111,7 +113,8 @@ def test_pot_lock_release_yellow_no_outflow_or_nopwd_usage(client):
     assert release["level"] == "YELLOW" and "nopwd" not in release
     assert confirm(client, release).json()["status"] == "succeeded"
     for name in ("pot.lock", "pot.release"):
-        assert REGISTRY[name].base_risk.name == "YELLOW" and not REGISTRY[name].moves_money
+        assert REGISTRY[name].base_risk.name == ("RED" if name == "pot.lock" else "YELLOW")
+        assert not REGISTRY[name].moves_money
     with new_session() as db:
         after = db.get(LimitCounter, (1, now().date()))
         assert (after.used_fen, after.reserved_fen) == counts

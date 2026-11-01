@@ -136,6 +136,7 @@ test('5b 生日计划办到蛋糕下单时改计划：蛋糕确认卡盖上作�
   await expect(confirms).toHaveCount(1)
   await expect(confirms.first()).toContainText('存入心愿罐')
   await confirms.first().getByRole('button', { name: '确认' }).click()
+  await cards(page, 'auth-card').getByRole('button', { name: '模拟人脸识别' }).click() // 存入心愿罐：人脸或短信任选一种
   await expect(cards(page, 'receipt-card')).toContainText('存入心愿罐成功')
 
   // 确认后计划进入「等待临期执行」，最新的计划卡上有快进按钮

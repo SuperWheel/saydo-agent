@@ -356,6 +356,8 @@ def _execute(db: Session, a: PendingAction) -> Outcome:
     if a.status == "succeeded" and a.tool in ("mandate.sign", "mandate.update", "mandate.revoke"):
         event = {"mandate.sign": "mandate_signed", "mandate.update": "mandate_updated", "mandate.revoke": "mandate_revoked"}[a.tool]
         audit.record(db, a.trace_id, event, {"action_id": a.id, **result}, a.session_id)
+    if a.status == "succeeded" and a.tool == "pot.withdraw":
+        audit.record(db, a.trace_id, "pot_withdrawn", {"action_id": a.id, **result}, a.session_id)
     contact_events = {"contact.add": "contact_added", "contact.update": "contact_updated",
                       "contact.delete": "contact_deleted", "contact.bind_intimacy": "contact_intimacy_bound",
                       "contact.unbind_intimacy": "contact_intimacy_unbound"}

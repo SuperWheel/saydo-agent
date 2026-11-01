@@ -124,7 +124,13 @@ rules:
     elevate_to: RED
     reason: "单笔赎回金额达到 5 万元"
 
-  # ---------- 跨场景联动（WS7）：心愿罐存入 / 释放、订单、定时转账都是 🟡 起步 ----------
+  # ---------- 跨场景联动（WS7）：存入心愿罐需本人验证 ----------
+  - id: pot_lock
+    tool_in: [pot.lock]
+    when: {pot_lock: true}
+    elevate_to: RED
+    reason: "存入心愿罐需要本人验证，可任选人脸或短信"
+
   # order_fast_path 由系统算出：白名单商户 + 从心愿罐付款 + 今日累计转出（含本笔）≤ 1000 元
   - id: order_strong_auth
     waived_by: nopwd_ok
@@ -170,6 +176,12 @@ rules:
     when: {contact_bind_intimacy: true}
     elevate_to: RED
     reason: "绑定亲密关系需要本人验证，可任选人脸或短信"
+
+  - id: pot_withdraw_confirm
+    tool_in: [pot.withdraw]
+    when: {pot_withdraw: true}
+    elevate_to: YELLOW
+    reason: "心愿罐转回本人活期，需要确认"
 
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000

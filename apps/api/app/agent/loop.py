@@ -33,13 +33,15 @@ from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
 from ..tools.automation import edit_order, pick_option
-from ..tools import contact, payment
+from ..tools import contact, payment, register_pot_tools
 from ..tools.automation import pot_detail
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
 from .llm import LLMError, get_llm
 from .prompts import NO_BYPASS, help_text, system_prompt
+
+pot = register_pot_tools()
 
 MAX_TOOL_STEPS = 4
 HISTORY_MESSAGES = 8
@@ -96,6 +98,12 @@ def handle_turn(db: Session, *, user_id: int, session_id: str | None, text: str,
     on_workflow = False
     if selection:
         text_out, source = _selection_turn(ctx, selection), "template"
+    elif rule_intent(guard.text).intent == "pot":
+        # 先接心愿罐管理与转出，避免旧自动任务列表正则抢走。
+        text_out, source = _rule_turn(ctx, guard)
+        if workflow := _fast_path(ctx, guard):
+            _record_workflow(ctx, *workflow)
+            on_workflow = True
     # 跨场景（WS7）唯一入口：计划的控制语（继续 / 「蛋糕不要了」/ 撤销锁定 / 转人工）、多步请求（进规划器）、
     # 定时转账等必须确定性处理的话。不是这些就返回 None，照常走模型或规则。说明见 agent/planner.py
     elif (planned := planner.route(ctx, guard, get_llm if get_settings().llm_ready else None)) is not None:
@@ -355,7 +363,7 @@ def _brief(ctx: ToolContext, text: str) -> str:
 
 NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
 # 候选商品卡也结束这一轮：等用户自己挑，不让模型接着替用户下单
-ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind", "payment_agreement", "mandate", "payment_overview", "contacts", "pot_detail"}
+ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind", "payment_agreement", "mandate", "payment_overview", "contacts", "pot_detail", "pots"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
@@ -384,7 +392,7 @@ def _tool_domains(text: str, messages: list[dict]) -> set[str] | None:
 
 
 _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("sub_", "subscription"),
-                ("wealth_", "wealth"), ("aa", "transfer"), ("contacts", "contact"), ("contact", "transfer"), ("pot_detail", "automation"))
+                ("wealth_", "wealth"), ("aa", "transfer"), ("contacts", "contact"), ("contact", "transfer"), ("pot_detail", "automation"), ("pots", "automation"))
 
 
 # 确定性工作流：规则引擎能完整识别、参数齐全的固定流程，不经过模型。
@@ -394,6 +402,7 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
 # 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
 WORKFLOW_TOOLS = {
     "contact:manage": "contact.manage", "pot:detail": "pot.detail",
+    "pot:manage": "pot.manage", "pot:withdraw": "pot.withdraw_propose",
     "mandate:form": "mandate.form", "mandate:revoke": "mandate.revoke_propose", "mandate:overview": "payment.overview",
     "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
     "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
@@ -511,6 +520,8 @@ def _template_reply(cards: list[dict]) -> str:
             return "这是您的支付协议和免密授权情况。"
         case "contacts":
             return "这是您的联系人，可在卡片中添加、修改或管理亲密关系。"
+        case "pots":
+            return "这是您的心愿罐，可查看余额、待执行计划或转入转出。"
         case "pot_detail":
             return "这是心愿罐的余额和收支明细。"
         case "balance":
@@ -549,8 +560,12 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
         return prefix + _apply(ctx, get_balance(ctx)), "rule"
     if intent.intent == "contact":
         return prefix + _apply(ctx, contact.manage(ctx)), "rule"
-    if intent.intent == "pot" and intent.slots.get("op") == "detail":
-        return prefix + _apply(ctx, pot_detail(ctx)), "rule"
+    if intent.intent == "pot":
+        if intent.slots.get("op") == "withdraw":
+            result = pot.withdraw_propose(ctx, intent.slots.get("amount_text", ""))
+        else:
+            result = pot_detail(ctx) if intent.slots.get("op") == "detail" else pot.manage(ctx)
+        return prefix + _apply(ctx, result), "rule"
     if intent.intent == "mandate":
         handler = {"form": payment.mandate_form, "revoke": payment.revoke_propose, "overview": payment.overview}[intent.slots["op"]]
         return prefix + _apply(ctx, handler(ctx)), "rule"
@@ -590,6 +605,8 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
     if selection.get("type") in {"contact_" + op for op in contact.VERBS}:
         return _apply(ctx, contact.selection_turn(ctx, selection))
+    if selection.get("type") == "pot_manage":
+        return _apply(ctx, pot.selection_turn(ctx, selection))
     if selection.get("type") == "pot_detail":
         return _apply(ctx, pot_detail(ctx, pot_id=selection.get("pot_id")))
     if selection.get("type") in ("payment_agreement", "mandate_setup", "mandate_change", "mandate_offer"):

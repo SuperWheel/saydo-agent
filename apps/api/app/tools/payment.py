@@ -1,6 +1,6 @@
 """免密授权：表单只由用户提交额度，开通与变更仍走统一确认和强验证。"""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
@@ -57,6 +57,8 @@ def _problem(db, user_id: int, args: dict, *, revoke: bool = False) -> str | Non
         return "免密授权已变化，请重新发起"
     if revoke:
         return None if current else "当前没有有效免密授权"
+    if type(args.get("valid_days")) is not int or args["valid_days"] not in payments.VALIDITY_OPTIONS:
+        return "授权有效期只能选择30、90、180或365天"
     if not payments.agreement_valid(db, user_id):
         return "需先同意支付服务协议"
     for key, cap in payments.CAPS.items():
@@ -74,9 +76,10 @@ def mandate_context(db, args: dict, env):
     operation = args["operation"]
     block = _problem(db, env.user_id, args, revoke=operation == "revoke")
     current = payments.active_mandate(db, env.user_id)
-    loosen = operation == "sign" or (operation == "update" and current is not None and (
+    loosen = not block and (operation == "sign" or (operation == "update" and current is not None and (
         args["card_id"] != current.card_id or args["single_max_fen"] > current.single_max_fen
-        or args["daily_max_fen"] > current.daily_max_fen))
+        or args["daily_max_fen"] > current.daily_max_fen
+        or datetime.fromisoformat(args["valid_until"]) > current.valid_until)))
     return actions.base_context(db, env, tool=f"mandate.{operation}", block_reason=block,
                                 facts={"mandate_loosen": loosen})
 
@@ -85,6 +88,13 @@ def submit_setup(ctx: ToolContext, selection: dict) -> ToolResult:
     current = payments.active_mandate(ctx.db, ctx.user_id)
     operation = "update" if current else "sign"
     args = {key: selection.get(key) for key in ("card_id", "single_max_fen", "daily_max_fen")}
+    valid_days = selection.get("valid_days", current.valid_days if current else 365)
+    args["valid_days"] = valid_days
+    if current and "valid_days" not in selection:
+        args["valid_until"] = current.valid_until.isoformat()
+    else:
+        args["valid_until"] = ((now() + timedelta(days=valid_days)).isoformat()
+                               if type(valid_days) is int and valid_days in payments.VALIDITY_OPTIONS else None)
     args |= {"operation": operation, "mandate_id": current.id if current else None,
              "version": current.version if current else None}
     if problem := _problem(ctx.db, ctx.user_id, args):
@@ -99,7 +109,7 @@ def submit_setup(ctx: ToolContext, selection: dict) -> ToolResult:
                              rows=[["付款卡", payments.card_label(card)],
                                    ["单笔额度", fmt_yuan(args["single_max_fen"]) + " 元"],
                                    ["每日额度", fmt_yuan(args["daily_max_fen"]) + " 元"],
-                                   ["有效期", "365天"], ["规则", "免验证不免确认，新收款人与风险交易仍需强验证"]])
+                                   ["有效期", f"{valid_days}天（至 {datetime.fromisoformat(args['valid_until']):%Y-%m-%d}）"], ["规则", "免验证不免确认，新收款人与风险交易仍需强验证"]])
     return actions.propose_action(ctx, tool=f"mandate.{operation}", args=args, display=display)
 
 
@@ -137,6 +147,7 @@ def _revoke(ctx: ToolContext) -> ToolResult:
 def _result(db, row: PaymentMandate, rows: list[list[str]]) -> dict:
     return {"status": "succeeded", "mandate_id": row.id, "version": row.version,
             "single_max_fen": row.single_max_fen, "daily_max_fen": row.daily_max_fen,
+            "valid_days": row.valid_days, "valid_until": f"{row.valid_until:%Y-%m-%d}",
             "card_label": payments.card_label(db.get(Card, row.card_id)), "receipt_rows": rows}
 
 
@@ -149,10 +160,11 @@ def sign(db, args: dict, *, idempotency_key: str, user_id: int) -> dict:
                                                       PaymentMandate.status == "active")):
         old.status, old.revoked_at = "revoked", now()
     row = PaymentMandate(user_id=user_id, card_id=args["card_id"], single_max_fen=args["single_max_fen"],
-                         daily_max_fen=args["daily_max_fen"], signed_at=now(), valid_until=now() + timedelta(days=365))
+                         daily_max_fen=args["daily_max_fen"], signed_at=now(), valid_days=args["valid_days"],
+                         valid_until=datetime.fromisoformat(args["valid_until"]))
     db.add(row)
     db.flush()
-    return _result(db, row, [["状态", "免密支付已开通"], ["有效期至", f"{row.valid_until:%Y-%m-%d}"]])
+    return _result(db, row, [["状态", "免密支付已开通"], ["有效期", f"{row.valid_days}天（至 {row.valid_until:%Y-%m-%d}）"]])
 
 
 @bank_tool(name="mandate.update", domain="payment", base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
@@ -162,8 +174,9 @@ def update(db, args: dict, *, idempotency_key: str, user_id: int) -> dict:
         raise LedgerError(problem)
     row = payments.active_mandate(db, user_id)
     row.card_id, row.single_max_fen, row.daily_max_fen = args["card_id"], args["single_max_fen"], args["daily_max_fen"]
+    row.valid_days, row.valid_until = args["valid_days"], datetime.fromisoformat(args["valid_until"])
     row.version += 1
-    return _result(db, row, [["单笔额度", fmt_yuan(row.single_max_fen) + " 元"],
+    return _result(db, row, [["有效期", f"{row.valid_days}天（至 {row.valid_until:%Y-%m-%d}）"], ["单笔额度", fmt_yuan(row.single_max_fen) + " 元"],
                              ["每日额度", fmt_yuan(row.daily_max_fen) + " 元"]])
 
 

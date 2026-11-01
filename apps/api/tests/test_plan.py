@@ -42,6 +42,9 @@ def statuses(plan: dict) -> dict[str, str]:
 
 def ok(client, confirm_card: dict) -> dict:
     out = confirm(client, confirm_card).json()
+    if confirm_card["title"] == "存入心愿罐":
+        assert out["status"] == "awaiting_auth" and out["card"]["mode"] == "any"
+        out = pass_auth(client, out["card"])
     assert out["status"] == "succeeded", out
     return out
 
@@ -71,7 +74,7 @@ def test_birthday_plan_card(client):
     titles = [s["title"] for s in plan["steps"]]
     assert titles == ["存 ¥500.00 进心愿罐（妈妈生日）", "询价：鲜花（花漾花艺）", "下单鲜花，从心愿罐付款",
                       "询价：蛋糕（麦香烘焙）", "下单蛋糕，从心愿罐付款"]
-    assert [s["risk"] for s in plan["steps"]] == ["🟡 需你确认", "🟢 自动", "🟡 需你确认", "🟢 自动", "🟡 需你确认"]
+    assert [s["risk"] for s in plan["steps"]] == ["🔴 需强验证", "🟢 自动", "🟡 需你确认", "🟢 自动", "🟡 需你确认"]
     assert all(s["at_label"].startswith("临期") for s in plan["steps"][1:])  # 询价下单在生日前 2 天
     assert plan["due_label"].endswith("10:00") and "确认计划不等于确认付款" in plan["hint"]
     assert balance(client) == BALANCE  # 出计划卡什么都不办
@@ -83,7 +86,7 @@ def test_birthday_full_flow(client):
     sid, plan = r["session_id"], plan_of(r)
     r = op(client, sid, plan, "confirm")
     pot_card = card(r)
-    assert plan_of(r)["status"] == "running" and pot_card["title"] == "存入心愿罐" and pot_card["level"] == "YELLOW"
+    assert plan_of(r)["status"] == "running" and pot_card["title"] == "存入心愿罐" and pot_card["level"] == "RED"
     assert balance(client) == BALANCE  # 确认计划 ≠ 确认存入：点确认卡之前钱不动
     assert ok(client, pot_card)["card"]["rows"][-1] == ["活期余额", "¥28,150.32"]
 

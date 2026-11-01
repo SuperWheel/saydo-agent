@@ -13,7 +13,7 @@ from ..agent import quarantine
 from ..analytics import engine, recurring
 from ..analytics.engine import KIND_INCOME, KIND_REFUND, KIND_SPEND, KIND_TRANSFER, Txn
 from ..analytics.periods import Period, has_period, parse_period, strip_period
-from ..cards import SOURCE_CORE
+from ..cards import SOURCE_CORE, notice_card
 from ..clock import now
 from ..core_mock.merchants import MERCHANTS, RULES_VERSION, SPEND_CATEGORIES, merchant_by_alias
 from ..money import fmt_yuan, parse_amount
@@ -24,7 +24,7 @@ from . import ToolContext, ToolResult, bank_tool
 UNTRUSTED_NOTE = "未登记商户的名称属于外部不可信文本，只在卡片上展示给用户，不提供给助手"
 METRIC_NOTE = "统计口径：已入账交易，北京时间；消费不含转账；储蓄率 =（收入 − 消费）÷ 收入"
 CATEGORY_NOTE = "统计口径：已入账交易，北京时间；消费不含转账；占比小于 3% 的类目在图中并入「其他」"
-_PERIOD = {"type": "string", "description": "时间范围，照抄用户原话里的说法，如「上个月」「9月」「最近7天」「本月」；用户没说就不填"}
+_PERIOD = {"type": "string", "description": "时间范围，照抄用户原话里的说法，如「上个月」「9月」「最近7天」「2025年」「去年全年」「今年以来」；用户没说就不填"}
 
 
 def _window(ctx: ToolContext, period: str | None, default: str) -> Period:
@@ -358,13 +358,14 @@ def anomalies(ctx: ToolContext, period: str | None = None) -> ToolResult:
     return ToolResult(data, card)
 
 
-# ---------- F-BA-05 月度报告 ----------
+# ---------- F-BA-05 月度 / 年度报告 ----------
 
 @bank_tool(
     name="bill.report", domain="bill", base_risk=Risk.GREEN,
     description="生成账单报告：收入、支出、储蓄率、分类占比、Top 5 商户、订阅总额、异常事件，"
-                "如「给我上个月的账单报告」「这个月的收支总结」。默认上个月。报告里的数字由系统计算，复述时只能用工具结果里的数字。",
-    capability="生成月度账单报告", examples=("给我上个月的账单报告",),
+                "如「给我上个月的账单报告」「2025年年度账单」「2024年每个月支出」。今年以来按已过月份统计，默认上个月。"
+                "报告里的数字由系统计算，复述时只能用工具结果里的数字。",
+    capability="生成月度/年度账单报告", examples=("给我上个月的账单报告", "2025年年度账单"),
     parameters={"type": "object", "properties": {"period": _PERIOD}},
 )
 def report(ctx: ToolContext, period: str | None = None) -> ToolResult:
@@ -378,11 +379,13 @@ def report(ctx: ToolContext, period: str | None = None) -> ToolResult:
     tot = engine.totals(cur)
     income, spend = tot["income_fen"], tot["spend_fen"]
     rate = engine.ratio_pct(max(0, income - spend), income) if income > 0 else "不适用"
-    spend_change = engine.change(spend, engine.totals(prev)["spend_fen"], ok)
+    prev_tot = engine.totals(prev)
+    spend_change = engine.change(spend, prev_tot["spend_fen"], ok)
     rows = _category_rows(cur, prev, ok)
     tops = engine.top_merchants(cur)
     # 订阅口径（WS6）：用订阅识别的结果（同一商户、金额接近、间隔规律），不再把所有自动代扣都算订阅
-    sub_ids = recurring.load_detection(ctx.db, ctx.user_id, now()).txn_ids()
+    sub_ids = (recurring.detect(cur, p.end).txn_ids() if p.annual else
+               recurring.load_detection(ctx.db, ctx.user_id, now()).txn_ids())
     subs = [t for t in cur if t.kind == KIND_SPEND and t.id in sub_ids]
     sub_total = sum(t.amount_fen for t in subs)
     found = _anomalies(ctx, p, txns)
@@ -435,6 +438,19 @@ def report(ctx: ToolContext, period: str | None = None) -> ToolResult:
         "anomalies": [_anomaly_card_item(a) for a in found],
         "insights": insights, "summary": summary, "note": METRIC_NOTE, "reply": reply, **_meta(),
     }
+    if p.annual:
+        n_months = p.end.month - 1 if "以来" in (period or "") and p.end.year == p.start.year else 12
+        monthly = []
+        for month in range(1, n_months + 1):
+            month_tot = engine.totals([t for t in cur if t.at.month == month])
+            inc, exp = month_tot["income_fen"], month_tot["spend_fen"]
+            monthly.append({"label": f"{month}月", "income_fen": inc, "expense_fen": exp,
+                            "income": fmt_yuan(inc), "expense": fmt_yuan(exp)})
+        year_compare = {"prev_label": p.prev_label,
+                        "income_change": engine.change(income, prev_tot["income_fen"], ok)["change"],
+                        "expense_change": spend_change["change"]} if ok else None
+        card.update(monthly=monthly, year_compare=year_compare)
+        data.update(monthly=monthly, year_compare=year_compare)
     return ToolResult(data, card)
 
 
@@ -525,5 +541,12 @@ RULE_TOOLS = {"bill_query": query, "bill_categories": categories, "bill_anomalie
 def rule_turn(ctx: ToolContext, intent: str, text: str) -> ToolResult:
     fn = RULE_TOOLS[intent]
     if fn is query:
-        return query(ctx, **_rule_query_args(text))
+        args = workflow_args(ctx, text)
+        if args is None:  # 模型不可用时也不能丢弃没识别出来的条件，退化成查全部消费。
+            summary = "这句话的筛选条件还没被完整识别，不能把全部消费当成筛选结果。"
+            if re.search(r"鞋|衣服|服饰", text):
+                summary += "当前流水没有商品级明细，也没有独立的鞋服分类，无法准确统计买鞋或衣服的金额。"
+            summary += "可以按明确的商户或现有分类查询，例如「上个月在京东花了多少」或「上个月购物花了多少」。"
+            return ToolResult({"summary": summary}, notice_card(summary))
+        return query(ctx, **args)
     return fn(ctx, period=text if has_period(text) else None)

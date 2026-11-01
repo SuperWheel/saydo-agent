@@ -1,10 +1,12 @@
 <script setup>
 // 账单报告：所有数字都来自后端计算结果，这里只负责排版，不做任何计算。
 // 点卡片打开报告详情（各项指标、分类构成、商户）；「查看消费明细」按卡片上的 detail 取这个区间的全部消费，合计等于报告里的消费。
+// 整年口径多 monthly（12 个月收入 / 支出柱状图，点某个月看当月数值）和 year_compare（同比上一年）；旧卡片没有就不显示。
 import { computed, ref } from 'vue'
 import BillTxnSheet from './BillTxnSheet.vue'
 import CategoryRows from './CategoryRows.vue'
 import DonutChart from './DonutChart.vue'
+import { trend } from './colors'
 
 const props = defineProps({ card: { type: Object, required: true } })
 
@@ -16,6 +18,13 @@ const hasTxns = computed(() => hasDetail.value && (props.card.rows || []).length
 const query = computed(() => view.value && view.value !== 'report'
   ? { ...props.card.detail, ...(view.value.category ? { category: view.value.category } : {}) } : null)
 const kpi = (label) => props.card.kpis.find((k) => k.label === label)?.value
+
+// 柱高只是按全年最大值换算的排版比例，显示的数字都用后端给的字符串
+const monthly = computed(() => props.card.monthly || [])
+const peak = computed(() => Math.max(1, ...monthly.value.flatMap((m) => [m.income_fen || 0, m.expense_fen || 0])))
+const bar = (fen) => (fen > 0 ? `max(2px, ${(fen / peak.value) * 100}%)` : '0')
+const month = ref(-1)
+const picked = computed(() => monthly.value[month.value])
 
 function open(v, origin = '') {
   if (!hasDetail.value || (v !== 'report' && !hasTxns.value)) return
@@ -36,6 +45,29 @@ function open(v, origin = '') {
     <div v-if="card.spend_change" class="line">
       消费较{{ card.compare_to }} <b>{{ card.spend_change }}</b><span v-if="card.spend_change_yuan">（{{ card.spend_change_yuan }} 元）</span>
     </div>
+
+    <div v-if="card.year_compare" class="line" data-testid="report-yoy">
+      同比{{ card.year_compare.prev_label }}：收入 <b>{{ card.year_compare.income_change }}</b> ·
+      支出 <b :class="trend(card.year_compare.expense_change)">{{ card.year_compare.expense_change }}</b>
+    </div>
+
+    <template v-if="monthly.length">
+      <div class="sec">每月收支 <small>点柱子看当月</small></div>
+      <div class="monthly" data-testid="report-monthly" @click.stop>
+        <div class="m-legend"><span><i class="in" />收入</span><span><i class="out" />支出</span></div>
+        <div class="bars" :style="{ gridTemplateColumns: `repeat(${monthly.length}, minmax(0, 1fr))` }">
+          <div v-for="(m, i) in monthly" :key="m.label" class="mcol" :class="{ on: i === month }" data-testid="report-month"
+               @click="month = month === i ? -1 : i">
+            <div class="pair"><i class="b in" :style="{ height: bar(m.income_fen) }" /><i class="b out" :style="{ height: bar(m.expense_fen) }" /></div>
+            <span class="ml">{{ m.label.replace('月', '') }}</span>
+          </div>
+        </div>
+        <div class="mval" data-testid="report-month-value">
+          <template v-if="picked">{{ picked.label }}：收入 <b>¥{{ picked.income }}</b> · 支出 <b>¥{{ picked.expense }}</b></template>
+          <template v-else>点某个月看当月收入和支出</template>
+        </div>
+      </div>
+    </template>
 
     <template v-if="card.slices.length">
       <div class="sec">分类占比</div>
@@ -138,5 +170,24 @@ function open(v, origin = '') {
 .anomaly small { font-weight: 400; color: var(--muted); }
 .anomaly .reason { font-size: var(--fs-xs); line-height: 1.5; margin-top: 2px; }
 .none { font-size: var(--fs-sm); color: var(--green-ink); }
+.line b.up { color: var(--red-ink); }
+.line b.down { color: var(--green-ink); }
+.monthly { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 8px 6px; cursor: default; }
+.m-legend { display: flex; gap: var(--space-3); font-size: var(--fs-2xs); color: var(--muted); }
+.m-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.m-legend i, .b { display: block; border-radius: 2px; }
+.m-legend i { width: 8px; height: 8px; }
+.in { background: var(--info); }
+.out { background: var(--brand); }
+.bars { display: grid; gap: 2px; margin-top: 6px; }
+.mcol { display: flex; flex-direction: column; align-items: center; cursor: pointer; border-radius: var(--radius-xs); padding: 2px 0; min-width: 0; }
+.mcol.on { background: var(--surface); }
+.pair { display: flex; align-items: flex-end; justify-content: center; gap: 1px; height: 84px; width: 100%; }
+.b { width: 38%; max-width: 8px; border-radius: 2px 2px 0 0; }
+.mcol.on .b, .mcol:hover .b { filter: brightness(0.9); }
+.ml { font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.mcol.on .ml { color: var(--ink); font-weight: 600; }
+.mval { font-size: var(--fs-xs); color: var(--muted); text-align: center; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.mval b { color: var(--ink); }
 .insights { margin: 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.7; }
 </style>
