@@ -88,14 +88,24 @@ h3 { font-size: 12.5pt; }
 a { color: #c8102e; text-decoration: none; }
 table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9pt; break-inside: auto; }
 th, td { border: 1px solid #d9dce1; padding: 4px 6px; vertical-align: top; }
+td code, th code { overflow-wrap: anywhere; }
 th { background: #fcebee; }
 tr { break-inside: avoid; }
 img { max-width: 100%; max-height: 240mm; display: block; margin: 8px auto; }
 pre, code { font-family: "SF Mono", Menlo, monospace; font-size: 8.5pt; }
 pre { background: #f6f7f9; padding: 8px; white-space: pre-wrap; word-break: break-all; border-radius: 4px; }
+pre > code.sourceCode, pre > code.sourceCode > span { white-space: pre-wrap !important; word-break: break-all; }
 blockquote { margin: 8px 0; padding: 6px 12px; background: #fcebee; border-left: 3px solid #c8102e; color: #3a3f47; }
-nav#TOC { break-after: page; }
-nav#TOC ul { list-style: none; padding-left: 1.2em; }
+nav#TOC { break-after: page; padding-top: 4mm; }
+nav#TOC h2#toc-title { font-size: 24pt; color: #1f2329; letter-spacing: 0.3em; border: none; padding: 0 0 4mm;
+                       margin: 0 0 9mm; border-bottom: 1px solid #c8102e; }
+nav#TOC ul { list-style: none; padding: 0; margin: 0; }
+nav#TOC > ul > li { margin-bottom: 6mm; break-inside: avoid; }
+nav#TOC > ul > li > a { display: block; font-size: 14.5pt; font-weight: 600; color: #a30d25;
+                        padding-bottom: 2mm; margin-bottom: 2.5mm; border-bottom: 0.5px solid #ead3d7; }
+nav#TOC > ul > li > ul { columns: 2; column-gap: 12mm; }
+nav#TOC > ul > li > ul > li { font-size: 12pt; line-height: 1.95; break-inside: avoid; }
+nav#TOC > ul > li > ul > li > a { color: #1f2329; }
 header#title-block-header { display: none; }
 """
 
