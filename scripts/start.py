@@ -124,7 +124,7 @@ def main() -> None:
     for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), _interrupt)
-    p = argparse.ArgumentParser(description="一键启动言行 SayDo 演示（后端 + 前端）")
+    p = argparse.ArgumentParser(description="一键启动言行 SayDo Agent 演示（后端 + 前端）")
     p.add_argument("--keep-data", action="store_true", help="用持久的 data/dev.db，不用临时演示数据")
     p.add_argument("--local", action="store_true", help="只给本机用，不对局域网开放")
     p.add_argument("--rules", action="store_true", help="规则模式，不调大模型")
@@ -134,7 +134,7 @@ def main() -> None:
     p.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     opt = p.parse_args()
 
-    say("言行 SayDo · 一键启动演示\n")
+    say("言行 SayDo Agent · 一键启动演示\n")
     uv = need("uv", "先装 uv：https://docs.astral.sh/uv/getting-started/installation/ （装完重新打开终端）")
     npm = need("npm", "先装 Node.js 20 以上：https://nodejs.org/ （装完重新打开终端）")
 

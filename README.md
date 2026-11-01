@@ -228,15 +228,19 @@ scripts/start.py           一键启动（make demo）；一键启动.command（
 
 ## 提交材料清单
 
-赛方要求文档以 Word 提交。`make docx` 把文档导出到 `dist/submission/`（这个目录不进仓库）：
+代码仓库：<https://github.com/SuperWheel/saydo-agent>。赛方提交页分 5 项：技术文档、答辩 PPT、源码与部署材料、安全自评报告（这几项都能交 PDF）、演示视频（MP4）。`make docx` 把文档导出到 `dist/submission/`（这个目录不进仓库）：
 
 | 文件 | 内容 |
 |---|---|
-| `言行-参赛文档合集.docx` | PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页 |
+| `言行SayDo-技术文档.pdf` | 提交页「技术文档」：架构图 + 产品技术文档（核心算法、安全设计） |
+| `言行SayDo-安全自评报告.pdf` | 提交页「安全自评报告」：权限分级实现与已知风险清单 |
+| `言行SayDo-参赛文档合集.docx` / `.pdf` | PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页 |
 | `文档/NN-*.docx`（当前 00～10 共 11 份） | 每份文档各一个 Word，mermaid 图已转成图片 |
-| `言行-源码.zip` | 当前提交的源码（`git archive`），只含进了仓库的文件：没有 `.env`、数据库和 `node_modules` |
+| `saydo-agent-源码.zip` | 提交页「源代码与部署材料」：当前提交的源码（`git archive`，含 README、部署说明、测试用例），只含进了仓库的文件：没有 `.env`、数据库和 `node_modules` |
 
-导出需要 pandoc（`brew install pandoc`）和 apps/web 里的 Playwright Chromium，渲染图时要联网；10 教程的 WebP 截图由 macOS `sips` 转 PNG。Word 读取当前工作区的 `docs/[0-9][0-9]-*.md`（不含 README 和 research/）；源码包用 `git archive HEAD`，不含未提交改动。本次按约束未提交、未运行导出，交付前需核对 Word 与源码包的版本一致性。Word 打开后如果目录显示「没有目录项」，右键目录选「更新域」。
+答辩 PPT（`言行SayDo-答辩PPT.pptx` / `.pdf`）和演示视频（`言行SayDo-演示视频.mp4`）另行制作后放进同一目录。
+
+导出需要 pandoc（`brew install pandoc`）和 apps/web 里的 Playwright Chromium（渲染 mermaid 图、打印 PDF），渲染图时要联网；10 教程的 WebP 截图由 macOS `sips` 转 PNG。Word 读取当前工作区的 `docs/[0-9][0-9]-*.md`（不含 README 和 research/）；源码包用 `git archive HEAD`，不含未提交改动，导出时会打印包对应的提交号。Word 打开后如果目录显示「没有目录项」，右键目录选「更新域」。
 
 提交时另附体验入口 / 本地一键启动说明、PPT 与视频；`make docx` 不生成 PPT、视频或公网链接，赛程见 [开发计划](docs/03-开发计划.md)。
 

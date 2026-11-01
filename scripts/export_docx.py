@@ -1,9 +1,12 @@
 """导出提交材料：docs/*.md → Word（mermaid 图转 PNG 插进去），再打一个源码压缩包。
 
 赛方要求文档以 Word 提交（线上答疑会），Markdown 原文随源码包一起交。输出到 dist/submission/（不进仓库）：
-  文档/NN-xxx.docx          每份文档一个 Word
-  言行-参赛文档合集.docx      PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页
-  言行-源码.zip              git archive 当前提交：只含进了仓库的文件，.env、data/*.db、node_modules 都不在里面
+  文档/NN-xxx.docx            每份文档一个 Word
+  言行SayDo-参赛文档合集.docx  PRD、技术文档、架构图、安全自评、测试报告、部署说明合成一份，每份另起一页
+  言行SayDo-技术文档.pdf       提交页「技术文档」：架构图 + 产品技术文档（核心算法、安全设计）
+  言行SayDo-安全自评报告.pdf   提交页「安全自评报告」
+  言行SayDo-参赛文档合集.pdf   合集的 PDF 版
+  saydo-agent-源码.zip         git archive 当前提交：只含进了仓库的文件，.env、data/*.db、node_modules 都不在里面
 
 用法：make docx（或 python3 scripts/export_docx.py）。需要 pandoc（brew install pandoc）、
 apps/web 装好依赖和 Playwright Chromium（npx playwright install chromium），渲染 mermaid 要联网（从 jsDelivr 加载）。
@@ -26,6 +29,30 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 OUT = ROOT / "dist" / "submission"
 COLLECTION = ["01-产品需求文档-PRD", "02-产品技术文档", "07-架构图", "05-安全自评报告", "06-测试报告", "04-部署说明"]
+# 提交页能直接预览 PDF：技术文档（架构图在前）、安全自评、合集各出一份
+PDFS = {"言行SayDo-技术文档": ["07-架构图", "02-产品技术文档"], "言行SayDo-安全自评报告": ["05-安全自评报告"],
+        "言行SayDo-参赛文档合集": COLLECTION}
+PDF_BREAK = '\n\n<div style="break-after: page"></div>\n\n'
+# 明亮版式，标题用产品主题色；图按页宽缩放，太高的图限高，表格细边框
+PDF_CSS = """
+body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 10.5pt; line-height: 1.65; color: #1f2329; max-width: none; margin: 0; padding: 0; }
+h1, h2, h3, h4 { color: #a30d25; line-height: 1.35; break-after: avoid; }
+h1 { font-size: 20pt; border-bottom: 2px solid #c8102e; padding-bottom: 4px; }
+h2 { font-size: 15pt; border-left: 4px solid #c8102e; padding-left: 8px; }
+h3 { font-size: 12.5pt; }
+a { color: #c8102e; text-decoration: none; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9pt; break-inside: auto; }
+th, td { border: 1px solid #d9dce1; padding: 4px 6px; vertical-align: top; }
+th { background: #fcebee; }
+tr { break-inside: avoid; }
+img { max-width: 100%; max-height: 240mm; display: block; margin: 8px auto; }
+pre, code { font-family: "SF Mono", Menlo, monospace; font-size: 8.5pt; }
+pre { background: #f6f7f9; padding: 8px; white-space: pre-wrap; word-break: break-all; border-radius: 4px; }
+blockquote { margin: 8px 0; padding: 6px 12px; background: #fcebee; border-left: 3px solid #c8102e; color: #3a3f47; }
+nav#TOC { break-after: page; }
+nav#TOC ul { list-style: none; padding-left: 1.2em; }
+header#title-block-header { display: none; }
+"""
 
 MERMAID = re.compile(r"^```mermaid\n(.*?)^```\n", re.S | re.M)
 # 指向仓库里其他文件的相对链接（Word 里点不开）只留文字；http 链接照常保留
@@ -127,12 +154,26 @@ def to_docx(md: str, out: Path, ref: Path) -> None:
     fit_height(out)
 
 
+def to_pdf(md: str, out: Path, title: str, tmp: Path) -> None:
+    """pandoc 出带静态目录的 HTML（图片内嵌），再用 Chromium 打印成 A4 PDF。"""
+    css, html = tmp / "pdf.css", tmp / f"{out.stem}.html"
+    css.write_text(PDF_CSS)
+    subprocess.run(["pandoc", "-f", "gfm+raw_html", "-t", "html5", "--standalone", "--embed-resources", "--css", str(css),
+                    "--toc", "--toc-depth=2", "-M", f"title={title}", "-M", "toc-title=目录", "-o", str(html)],
+                   input=md.encode(), check=True)
+    subprocess.run(["node", str(ROOT / "scripts/render_pdf.mjs"), str(html), str(out), title], check=True)
+
+
 def main() -> None:
     if shutil.which("pandoc") is None:
         fail("没找到 pandoc：brew install pandoc")
     if not (ROOT / "apps/web/node_modules/playwright").exists():
         fail("apps/web 没装依赖：cd apps/web && npm install && npx playwright install chromium")
-    shutil.rmtree(OUT, ignore_errors=True)
+    # 只清掉本脚本的产物：PPT、演示视频等另外放进 dist/submission/ 的文件保留
+    shutil.rmtree(OUT / "文档", ignore_errors=True)
+    for old in [*OUT.glob("言行*-参赛文档合集.*"), *OUT.glob("言行SayDo-技术文档.pdf"), *OUT.glob("言行SayDo-安全自评报告.pdf"),
+                *OUT.glob("*源码.zip")]:
+        old.unlink()
     (OUT / "文档").mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="saydo-docx-") as tmp:
         tmp = Path(tmp)
@@ -152,13 +193,17 @@ def main() -> None:
         for stem, md in docs.items():
             to_docx(md, OUT / "文档" / f"{stem}.docx", ref)
             print(f"  文档/{stem}.docx")
-        to_docx(PAGE_BREAK.join(docs[s] for s in COLLECTION), OUT / "言行-参赛文档合集.docx", ref)
-        print("  言行-参赛文档合集.docx")
+        to_docx(PAGE_BREAK.join(docs[s] for s in COLLECTION), OUT / "言行SayDo-参赛文档合集.docx", ref)
+        print("  言行SayDo-参赛文档合集.docx")
+        for name, stems in PDFS.items():
+            to_pdf(PDF_BREAK.join(docs[s] for s in stems), OUT / f"{name}.pdf", name.replace("言行SayDo-", "言行 SayDo Agent · "), tmp)
+            print(f"  {name}.pdf")
 
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
-    subprocess.run(["git", "archive", "--format=zip", "--prefix=saydo/", "-o", str(OUT / "言行-源码.zip"), "HEAD"], cwd=ROOT, check=True)
-    print(f"  言行-源码.zip（提交 {head}{'；工作区还有没提交的改动，不在包里' if dirty else ''}）")
+    subprocess.run(["git", "archive", "--format=zip", "--prefix=saydo-agent/", "-o", str(OUT / "saydo-agent-源码.zip"), "HEAD"],
+                   cwd=ROOT, check=True)
+    print(f"  saydo-agent-源码.zip（提交 {head}{'；工作区还有没提交的改动，不在包里' if dirty else ''}）")
     print(f"\n✓ 输出在 {OUT.relative_to(ROOT)}/")
 
 
