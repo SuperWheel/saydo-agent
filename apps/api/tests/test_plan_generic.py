@@ -390,3 +390,41 @@ def test_llm_cannot_replace_required_deposit_with_existing_pot():
     raw['steps'][0]['args'] = {'pot_hint': '爱人生日'}
     with pytest.raises(planner.PlanRejected, match='不能省略存款步骤'):
         planner.validate(raw, source_text=COMPETITION, at=clock.now())
+
+
+@pytest.mark.parametrize('sentence,fen', [
+    ('后天给我妹妹买一个600块钱的鞋子', 60000), ('后天给我妹妹买双600元的鞋', 60000), ('后天给我妹买双鞋，600块左右', 60000),
+])
+def test_price_before_goods_is_budget(client, sentence, fen):
+    p = plan_of(say(client, sentence))
+    assert p['steps'][-1]['purchase']['budget_fen'] == fen and orders() == 0
+
+
+def test_llm_budget_compared_by_amount_not_text(llm_client, fake):
+    sentence = '后天给我妹妹买一个600块钱的鞋子'
+    raw = planner.template_plan(sentence, clock.now())
+    for s in raw['steps']:
+        if 'budget_text' in s['args']:
+            s['args']['budget_text'] = '600'  # 模型写成「600」，原话是「600块钱」：同一个预算
+    fake(text(json.dumps(raw)))
+    assert plan_of(say(llm_client, sentence))['source'] == 'llm'
+    raw['steps'][1]['args']['budget_text'] = '6000'
+    with pytest.raises(planner.PlanRejected):
+        planner.validate(raw, source_text=sentence, at=clock.now())
+
+
+def test_llm_budget_with_colloquial_suffix(llm_client, fake):
+    sentence = '下周六给我妈买300左右的花'
+    raw = planner.template_plan(sentence, clock.now())
+    for s in raw['steps']:
+        if 'budget_text' in s['args']:
+            s['args']['budget_text'] = '300左右'
+    fake(text(json.dumps(raw)))
+    assert plan_of(say(llm_client, sentence))['source'] == 'llm'
+
+
+def test_budget_too_low_says_cheapest_price(client):
+    r = say(client, '大后天给我爸买个500元以内的耳机')
+    assert r['cards'][0]['type'] == 'notice'
+    assert '500.00元以内买不到耳机' in r['reply']['text'] and '¥899.00' in r['reply']['text']
+    assert '说具体一些' not in r['reply']['text'] and orders() == 0

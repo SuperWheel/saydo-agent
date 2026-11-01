@@ -61,8 +61,10 @@ def _baseline(query):
 
 # ---------- 配置 ----------
 
-def test_on_by_default_with_siliconflow_key(monkeypatch):
+def test_on_by_default_with_siliconflow_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "ENV_FILE", tmp_path / ".env")  # 不读开发者本机的 .env（里面可能有真密钥）
     monkeypatch.delenv("RERANK_PROVIDER", raising=False)
+    monkeypatch.delenv("RERANK_API_KEY", raising=False)
     monkeypatch.setenv("SILICONFLOW_API_KEY", KEY_SF)
     get_settings.cache_clear()
     s = get_settings()

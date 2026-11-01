@@ -200,7 +200,7 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
             elif k in _ID_KEYS and v not in (None, ""):
                 errors.append(f"{sid}.{k} 只能引用前序步骤的结果，不能直接填写")
             elif k in _AMOUNT_KEYS and v not in (None, ""):
-                fen = parse_amount(str(v))
+                fen = _amount_of(v)
                 if fen is None or not amount_from_user(fen, [source_text]):
                     errors.append(f"{sid} 的金额「{v}」不是你说的")
             elif k in _PAYEE_KEYS and v and not _in_text(str(v), source_text):
@@ -252,7 +252,9 @@ def validate(raw: dict, *, source_text: str, at: datetime) -> tuple[str, date | 
                     errors.append("送达日期和你说的不一致")
                 if said:
                     a["date"] = str(said)
-                if a.get("budget_text") != shopping_budget(source_text):
+                said_budget = shopping_budget(source_text)  # 按金额比：模型写「600」、原话是「600块」都算同一个预算
+                if (_amount_of(a["budget_text"]) if a.get("budget_text") else None) != (
+                        parse_amount(said_budget) if said_budget else None):
                     errors.append("预算和你说的不一致")
                 if a.get("for_whom") and _person("给" + a["for_whom"]) != _person(source_text):
                     errors.append("收礼人和你说的不一致")
@@ -301,9 +303,17 @@ def uses_pot(text: str) -> bool:
     return "心愿罐" in text and bool(re.search(r"用|从|里的钱|余额|付款|支付", text))
 
 
+def _amount_of(text) -> int | None:
+    """模型填的金额常带口语后缀（「300左右」「500元以内」）：去掉再解析，金额本身仍要是用户说过的。"""
+    return parse_amount(re.sub(r"(?:块钱|钱|左右|上下|以内|以下|之内)+$", "", str(text).strip()))
+
+
 def shopping_budget(text: str) -> str | None:
     m = re.search(rf"({_MONEY})\s*(?:以内|以下|之内|预算)", text)
     m = m or re.search(rf"(?:预算|不超过|最多|上限)\s*({_MONEY})", text)
+    # 「600块钱的鞋子」「300左右的花」：商品前面的价钱也当预算上限
+    m = m or re.search(rf"({_MONEY})\s*钱?\s*(?:左右|上下)?\s*的[^，,。；;]{{0,4}}?(?:{auto._GOODS})", text)
+    m = m or re.search(rf"({_MONEY})\s*钱?\s*(?:左右|上下)", text)
     return m.group(1) if m else None
 
 
@@ -897,7 +907,12 @@ def _prepare_shopping(ctx: ToolContext, steps: list[dict], text: str, event: dat
         q = auto.plan_quote(a["category"], for_whom=a.get("for_whom", ""), delivery_date=event,
                             at=max(now(), run), budget_fen=budget, item_hint=a.get("item_hint", ""))
         if q is None:
-            raise PlanRejected(["预算内没有可售商品，请调整预算后重新设置计划"])
+            items = [i for i in auto.shops.catalog(a["category"]) if not a.get("item_hint") or a["item_hint"] in i.name]
+            low = min((i.price_fen for i in items), default=None)
+            what = a.get("item_hint") or auto.shops.CATEGORY_LABELS.get(a["category"], "商品")
+            tip = f"最便宜的{what}要 ¥{fmt_yuan(low)}，" if low else ""
+            raise PlanRejected([f"{fmt_yuan(budget) if budget else ''}元以内买不到{what}。{tip}可以提高预算后再说一遍。"],
+                               actionable=True)
         total += q.item.price_fen
         pot_ref = _REF.match(s["args"].get("pot_id", ""))
         if pot_ref:
