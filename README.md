@@ -238,9 +238,11 @@ scripts/start.py           一键启动（make demo）；一键启动.command（
 | `文档/NN-*.docx`（当前 00～10 共 11 份） | 每份文档各一个 Word，mermaid 图已转成图片 |
 | `saydo-agent-源码.zip` | 提交页「源代码与部署材料」：当前提交的源码（`git archive`，含 README、部署说明、测试用例），只含进了仓库的文件：没有 `.env`、数据库和 `node_modules` |
 
+三份 PDF 第一页是封面，写明文档名、队伍名称（坷垃的鸡屁踢）和队长、队员；背景插画是 `scripts/assets/cover-art.png`，封面由 `scripts/merge_pdf.py`（uv 临时装 pypdf）拼在正文前。
+
 答辩 PPT（`言行SayDo-答辩PPT.pptx` / `.pdf`）和演示视频（`言行SayDo-演示视频.mp4`）另行制作后放进同一目录。
 
-导出需要 pandoc（`brew install pandoc`）和 apps/web 里的 Playwright Chromium（渲染 mermaid 图、打印 PDF），渲染图时要联网；10 教程的 WebP 截图由 macOS `sips` 转 PNG。Word 读取当前工作区的 `docs/[0-9][0-9]-*.md`（不含 README 和 research/）；源码包用 `git archive HEAD`，不含未提交改动，导出时会打印包对应的提交号。Word 打开后如果目录显示「没有目录项」，右键目录选「更新域」。
+导出需要 pandoc（`brew install pandoc`）、uv 和 apps/web 里的 Playwright Chromium（渲染 mermaid 图、打印 PDF），渲染图时要联网；10 教程的 WebP 截图由 macOS `sips` 转 PNG。Word 读取当前工作区的 `docs/[0-9][0-9]-*.md`（不含 README 和 research/）；源码包用 `git archive HEAD`，不含未提交改动，导出时会打印包对应的提交号。Word 打开后如果目录显示「没有目录项」，右键目录选「更新域」。
 
 提交时另附体验入口 / 本地一键启动说明、PPT 与视频；`make docx` 不生成 PPT、视频或公网链接，赛程见 [开发计划](docs/03-开发计划.md)。
 

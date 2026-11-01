@@ -6,11 +6,12 @@
   言行SayDo-技术文档.pdf       提交页「技术文档」：架构图 + 产品技术文档（核心算法、安全设计）
   言行SayDo-安全自评报告.pdf   提交页「安全自评报告」
   言行SayDo-参赛文档合集.pdf   合集的 PDF 版
+  三份 PDF 第一页是封面（文档名、队伍名称和成员），背景插画是 scripts/assets/cover-art.png，用 scripts/merge_pdf.py（pypdf）拼在正文前
   saydo-agent-源码.zip         git archive 当前提交：只含进了仓库的文件，.env、data/*.db、node_modules 都不在里面
 
 用法：make docx（或 python3 scripts/export_docx.py）。需要 pandoc（brew install pandoc）、
 apps/web 装好依赖和 Playwright Chromium（npx playwright install chromium），渲染 mermaid 要联网（从 jsDelivr 加载）。
-只用标准库。
+本脚本只用标准库；拼封面的 merge_pdf.py 由 uv 临时装 pypdf 运行。
 """
 
 import hashlib
@@ -33,6 +34,50 @@ COLLECTION = ["01-产品需求文档-PRD", "02-产品技术文档", "07-架构�
 PDFS = {"言行SayDo-技术文档": ["07-架构图", "02-产品技术文档"], "言行SayDo-安全自评报告": ["05-安全自评报告"],
         "言行SayDo-参赛文档合集": COLLECTION}
 PDF_BREAK = '\n\n<div style="break-after: page"></div>\n\n'
+# 每份 PDF 前面加一页封面：文档名和一句说明；背景插画（scripts/assets/cover-art.png）左上留白，文字排在留白处
+COVERS = {"言行SayDo-技术文档": ("技术文档", "本文档收录系统架构图和产品技术文档，写明核心算法与安全设计。"),
+          "言行SayDo-安全自评报告": ("安全自评报告", "本报告按权限分级、熔断止损、审计追溯和红队测试逐项给出自评结果。"),
+          "言行SayDo-参赛文档合集": ("参赛文档合集", "本合集收录产品需求、技术文档、架构图、安全自评、测试报告和部署说明。")}
+TEAM_NAME = "坷垃的鸡屁踢"
+TEAM = [("队长", "李依伦", "东北大学 · 会计学"), ("队员", "卫高钰", "同济大学 · 管理科学与工程")]
+COVER_ART = ROOT / "scripts/assets/cover-art.png"
+COVER_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 210mm; height: 297mm; }
+body { position: relative; overflow: hidden; background: #fffaf9; color: #1f2329;
+       font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+.art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.text { position: absolute; left: 24mm; top: 30mm; right: 24mm; }
+.event { font-size: 11pt; letter-spacing: 0.12em; color: #c8102e; }
+.name { margin-top: 14mm; font-size: 60pt; font-weight: 700; line-height: 1; letter-spacing: 0.06em; }
+.en { margin-top: 4mm; font-size: 26pt; font-weight: 600; letter-spacing: 0.01em; }
+.lead { margin-top: 6mm; font-size: 12.5pt; color: #4e5562; }
+.rule { margin-top: 12mm; width: 36mm; border-top: 1px solid #c8102e; }
+.doc { margin-top: 8mm; font-size: 30pt; font-weight: 700; color: #a30d25; letter-spacing: 0.08em; }
+.desc { margin-top: 4mm; max-width: 150mm; font-size: 11pt; line-height: 1.7; color: #4e5562; }
+.team { margin-top: 16mm; display: grid; grid-template-columns: auto auto 1fr; column-gap: 7mm; row-gap: 4mm;
+        font-size: 12pt; align-items: baseline; }
+.team .role { color: #c8102e; font-size: 10.5pt; letter-spacing: 0.1em; }
+.team .who { font-weight: 600; letter-spacing: 0.08em; }
+.team .org { color: #4e5562; }
+.team .squad { grid-column: 2 / 4; font-weight: 600; letter-spacing: 0.08em; color: #a30d25; }
+.foot { position: absolute; left: 24mm; bottom: 22mm; font-size: 10.5pt; color: #4e5562; line-height: 1.8; }
+.foot b { color: #c8102e; font-weight: 600; letter-spacing: 0.12em; }
+</style></head><body>
+<img class="art" src="{art}" alt="">
+<div class="text">
+  <div class="event">「银行 AI 智能体」赛题参赛作品</div>
+  <div class="name">言行</div>
+  <div class="en">SayDo Agent</div>
+  <div class="lead">面向家庭财务管理者的手机银行 AI 助手</div>
+  <div class="rule"></div>
+  <div class="doc">{doc}</div>
+  <div class="desc">{desc}</div>
+  <div class="team">{team}</div>
+</div>
+<div class="foot"><b>言出即办，行必有据</b><br>2026 年 11 月</div>
+</body></html>"""
 # 明亮版式，标题用产品主题色；图按页宽缩放，太高的图限高，表格细边框
 PDF_CSS = """
 body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 10.5pt; line-height: 1.65; color: #1f2329; max-width: none; margin: 0; padding: 0; }
@@ -161,7 +206,16 @@ def to_pdf(md: str, out: Path, title: str, tmp: Path) -> None:
     subprocess.run(["pandoc", "-f", "gfm+raw_html", "-t", "html5", "--standalone", "--embed-resources", "--css", str(css),
                     "--toc", "--toc-depth=2", "-M", f"title={title}", "-M", "toc-title=目录", "-o", str(html)],
                    input=md.encode(), check=True)
-    subprocess.run(["node", str(ROOT / "scripts/render_pdf.mjs"), str(html), str(out), title], check=True)
+    body = tmp / f"{out.stem}-body.pdf"
+    subprocess.run(["node", str(ROOT / "scripts/render_pdf.mjs"), str(html), str(body), title], check=True)
+    doc, desc = COVERS[out.stem]
+    team = f'<span class="role">队伍</span><span class="squad">{TEAM_NAME}</span>' + "".join(f'<span class="role">{r}</span><span class="who">{n}</span><span class="org">{o}</span>' for r, n, o in TEAM)
+    cover_html, cover = tmp / f"{out.stem}-cover.html", tmp / f"{out.stem}-cover.pdf"
+    cover_html.write_text(COVER_HTML.replace("{art}", COVER_ART.as_uri()).replace("{doc}", doc)
+                          .replace("{desc}", desc).replace("{team}", team))
+    subprocess.run(["node", str(ROOT / "scripts/render_pdf.mjs"), str(cover_html), str(cover)], check=True)
+    subprocess.run(["uv", "run", "--no-project", "--quiet", "--with", "pypdf", "python", str(ROOT / "scripts/merge_pdf.py"),
+                    str(out), str(cover), str(body)], check=True)
 
 
 def main() -> None:
@@ -169,6 +223,8 @@ def main() -> None:
         fail("没找到 pandoc：brew install pandoc")
     if not (ROOT / "apps/web/node_modules/playwright").exists():
         fail("apps/web 没装依赖：cd apps/web && npm install && npx playwright install chromium")
+    if shutil.which("uv") is None:
+        fail("没找到 uv（拼封面要用它临时装 pypdf）：curl -LsSf https://astral.sh/uv/install.sh | sh")
     # 只清掉本脚本的产物：PPT、演示视频等另外放进 dist/submission/ 的文件保留
     shutil.rmtree(OUT / "文档", ignore_errors=True)
     for old in [*OUT.glob("言行*-参赛文档合集.*"), *OUT.glob("言行SayDo-技术文档.pdf"), *OUT.glob("言行SayDo-安全自评报告.pdf"),

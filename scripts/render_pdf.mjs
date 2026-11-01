@@ -1,5 +1,6 @@
 // 把 export_docx.py 生成的 HTML 打印成 A4 PDF（赛方提交页能直接预览 PDF）。
-// 用法：node scripts/render_pdf.mjs <in.html> <out.pdf> <页眉文字>；浏览器用 apps/web 里端到端测试装好的 Playwright Chromium。
+// 用法：node scripts/render_pdf.mjs <in.html> <out.pdf> [页眉文字]；浏览器用 apps/web 里端到端测试装好的 Playwright Chromium。
+// 不给页眉文字时按封面打印：满版、无边距、无页眉页脚。
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -11,6 +12,11 @@ const [input, output, title] = process.argv.slice(2)
 const browser = await chromium.launch()
 const page = await browser.newPage()
 await page.goto(pathToFileURL(input).href, { waitUntil: 'load' })
+if (!title) {
+  await page.pdf({ path: output, format: 'A4', printBackground: true, margin: { top: 0, bottom: 0, left: 0, right: 0 } })
+  await browser.close()
+  process.exit(0)
+}
 // 模板里的 style 用双引号包，字体名只能用单引号
 const small = "font-size:8px;color:#8a8f98;width:100%;padding:0 18mm;font-family:'PingFang SC','Microsoft YaHei',sans-serif"
 await page.pdf({
