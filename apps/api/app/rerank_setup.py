@@ -52,9 +52,9 @@ def status() -> dict:
 
 def save(provider: str = "", api_key: str = "", model: str = "", base_url: str = "", disable: bool = False) -> dict:
     """写入 .env 并重新加载配置。api_key / model / base_url 留空表示沿用（或用预设）。
-    disable=True 只把 RERANK_PROVIDER 清空（不重排），密钥保留，下次打开不用重填。"""
+    disable=True 只把 RERANK_PROVIDER 写成 off（不重排），密钥保留，下次打开不用重填。"""
     if disable:
-        update_env(config.ENV_FILE, {"RERANK_PROVIDER": ""}, _MARK)
+        update_env(config.ENV_FILE, {"RERANK_PROVIDER": "off"}, _MARK)
         return _reload()
     provider = provider.strip().lower()
     if provider not in RERANK_PROVIDERS:

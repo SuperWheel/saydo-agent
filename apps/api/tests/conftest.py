@@ -33,7 +33,7 @@ def _make_client(tmp_path, monkeypatch, *, llm: bool):
     monkeypatch.setenv("WECOM_BOT_ID", "")  # 本机 .env 填了企业微信凭证时，测试也不去连企业微信
     monkeypatch.setenv("WECOM_BOT_SECRET", "")
     monkeypatch.setenv("EMBEDDING_PROVIDER", "")  # 本机 .env 开了知识库向量通道或重排时，测试也只走 BM25、不联网
-    monkeypatch.setenv("RERANK_PROVIDER", "")
+    monkeypatch.setenv("RERANK_PROVIDER", "off")
     monkeypatch.setenv("ENTRY_FACE_REQUIRED", "true")  # 测试里也校验进入凭证，client 夹具会先过一次人脸
     get_settings.cache_clear()
     clock.reset()
@@ -58,7 +58,7 @@ def _no_embedding(monkeypatch, tmp_path):
         raise RuntimeError("测试里不发真实的向量 / 重排请求，用假客户端")
 
     monkeypatch.setenv("EMBEDDING_PROVIDER", "")
-    monkeypatch.setenv("RERANK_PROVIDER", "")
+    monkeypatch.setenv("RERANK_PROVIDER", "off")
     monkeypatch.setenv("KB_AGENTIC_RETRY", "false")  # 没查到时改写重查要调对话模型；要测的用例自己打开并换假模型
     monkeypatch.setattr(embedding, "make_client", _no_network)
     monkeypatch.setattr(rerank, "make_client", _no_network)
