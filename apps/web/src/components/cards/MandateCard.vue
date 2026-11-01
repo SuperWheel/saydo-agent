@@ -30,11 +30,11 @@ const validityOptions = computed(() => props.card.validity_options || [])
 const curDays = cur.value?.valid_days ?? null
 const validDays = ref(curDays ?? props.card.defaults?.valid_days ?? 365)
 const daysChanged = computed(() => !cur.value || validDays.value !== curDays)
-// 到期日预览：今天 + N 天（本地日期）；修改时没换期限就保持原到期日
+// 到期日预览：服务端今天 + N 天（演示日期可固定，旧卡片没有 today 时退回本地日期）；修改时没换期限就保持原到期日
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const newUntil = computed(() => {
   if (cur.value && !daysChanged.value) return cur.value.valid_until
-  const d = new Date()
+  const d = props.card.today ? new Date(`${props.card.today}T00:00:00`) : new Date()
   d.setDate(d.getDate() + validDays.value)
   return ymd(d)
 })

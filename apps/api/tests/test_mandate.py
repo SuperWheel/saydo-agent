@@ -40,6 +40,7 @@ def test_form_defaults_scope_and_explicit_intent(client):
         assert card["type"] == "mandate" and card["mode"] == "form", response
         assert card["defaults"] == {"single_max_fen": 50_000, "daily_max_fen": 200_000, "valid_days": 365}
         assert card["validity_options"] == [30, 90, 180, 365]
+        assert card["today"] == f"{clock.now():%Y-%m-%d}"  # 到期日预览按服务端（演示）日期算
         assert card["caps"] == {"single_max_fen": 200_000, "daily_max_fen": 500_000}
         assert {c["intimacy"] for c in card["scope"]["contacts"]} == {"父母", "兄弟姐妹", "伴侣"}
         assert any(c["payable"] for c in card["cards"])

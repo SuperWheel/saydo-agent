@@ -148,6 +148,7 @@ def mandate_card(db, user_id: int, mode: str = "form") -> dict:
     card = {"type": "mandate", "mode": mode, "title": "免密支付授权", "cards": cards,
             "default_card_id": current["card_id"] if current else next((c["id"] for c in cards if c["payable"]), None),
             "caps": dict(CAPS), "validity_options": list(VALIDITY_OPTIONS), "defaults": defaults, "current": current, "scope": scope(db, user_id),
+            "today": f"{now():%Y-%m-%d}",  # 到期日预览按服务端日期算（演示可固定日期），不用浏览器日期
             "rules": ["仅对已验证亲密关系的联系人和合作商户生效；新收款人仍需强验证",
                       "免验证不免确认：每一笔仍需您核对并点击确认",
                       "超过单笔或每日额度、或不用默认卡付款，自动升级为强验证",
