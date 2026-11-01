@@ -98,6 +98,14 @@ def test_small_red_face_alone_executes(client):
     ledger_ok(client)
 
 
+def test_red_reply_text_matches_card_hint(client):
+    """回复文字和确认卡说同一件事：小额只因额度升 🔴 不能说「人脸和短信」都要。"""
+    assert confirm(client, say(client, "给我妈转500")["cards"][0]).json()["status"] == "succeeded"
+    r = say(client, "给我妹转800")
+    assert r["reply"]["text"] == "请核对确认卡，无误后点击确认。确认后完成人脸识别即可，也可改用短信验证码（模拟）。"
+    assert "人脸识别 + 短信验证码" in say(client, "给赵磊转100")["reply"]["text"]
+
+
 def test_small_red_sms_alone_executes(client):
     """人脸不能是唯一可选方式：不想刷脸的，只输短信验证码也能办。"""
     auth = confirm(client, _small_red(client)).json()["card"]

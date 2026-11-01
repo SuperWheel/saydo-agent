@@ -80,7 +80,9 @@ def save(provider: str, api_key: str = "", enabled: bool | None = None, admin_pa
     if api_key:
         updates[KEY_ENV[provider]] = api_key
     elif not (updates.get(KEY_ENV[provider]) or getattr(s, PROVIDERS[provider]["key_field"])):
-        raise ConfigError(f"还没有 {LABELS[provider]} 的密钥，请先填写")
+        if not admin_password:
+            raise ConfigError(f"还没有 {LABELS[provider]} 的密钥，请先填写")
+        del updates["LLM_PROVIDER"]  # 不填密钥（规则模式）也能设后台口令；没密钥的供应商不切过去
     if enabled is not None:
         updates["LLM_ENABLED"] = "true" if enabled else "false"
     if workflow is not None:  # 关掉后固定流程也交给模型，演示时现场对比耗时和结果

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import audit, knowledge
-from ..cards import notice_card
+from ..cards import auth_reply, notice_card
 from ..clock import now
 from ..config import get_settings
 from ..models import ChatMessage, ChatSession, Contact, PendingAction, User
@@ -501,8 +501,7 @@ def _template_reply(cards: list[dict]) -> str:
         case "balance":
             return f"你名下账户余额合计 {c['total']} 元。"
         case "confirm":
-            extra = "这笔需要完成人脸和短信验证。" if c["level"] == "RED" else ""
-            return f"请核对确认卡，无误后点击确认。{extra}"
+            return f"请核对确认卡，无误后点击确认。{auth_reply(c)}"
         case "clarify":
             return c["question"]
         case "notice" if c.get("breaker"):

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..auth.actions import ACTIVE, ActionError, PolicyEnv, base_context, expire_stale, propose_action
-from ..cards import SOURCE_CORE, action_display, notice_card
+from ..cards import SOURCE_CORE, action_display, auth_reply, notice_card
 from ..clock import now
 from ..core_mock import cards as core
 from ..core_mock.ledger import LedgerError
@@ -886,7 +886,7 @@ def _rule_text(ctx: ToolContext, r: ToolResult, *, lost: bool = False) -> str:
     if status == "pending_confirmation":
         if lost:
             return "别着急，先帮你临时锁卡止损：确认后立即生效，找到了可以随时解锁。确定找不到了，可以说「挂失」办理正式挂失。"
-        return "请核对确认卡，无误后点击确认。" + ("这一步需要完成人脸和短信验证。" if r.data["level"] == "RED" else "")
+        return "请核对确认卡，无误后点击确认。" + auth_reply(r.card or {})
     if r.card and r.card["type"] == "notice":
         return r.card["text"]
     if r.card and r.card["type"] == "card_list":

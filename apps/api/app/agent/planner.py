@@ -26,7 +26,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from .. import audit
 from ..auth import actions
-from ..cards import notice_card
+from ..cards import auth_reply, notice_card
 from ..clock import now
 from ..config import get_settings
 from ..core_mock.shops import CATEGORY_LABELS, SHOPS
@@ -477,6 +477,7 @@ def _run_step(ctx: ToolContext, plan: TaskPlan, s: dict) -> bool:
     if s["kind"] != "read":
         if card and card["type"] == "confirm":
             s["status"], s["action_id"], s["level"] = "awaiting", card["action_id"], card["level"]
+            s["auth_hint"] = card.get("auth_hint", "")
             s["note"] = ""
         else:
             s["status"] = "failed"
@@ -583,8 +584,7 @@ def _progress_text(plan: TaskPlan) -> str:
     awaiting = next((s for s in plan.steps if s["status"] == "awaiting"), None)
     failed = next((s for s in plan.steps if s["status"] == "failed"), None)
     if awaiting:
-        extra = "这一步需要完成人脸和短信验证。" if awaiting.get("level") == "RED" else ""
-        return f"下一步：{awaiting['title']}，请核对下方确认卡。{extra}"
+        return f"下一步：{awaiting['title']}，请核对下方确认卡。{auth_reply(awaiting)}"
     if failed:
         return f"这一步没办成：{failed['title']}（{failed['note']}）。可以说「继续」重试，或说「转人工」。"
     if plan.status == "waiting":
@@ -868,7 +868,7 @@ def _reply_for(ctx: ToolContext, result: ToolResult) -> str:
         ctx.cards.append(result.card)
     card = result.card or {}
     if card.get("type") == "confirm":
-        return "请核对确认卡，无误后点击确认。" + ("这一步需要完成人脸和短信验证。" if card["level"] == "RED" else "")
+        return "请核对确认卡，无误后点击确认。" + auth_reply(card)
     return card.get("text") or card.get("reply") or result.data.get("message") or "好的。"
 
 

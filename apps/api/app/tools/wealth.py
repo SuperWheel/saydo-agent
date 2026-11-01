@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..agent.grounding import promise_words
 from ..auth.actions import PolicyEnv, base_context, propose_action
-from ..cards import notice_card
+from ..cards import auth_reply, notice_card
 from ..cards import action_display as _action_display
 from ..clock import now
 from ..core_mock import wealth as wm
@@ -906,7 +906,7 @@ def _rule_text(ctx: ToolContext, r: ToolResult) -> str:
     if status in ("need_amount", "need_product"):
         return r.data["ask"]
     if status == "pending_confirmation":
-        red = "这一步需要完成人脸和短信验证。" if r.data["level"] == "RED" else ""
+        red = auth_reply(r.card or {})
         lead = "请先阅读确认卡上的风险揭示，核对无误后点击确认。" if "disclosure" in r.data else "请核对确认卡，无误后点击确认。"
         return lead + red
     if r.card and r.card["type"] == "notice":

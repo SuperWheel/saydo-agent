@@ -104,6 +104,15 @@ def test_admin_password_protects_admin_routes(client, env_file):
     assert client.get("/api/health").json()["admin_protected"]
 
 
+def test_admin_password_without_model_key(client, env_file):
+    """规则模式（不填密钥）也能在设置页设后台口令；供应商不因此切到没密钥的那家。"""
+    r = client.post("/admin/llm-config", json={"provider": "glm", "enabled": True, "admin_password": "s3cret-pw"})
+    assert r.status_code == 200 and r.json()["admin_protected"] and not r.json()["ready"]
+    assert "LLM_PROVIDER=deepseek" in env_file.read_text(encoding="utf-8")
+    assert client.get("/admin/audit").status_code == 401
+    assert client.post("/admin/llm-config", json={"provider": "deepseek"}).status_code == 401  # 设了口令后不带口令改不了
+
+
 def test_admin_closed_outside_demo_mode_without_password(client, env_file, monkeypatch):
     monkeypatch.setenv("DEMO_MODE", "false")
     get_settings.cache_clear()

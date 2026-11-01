@@ -82,6 +82,12 @@ def auth_hint(action) -> str:
     return "确认后需完成" + " + ".join({"face": "人脸识别", "sms": "短信验证码"}[f] for f in factors) + "（模拟）"
 
 
+def auth_reply(card: dict) -> str:
+    """规则 / 模板回复里的验证提示，和确认卡上的 auth_hint 同一句（小额只因额度升级的 🔴 人脸、短信任选一种）。"""
+    hint = card.get("auth_hint") if card.get("level") == "RED" else ""
+    return f"{hint}。" if hint else ""
+
+
 def auth_card(challenge, action, *, sms_preview: str | None, attempts_left: int) -> dict:
     return {
         "type": "auth",
