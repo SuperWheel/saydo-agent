@@ -6,8 +6,8 @@ from . import _AMOUNT_CHARS
 
 # ---------- 手机号 ----------
 
-_PHONE = re.compile(r"(?<![\d*])(1[3-9]\d)[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)")
-_MASKED_PHONE = re.compile(r"(?<!\d)(1[3-9]\d)?\*{4,8}(\d{4})(?!\d)")  # 138****5678；带空格的号码会被脱敏成 *******5678
+_PHONE = re.compile(r"(?<![\d*])(1[0-9]\d)[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)")
+_MASKED_PHONE = re.compile(r"(?<!\d)(1[0-9]\d)?\*{4,8}(\d{4})(?!\d)")  # 138****5678；带空格的号码会被脱敏成 *******5678
 _TRANSFER_VERB = re.compile(r"转|打钱|打款|汇")
 _AMOUNT_AFTER_VERB = re.compile(
     rf"(?:转账|转|打|汇)(?:钱|款)?(?:给|到)?\s*(?P<amount>[¥￥]?[{_AMOUNT_CHARS}]+(?:块钱|块|元)?)")

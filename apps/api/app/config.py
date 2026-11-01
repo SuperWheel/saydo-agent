@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     admin_password: str = ""  # 运营后台口令；不设时后台只在演示模式下开放
     demo_mode: bool = True  # 演示环境：模拟短信内容直接回显到前端
     demo_user_id: int = 1
+    payment_agreement_presigned: bool = False
     action_ttl_s: int = 120  # 确认卡有效期
     token_ttl_s: int = 60  # 执行令牌有效期
     otp_window_s: int = 300  # 短信验证码有效期

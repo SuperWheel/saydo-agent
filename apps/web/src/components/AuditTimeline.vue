@@ -19,6 +19,11 @@ const OUTCOME = {
   verified: ['核身通过', 'success'], auth_failed: ['核身未通过', 'danger'],
 }
 const flags = (p) => (p.flags?.length ? `标记 ${p.flags.join('、')}` : '')
+// 免密额度：payload 里可能是「元」字符串或「分」整数
+const yuan = (s, fen) => s ?? (fen != null ? (fen / 100).toLocaleString('en-US') : '')
+const limits = (p) => [yuan(p.single_max, p.single_max_fen) && `单笔 ${yuan(p.single_max, p.single_max_fen)} 元`,
+  yuan(p.daily_max, p.daily_max_fen) && `每日 ${yuan(p.daily_max, p.daily_max_fen)} 元`, p.card_label].filter(Boolean).join(' · ')
+const contact = (p) => [p.label || p.relation, p.name_masked, p.tail && `尾号 ${p.tail}`, p.intimacy].filter(Boolean).join(' · ')
 
 // 事件类型 → [标题, 详情]
 const EVENTS = {
@@ -53,19 +58,32 @@ const EVENTS = {
   execution: ['工具网关执行', (p) => [p.status === 'succeeded' ? '成功' : p.status, p.txn_no && `流水号 ${p.txn_no}`].filter(Boolean).join(' · ')],
   execution_failed: ['执行失败', (p) => p.error],
   circuit_open: ['断路器断开', (p) => `${p.tool} · ${p.failures}/${p.calls} 次失败`],
+  payment_agreement_signed: ['签署支付服务协议', (p) => (p.version ? `版本 ${p.version}` : '')],
+  payment_agreement_declined: ['拒绝支付服务协议', (p) => (p.action_id ? '被拦的那笔动作已取消' : '')],
+  mandate_offer_dismissed: ['暂不开通免密', () => '30 天内不再提示'],
+  mandate_signed: ['开通免密支付', limits],
+  mandate_updated: ['修改免密额度', limits],
+  mandate_revoked: ['关闭免密支付', () => '之后每笔按原规则验证'],
+  contact_added: ['新增联系人', contact],
+  contact_updated: ['修改联系人', (p) => [contact(p), p.fields?.length && `改了 ${p.fields.join('、')}`].filter(Boolean).join(' · ')],
+  contact_deleted: ['删除联系人', (p) => [contact(p), '对 TA 的免密支付立即失效'].filter(Boolean).join(' · ')],
+  contact_intimacy_bound: ['绑定亲密关系', contact],
+  contact_intimacy_unbound: ['解除亲密关系', (p) => [contact(p), '免密支付对 TA 立即失效'].filter(Boolean).join(' · ')],
 }
 const BAD = new Set(['injection_suspected', 'llm_error', 'provenance_reject', 'grounding_failed', 'breaker_tripped',
   'breaker_blocked', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated', 'auth_failed',
-  'execution_failed', 'circuit_open', 'entry_face_failed'])
+  'execution_failed', 'circuit_open', 'entry_face_failed', 'payment_agreement_declined'])
 
 const STAGES = [
   ['input', '用户消息', ['user_message', 'injection_suspected']],
   ['intent', '意图 / 工具', ['intent', 'llm_call', 'tool_call', 'llm_error', 'provenance_reject', 'grounding_failed', 'grounding_retry', 'assistant_reply']],
   ['policy', '策略定级', ['policy_decision', 'breaker_tripped', 'breaker_blocked']],
-  ['confirm', '确认', ['action_created', 'action_confirmed', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated']],
+  ['confirm', '确认', ['action_created', 'action_confirmed', 'digest_mismatch', 'action_cancelled', 'action_expired', 'action_invalidated',
+    'payment_agreement_signed', 'payment_agreement_declined', 'mandate_offer_dismissed']],
   ['auth', '验证', ['auth_challenge', 'auth_failed', 'auth_passed', 'card_number_viewed', 'entry_face_passed', 'entry_face_failed']],
   ['token', '令牌', ['policy_revalidated', 'token_issued']],
-  ['exec', '执行', ['execution', 'execution_failed', 'circuit_open']],
+  ['exec', '执行', ['execution', 'execution_failed', 'circuit_open', 'mandate_signed', 'mandate_updated', 'mandate_revoked',
+    'contact_added', 'contact_updated', 'contact_deleted', 'contact_intimacy_bound', 'contact_intimacy_unbound']],
 ]
 const KNOWN = new Set(STAGES.flatMap((s) => s[2]))
 

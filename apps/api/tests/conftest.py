@@ -25,6 +25,7 @@ def _fixed_clock(monkeypatch):
 
 
 def _make_client(tmp_path, monkeypatch, *, llm: bool):
+    monkeypatch.setenv("PAYMENT_AGREEMENT_PRESIGNED", "true")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("LLM_ENABLED", "true" if llm else "false")
     monkeypatch.setenv("LLM_API_KEY", "sk-test" if llm else "")

@@ -22,6 +22,7 @@ from ..money import fmt_yuan, parse_amount
 from ..nlu import amount_from_user, fraud, narrow_payees, resolve_payee
 from ..nlu.transfer import ME_WORDS, is_phone_hint, mask_phone, resolve_phone, split_names
 from ..policy import PolicyContext, Risk, load_rules
+from ..payments import apply_nopwd
 from ..security import mask_pii
 from . import REGISTRY, ToolContext, ToolResult, bank_tool
 
@@ -48,7 +49,8 @@ def _rule(rule_id: str) -> dict | None:
 
 
 def _saved_contact(db: Session, user_id: int, account_no: str) -> Contact | None:
-    return db.scalars(select(Contact).where(Contact.user_id == user_id, Contact.account_no == account_no)).first()
+    return db.scalars(select(Contact).where(Contact.user_id == user_id, Contact.account_no == account_no,
+                                           Contact.status == "active")).first()
 
 
 def _debit_account(db: Session, user_id: int) -> Account:
@@ -104,7 +106,7 @@ def propose(ctx: ToolContext, *, payee_hint: str = "", amount_text: str = "", me
         return _propose_by_phone(ctx, payee_hint, amount_fen, memo)
     if contact_id is not None:
         c = db.get(Contact, contact_id)
-        candidates = [c] if c and c.user_id == ctx.user_id else []
+        candidates = [c] if c and c.user_id == ctx.user_id and c.status == "active" else []
     else:
         candidates = resolve_payee(db, ctx.user_id, payee_hint)
     pq = (ctx.session.state or {}).get("pending_question") or {}
@@ -140,6 +142,24 @@ def _propose_by_phone(ctx: ToolContext, hint: str, amount_fen: int | None, memo:
         return ToolResult({"status": "phone_not_from_user", "message": "手机号必须来自用户原话，请让用户再说一遍完整号码"},
                           notice_card("请再说一遍收款人的完整手机号。", "warning"))
     phone = phones[0]
+    contacts = list(ctx.db.scalars(select(Contact).where(Contact.user_id == ctx.user_id,
+                                                       Contact.status == "active", Contact.phone == phone)))
+    if len(contacts) > 1 and amount_fen is None:
+        _set_question(ctx, {"kind": "amount", "contact_ids": [], "phone": mask_phone(phone), "memo": memo})
+        return ToolResult({"status": "need_amount", "phone": mask_phone(phone)})
+    if len(contacts) > 1:
+        _set_question(ctx, {"kind": "payee",
+                            "contact_ids": [c.id for c in contacts], "amount_fen": amount_fen, "memo": memo})
+        return ToolResult({"status": "need_clarification"}, clarify_card("这个手机号对应多位联系人，请按姓名和尾号选择。", [
+            {"label": c.masked_name, "detail": f"{c.bank} 尾号 {c.tail}",
+             "selection": {"type": "contact", "contact_id": c.id}} for c in contacts]))
+    if contacts:
+        contact = contacts[0]
+        if amount_fen is None:
+            _set_question(ctx, {"kind": "amount", "contact_ids": [contact.id], "memo": memo})
+            return ToolResult({"status": "need_amount", "payee": contact.masked_name})
+        _set_question(ctx, None)
+        return _propose_to(ctx, amount_fen=amount_fen, memo=memo, contact=contact, phone=phone)
     b = phone_directory.lookup(phone)
     if b is None:
         return ToolResult({"status": "phone_not_registered", "phone": mask_phone(phone)},
@@ -239,7 +259,8 @@ def _window_facts(db: Session, args: dict, env: PolicyEnv, ctx: PolicyContext) -
 def transfer_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
     if args.get("contact_id") is not None:
         contact = db.get(Contact, args["contact_id"])
-        changed = contact is None or contact.account_no != args["account_no"]
+        changed = (contact is None or contact.user_id != env.user_id or contact.status != "active"
+                   or contact.account_no != args["account_no"])
         known = not changed and contact.first_transfer_at is not None
         block = "收款人信息已变化" if changed else None
     else:  # 按手机号查到的收款人：再核一次目录，户名或账号对不上就拒绝
@@ -251,11 +272,13 @@ def transfer_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
                        block_reason=block)
     ctx.facts |= _window_facts(db, args, env, ctx)
     ctx.facts["fraud_suspected"] = bool(args.get("fraud_hits"))
+    apply_nopwd(db, args, env, ctx, contact if args.get("contact_id") is not None else saved)
     return ctx
 
 
 @bank_tool(
     name="transfer.create", domain="transfer", base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,
+    needs_payment_agreement=True,
     moves_money=True, policy_context=transfer_context, description="执行转账。只能由工具网关凭执行令牌调用。",
 )
 def transfer_create(db: Session, args: dict, *, idempotency_key: str, user_id: int) -> dict:
@@ -265,7 +288,8 @@ def transfer_create(db: Session, args: dict, *, idempotency_key: str, user_id: i
         return _transfer_result(existing, acct)
     if args.get("contact_id") is not None:
         contact = db.get(Contact, args["contact_id"])
-        ok = contact is not None and contact.account_no == args["account_no"]
+        ok = (contact is not None and contact.user_id == user_id and contact.status == "active"
+              and contact.account_no == args["account_no"])
         name, bank = (contact.name, contact.bank) if ok else ("", "")
     else:
         b = phone_directory.by_account(args["account_no"])

@@ -7,7 +7,7 @@
 import hmac
 import math
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -19,6 +19,7 @@ from ..clock import now
 from ..config import get_settings
 from ..flags import kill_switch_on
 from ..models import Account, AuthChallenge, LimitCounter, PendingAction
+from ..payments import agreement_card, agreement_valid, invite_after
 from ..policy import Decision, PolicyContext, Risk, evaluate, load_rules
 from ..security import breaker
 from ..tools import REGISTRY, ToolContext, ToolResult
@@ -39,6 +40,7 @@ class Outcome:
     status: str
     card: dict
     message: str | None = None
+    extra_cards: list[dict] = field(default_factory=list)
 
 
 # ---------- 额度 ----------
@@ -84,6 +86,7 @@ class PolicyEnv:
     channel: str = "app"
     injection_flag: bool = False
     exclude: PendingAction | None = None  # 执行前重新校验时，排除动作自身的预占和计数
+    proposing: bool = False
 
 
 def base_context(db: Session, env: PolicyEnv, *, tool: str, amount_fen: int = 0, **extra) -> PolicyContext:
@@ -114,6 +117,8 @@ def decide(db: Session, tool: str, args: dict, env: PolicyEnv) -> Decision:
     else:
         ctx = base_context(db, env, tool=tool, amount_fen=args.get("amount_fen", 0) if spec.moves_money else 0)
     ctx.stop_loss = spec.is_stop_loss(args)  # 按参数判断的止损（收紧限额）只有这里知道参数
+    if spec.needs_payment_agreement and not env.proposing and not agreement_valid(db, env.user_id):
+        ctx.block_reason = "需先同意支付服务协议"
     return evaluate(ctx)
 
 
@@ -125,7 +130,7 @@ def propose_action(ctx: ToolContext, *, tool: str, args: dict, display: dict, da
     expire_stale(db, ctx.user_id)
     if (blocked := breaker.check_propose(ctx, tool, args, data)) is not None:  # 熔断：只读 / 暂停 / 转人工，止损类放行
         return blocked
-    decision = decide(db, tool, args, PolicyEnv(ctx.user_id, ctx.channel, ctx.injection_flag))
+    decision = decide(db, tool, args, PolicyEnv(ctx.user_id, ctx.channel, ctx.injection_flag, proposing=True))
     audit.record(db, ctx.trace_id, "policy_decision", {"tool": tool, "summary": display["summary"],
                                                        **decision.as_dict()}, ctx.session.id)
     if decision.block:
@@ -133,6 +138,10 @@ def propose_action(ctx: ToolContext, *, tool: str, args: dict, display: dict, da
                           notice_card(decision.block_reason or "该操作被拒绝", "error"))
     action = create_action(db, user_id=ctx.user_id, session_id=ctx.session.id, trace_id=ctx.trace_id, tool=tool,
                            args=args, display=display, decision=decision, injection_flag=ctx.injection_flag)
+    if REGISTRY[tool].needs_payment_agreement and not agreement_valid(db, ctx.user_id):
+        return ToolResult({**(data or {}), "status": "payment_agreement_required", "action_id": action.id,
+                           "note": "需先同意支付服务协议；尚未执行支付，不可声称已经完成。"},
+                          agreement_card(db, ctx.user_id, action))
     return ToolResult({
         **(data or {}), "status": "pending_confirmation", "level": decision.level.name,
         "level_label": decision.level.label, "reasons": decision.reasons,
@@ -148,6 +157,8 @@ def create_action(db: Session, *, user_id: int, session_id: str | None, trace_id
     reserve = int(args["amount_fen"]) if spec.moves_money else 0
     display = {**display, "injection_flag": injection_flag, "auth_factors": decision.required_factors,
                "auth_mode": decision.factor_mode}
+    if decision.nopwd:
+        display["nopwd"] = decision.nopwd
     if spec.moves_money:
         display["cumulative_after_fen"] = decision.cumulative_after_fen
     expires_at = now() + timedelta(seconds=get_settings().action_ttl_s)
@@ -236,6 +247,8 @@ def _auth_outcome(a: PendingAction, ch: AuthChallenge, message: str | None = Non
 
 def confirm(db: Session, *, action_id: str, digest: str, user_id: int) -> Outcome:
     a = _load(db, action_id, user_id)
+    if REGISTRY[a.tool].needs_payment_agreement and not agreement_valid(db, user_id):
+        raise ActionError(409, "需先同意支付服务协议")
     if a.status == "expired":
         return Outcome("expired", notice_card(f"确认卡已过期，{_unchanged(a)}。请重新发起。", "warning"))
     if a.status != "pending":
@@ -336,6 +349,16 @@ def _execute(db: Session, a: PendingAction) -> Outcome:
         return Outcome("failed", notice_card(f"{a.display['verb']}没有完成：{e}。{_unchanged(a)}。", "error"))
     _settle(db, a)
     a.status = result["status"]
+    if a.args.get("nopwd"):
+        result = {**result, "payment_executed_at": now().isoformat()}
     a.result = result
     audit.record(db, a.trace_id, "execution", {"action_id": a.id, **result}, a.session_id)
-    return Outcome(a.status, receipt_card(a, result))
+    if a.status == "succeeded" and a.tool in ("mandate.sign", "mandate.update", "mandate.revoke"):
+        event = {"mandate.sign": "mandate_signed", "mandate.update": "mandate_updated", "mandate.revoke": "mandate_revoked"}[a.tool]
+        audit.record(db, a.trace_id, event, {"action_id": a.id, **result}, a.session_id)
+    contact_events = {"contact.add": "contact_added", "contact.update": "contact_updated",
+                      "contact.delete": "contact_deleted", "contact.bind_intimacy": "contact_intimacy_bound",
+                      "contact.unbind_intimacy": "contact_intimacy_unbound"}
+    if a.status == "succeeded" and a.tool in contact_events:
+        audit.record(db, a.trace_id, contact_events[a.tool], {"action_id": a.id, **result}, a.session_id)
+    return Outcome(a.status, receipt_card(a, result), extra_cards=invite_after(db, a))

@@ -45,12 +45,14 @@ def resolve_payee(db: Session, user_id: int, hint: str) -> list[Contact]:
     h = normalize_hint(hint)
     if not h:
         return []
-    contacts = list(db.scalars(select(Contact).where(Contact.user_id == user_id)))
+    contacts = list(db.scalars(select(Contact).where(Contact.user_id == user_id, Contact.status == "active")))
     bare = h.removeprefix("我的").removeprefix("我")
     tail = _tail_in(h)
     for match in (
+        lambda c: c.phone == h,
         lambda c: c.name == h,
         lambda c: h in c.aliases or bare in c.aliases,
+        lambda c: c.relation in (h, bare),
         lambda c: c.note in (h, bare),
         lambda c: len(h) >= 2 and (h in c.name or c.name in h),
         lambda c: c.tail == tail,  # 同名追问后只答尾号：「尾号0921的」
@@ -110,6 +112,12 @@ def rule_intent(text: str) -> RuleIntent:
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
     if wealth := _wealth_intent(text):  # 理财（WS5）：「理财这个月赚了多少」不能被账单的「赚了多少」抢走
         return wealth
+    if re.search(r"心愿罐.*(明细|收支|记录|流水|花(?:到|在)?哪|用(?:到|在)?哪|去哪|进出)", text):
+        return RuleIntent("pot", {"op": "detail"})
+    if ("联系人" in text or re.search(r"(添加|新增|删除|删掉|修改).{0,12}收款人|^(?:请|帮我)?(?:删除|删掉)(?!.*(?:卡|订单|订阅|计划|心愿罐)).{2,10}$", text)):
+        return RuleIntent("contact", {"op": "manage"})
+    if mandate := mandate_intent(text):
+        return mandate
     if sub := _sub_intent(text):  # 订阅（WS6）排在账单之前：「我每个月订阅花多少」不是查流水
         return sub
     if bill := next((name for name, pat in _BILL if pat.search(text)), None):  # 账单类问句排在「给我妈转了多少」之前
@@ -281,6 +289,22 @@ _SUB_LEAVE = re.compile(r"占比|分类|报告|饼图|月报|异常")  # 这些�
 def names_merchant(text: str) -> bool:
     """话里点名了是哪个订阅商户（「取消爱奇艺」），而不是「刚才那个」。"""
     return bool(_SUB_MERCHANT.search(text))
+
+
+def mandate_intent(text: str) -> RuleIntent | None:
+    if names_merchant(text) or re.search(r"备注|知识库|引用|原文|收款说明|[「“\"]", text):
+        return None
+    if re.search(r"怎么|如何|怎样|(?:不要|暂不|不想|拒绝|别|不)(?:再|帮我|给我)?(?:开通|开启|设置|修改|调整)", text):
+        return None
+    if re.search(r"(我的|查看|查询|看看|管理).{0,4}支付授权", text):
+        return RuleIntent("mandate", {"op": "overview"})
+    if "免密" not in text:
+        return None
+    if re.search(r"关闭|关掉|停用|取消|撤销", text):
+        return RuleIntent("mandate", {"op": "revoke"})
+    if re.search(r"开通|开启|设置|修改|调整|调高|调低", text):
+        return RuleIntent("mandate", {"op": "form"})
+    return None
 
 
 def _sub_intent(text: str) -> RuleIntent | None:

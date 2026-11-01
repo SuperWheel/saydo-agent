@@ -24,6 +24,7 @@ def _as_list(v) -> list[str]:
 
 
 def main() -> int:
+    os.environ["PAYMENT_AGREEMENT_PRESIGNED"] = "true"
     tmp = tempfile.mkdtemp()
     os.environ["DATABASE_URL"] = f"sqlite:///{tmp}/eval.db"
     # 同一个企业微信机器人只能有一个长连接：评测时不连，免得把正在演示的后端踢下线

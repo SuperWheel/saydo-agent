@@ -25,6 +25,11 @@ import SubGuideCard from './cards/SubGuideCard.vue'
 import SubscriptionCard from './cards/SubscriptionCard.vue'
 import AnalysisCard from './cards/AnalysisCard.vue'
 import KnowledgeCard from './cards/KnowledgeCard.vue'
+import PaymentAgreementCard from './cards/PaymentAgreementCard.vue'
+import MandateCard from './cards/MandateCard.vue'
+import PaymentOverviewCard from './cards/PaymentOverviewCard.vue'
+import ContactsCard from './cards/ContactsCard.vue'
+import PotDetailCard from './cards/PotDetailCard.vue'
 
 const CARDS = {
   confirm: ConfirmCard,
@@ -52,6 +57,11 @@ const CARDS = {
   sub_guide: SubGuideCard,
   bill_analysis: AnalysisCard,
   knowledge: KnowledgeCard,
+  payment_agreement: PaymentAgreementCard,
+  mandate: MandateCard,
+  payment_overview: PaymentOverviewCard,
+  contacts: ContactsCard,
+  pot_detail: PotDetailCard,
 }
 
 defineProps({ card: { type: Object, required: true } })

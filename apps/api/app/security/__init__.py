@@ -39,7 +39,7 @@ _PATTERNS = [
         r"|(系统|管理员|开发者|官方|后台)(指令|命令|口令|授权码)\s*[:：]"
         r"|#{2,}\s*(系统|system|指令|instructions?)|\bsystem\s+(override|prompt\s*[:：]|message\s*[:：])", re.I | re.M)),
     ("bypass_auth", re.compile(
-        r"(跳过|绕过|免去|免除|省略|省去|不用|不需要|无需|不必)(人脸|刷脸|短信|验证|确认|认证|校验|风控|安全检查|密码)"
+        r"(跳过|绕过|免去|免除|省略|省去|不用|不需要|无需|不必)(人脸|刷脸|短信|验证|确认|认证|校验|风控|安全检查|(?:输|输入)?密码)"
         r"|(关闭|关掉|停用|解除)(风控|安全检查|验证|人脸识别|短信验证)"
         r"|\b(skip|bypass|disable)\s+(the\s+)?(verification|auth\w*|confirmation|2fa|otp|security\s+checks?)", re.I)),
     ("authority_claim", re.compile(
@@ -101,7 +101,12 @@ def inspect(raw: str) -> GuardResult:
     text = _INVISIBLE.sub("", unicodedata.normalize("NFKC", raw)).strip()
     hidden = "".join(chr(ord(c) - 0xE0000) for c in _TAGS.findall(raw))  # 标签字符藏的 ASCII
     folded = text.translate(_FOLD)
-    flags = _scan(text, folded, _SEPARATORS.sub("", folded), hidden)
+    scanned = text
+    if re.fullmatch(r"(?:请|帮我|我要|我想|想)?(?:开通|开启|设置|修改|调整)免密(?:支付|额度)?[，,。\s]*"
+                    r"(?:以后|这样|就)?(?:不用|不需要|无需)(?:输|输入)?密码[了。！!]?", text):
+        scanned = re.sub(r"(?:不用|不需要|无需)(?:输|输入)?密码", "", text)
+        folded = scanned.translate(_FOLD)
+    flags = _scan(scanned, folded, _SEPARATORS.sub("", folded), hidden)
     if text != raw.strip() and _INVISIBLE.search(raw):
         flags.append("invisible_chars")
     if any(_scan(p, p.translate(_FOLD)) for p in _decoded_payloads(text)):

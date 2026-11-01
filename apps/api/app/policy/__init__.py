@@ -55,6 +55,7 @@ class Decision:
     block_reason: str | None = None
     cumulative_after_fen: int = 0
     cooling_off_s: int = 0  # 冷静期：命中规则里最长的 cooling_off_s，期间不能确认
+    nopwd: dict | None = None
 
     @classmethod
     def blocked(cls, reason: str, after: int = 0) -> "Decision":
@@ -101,7 +102,7 @@ def _injection(rule: dict, ctx: PolicyContext, after: int) -> str | None:
 
 
 def _when(rule: dict, ctx: PolicyContext, after: int) -> str | None:
-    return rule["reason"] if all(ctx.facts.get(k) == v for k, v in rule["when"].items()) else None
+    return rule["reason"].format(**ctx.facts) if all(ctx.facts.get(k) == v for k, v in rule["when"].items()) else None
 
 
 MATCHERS = {
@@ -134,7 +135,7 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
 
     level, reasons, hits, cooling = ctx.base_level, [], [], 0
     for rule in rules["rules"]:
-        if not _applies(rule, ctx.tool):
+        if not _applies(rule, ctx.tool) or (rule.get("waived_by") and ctx.facts.get(rule["waived_by"]) is True):
             continue
         matcher = _when if "when" in rule else MATCHERS[rule.get("match", rule["id"])]
         reason = matcher(rule, ctx, after)
@@ -149,12 +150,17 @@ def evaluate(ctx: PolicyContext, rules: dict | None = None) -> Decision:
     return Decision(
         level=level, reasons=reasons, rule_hits=hits, required_factors=factors, factor_mode=mode,
         cumulative_after_fen=after, cooling_off_s=cooling,
+        nopwd=ctx.facts.get("nopwd_display") if level == Risk.YELLOW else None,
     )
 
 
 def _factors(auth: dict, ctx: PolicyContext, level: Risk, hits: list[str], after: int) -> tuple[list[str], str]:
     """🔴 要哪些验证因子：小额、只因额度规则升级的任选一种（人脸或短信），其余人脸 + 短信（rules.yaml 的 auth）。"""
     lite = auth.get("RED_ONE_FACTOR")
+    # 亲密关系绑定不动钱；只有这一条规则命中时任选一个因子，注入等风险仍需两个因子。
+    if (level == Risk.RED and ctx.tool == "contact.bind_intimacy" and lite
+            and hits == ["contact_bind_intimacy"]):
+        return list(lite["any_of"]), "any"
     if (level == Risk.RED and lite and ctx.base_level < Risk.RED and hits and set(hits) <= set(lite["rules"])
             and ctx.moves_money and ctx.amount_fen <= lite["max_single_fen"] and after <= lite["max_daily_fen"]):
         return list(lite["any_of"]), "any"

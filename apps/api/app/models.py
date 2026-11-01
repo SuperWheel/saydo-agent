@@ -1,6 +1,6 @@
 """数据表（M0 子集）。金额字段一律是整数分。"""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import JSON, BigInteger, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,6 +39,10 @@ class Contact(Base):
     bank: Mapped[str] = mapped_column(String(32))
     aliases: Mapped[list] = mapped_column(JSON, default=list)
     relation: Mapped[str | None] = mapped_column(String(16))
+    phone: Mapped[str | None] = mapped_column(String(16))
+    intimacy: Mapped[str | None] = mapped_column(String(16))
+    intimacy_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(16), default="active")
     note: Mapped[str | None] = mapped_column(String(32))
     first_transfer_at: Mapped[datetime | None] = mapped_column(DateTime)  # 为空 = 新收款人
 
@@ -50,6 +54,33 @@ class Contact(Base):
     @property
     def tail(self) -> str:
         return self.account_no[-4:]
+
+
+class PaymentConsent(Base):
+    """支付服务协议与免密邀请偏好，每用户一行。"""
+
+    __tablename__ = "payment_consents"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    agreement_version: Mapped[str | None] = mapped_column(String(16))
+    agreement_signed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    agreement_revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    mandate_offer_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class PaymentMandate(Base):
+    """免密授权；额度或付款卡变更递增版本，使旧确认卡失效。"""
+
+    __tablename__ = "payment_mandates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.id"))
+    single_max_fen: Mapped[int] = mapped_column(BigInteger)
+    daily_max_fen: Mapped[int] = mapped_column(BigInteger)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    signed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    valid_until: Mapped[datetime] = mapped_column(DateTime, default=lambda: now() + timedelta(days=365))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Transaction(Base):

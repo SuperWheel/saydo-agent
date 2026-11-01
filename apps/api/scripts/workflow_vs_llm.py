@@ -36,6 +36,7 @@ def main() -> int:
     reps = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     tmp = tempfile.mkdtemp()
     os.environ["DATABASE_URL"] = f"sqlite:///{tmp}/compare.db"
+    os.environ["PAYMENT_AGREEMENT_PRESIGNED"] = "true"
     os.environ["WECOM_BOT_ID"] = os.environ["WECOM_BOT_SECRET"] = ""
     os.environ.setdefault("DEMO_DATE", "2026-10-30")
 

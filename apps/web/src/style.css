@@ -46,7 +46,8 @@ html, body {
   color: var(--hd-ink, var(--ink));
 }
 .card.plan, .card.shop, .card.aa, .card.automation, .card.report,
-.card.rec, .card.cmp, .card.hold, .card.quiz { --hd-bg: var(--brand-soft); --hd-ink: var(--brand-strong); }
+.card.rec, .card.cmp, .card.hold, .card.quiz,
+.card.agreement, .card.mandate, .card.pay, .card.contacts, .card.pot { --hd-bg: var(--brand-soft); --hd-ink: var(--brand-strong); }
 .card.confirm { --hd-bg: var(--yellow-strong); --hd-ink: var(--on-brand); }
 .card.confirm.red, .card.auth { --hd-bg: var(--red); --hd-ink: var(--on-brand); }
 .card.breaker { --hd-bg: var(--red-ink); --hd-ink: var(--on-brand); }
