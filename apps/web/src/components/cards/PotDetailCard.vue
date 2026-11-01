@@ -15,7 +15,7 @@ const list = computed(() => (all.value ? props.card.items : props.card.items.sli
     <div class="bal"><span class="k">当前余额</span><span class="money">¥{{ card.pot.balance }}</span></div>
     <PotTxnRows :items="list" />
     <div v-if="card.items.length > FOLD" class="toggle" @click="all = !all">{{ all ? '收起' : `展开全部 ${card.items.length} 笔` }}</div>
-    <div class="meta">存入不用验证；从心愿罐付款只限合作商户，每笔仍要你确认</div>
+    <div class="meta">转入需人脸或短信验证（任选其一），转出到活期只需确认；罐里的钱只能在合作商户消费</div>
   </div>
 </template>
 
