@@ -165,6 +165,12 @@ rules:
     elevate_to: RED
     reason: "开通免密、调高额度或更换付款卡，需要人脸与短信验证"
 
+  - id: contact_bind_intimacy
+    tool_in: [contact.bind_intimacy]
+    when: {contact_bind_intimacy: true}
+    elevate_to: RED
+    reason: "绑定亲密关系需要本人验证，可任选人脸或短信"
+
 bank_hard_limits:
   non_counter_daily_max_fen: 5000000
   reason: "超出非柜面渠道单日 5 万元限额，须使用数字证书或到柜面办理（参考银发〔2016〕261 号）"

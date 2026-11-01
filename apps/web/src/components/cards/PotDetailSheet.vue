@@ -4,7 +4,7 @@ import { ref, watch } from 'vue'
 import { api } from '../../api'
 import PotTxnRows from './PotTxnRows.vue'
 
-const props = defineProps({ potId: { type: Number, default: 0 }, purpose: { type: String, default: '' } })
+const props = defineProps({ potId: { type: [String, Number], default: '' }, purpose: { type: String, default: '' } })
 
 const d = ref(null)
 const err = ref('')

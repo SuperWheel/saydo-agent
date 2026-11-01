@@ -33,7 +33,8 @@ from ..tools.gateway import GatewayError, ToolViolation, run_read_tool
 from ..tools.transfer import aa_status, propose, propose_aa
 from ..tools.wealth import rule_turn as wealth_rule_turn
 from ..tools.automation import edit_order, pick_option
-from ..tools import payment
+from ..tools import contact, payment
+from ..tools.automation import pot_detail
 from ..tools.wealth import buy_from_card, submit_quiz
 from . import planner  # 跨场景（WS7）：多步请求、计划控制语、定时转账
 from .grounding import check, collect_facts
@@ -354,12 +355,12 @@ def _brief(ctx: ToolContext, text: str) -> str:
 
 NO_PROMISE = "理财产品都有风险，本金和收益都不作保证。可以先做风险测评，再看适合你的产品。"
 # 候选商品卡也结束这一轮：等用户自己挑，不让模型接着替用户下单
-ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind", "payment_agreement", "mandate", "payment_overview"}
+ENDS_TURN = {"confirm", "clarify", "notice", "shop_options", "card_bind", "payment_agreement", "mandate", "payment_overview", "contacts", "pot_detail"}
 # 查余额、转人工任何时候都可能用到；知识问答（WS9）也是：「锁卡和挂失有什么区别」按规则会归到卡片域，但问的是规则
 ALWAYS_TOOLS = ("account.balance", "handoff.request", "kb.search")
 _INTENT_DOMAIN = {"balance": "account", "transfer": "transfer", "aa": "transfer", "aa_status": "transfer",
                   "card": "card", "wealth": "wealth", "sub": "subscription", "adhoc_analysis": "bill", "faq": "knowledge",
-                  "mandate": "payment"}
+                  "mandate": "payment", "contact": "contact", "pot": "automation"}
 _CLAUSE = re.compile(r"[，,。.？?！!；;\n]|再|另外|然后|顺便")
 
 
@@ -383,7 +384,7 @@ def _tool_domains(text: str, messages: list[dict]) -> set[str] | None:
 
 
 _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("sub_", "subscription"),
-                ("wealth_", "wealth"), ("aa", "transfer"), ("contact", "transfer"))
+                ("wealth_", "wealth"), ("aa", "transfer"), ("contacts", "contact"), ("contact", "transfer"), ("pot_detail", "automation"))
 
 
 # 确定性工作流：规则引擎能完整识别、参数齐全的固定流程，不经过模型。
@@ -392,6 +393,7 @@ _CARD_DOMAIN = (("balance", "account"), ("bill_", "bill"), ("card_", "card"), ("
 # 不在名单里的照常走模型：知识问答、自由分析、规划。
 # 每个意图对应模型路径上会调的那个工具：工作流轮次按这个工具名把交互写进历史，下一轮交给模型时上下文和模型自己调过一样
 WORKFLOW_TOOLS = {
+    "contact:manage": "contact.manage", "pot:detail": "pot.detail",
     "mandate:form": "mandate.form", "mandate:revoke": "mandate.revoke_propose", "mandate:overview": "payment.overview",
     "balance": "account.balance", "aa": "aa.propose", "aa_status": "aa.status", "transfer": "transfer.propose",
     "bill_report": "bill.report", "bill_categories": "bill.categories", "bill_anomalies": "bill.anomalies",
@@ -418,7 +420,7 @@ def _payee_answer(ctx: ToolContext, text: str) -> int | None:
     pq = (ctx.session.state or {}).get("pending_question") or {}
     if pq.get("kind") != "payee" or "transfer" not in FAST_INTENTS:
         return None
-    candidates = [c for c in (ctx.db.get(Contact, i) for i in pq["contact_ids"]) if c and c.user_id == ctx.user_id]
+    candidates = [c for c in (ctx.db.get(Contact, i) for i in pq["contact_ids"]) if c and c.user_id == ctx.user_id and c.status == "active"]
     narrowed = narrow_payees(candidates, text)
     return narrowed[0].id if len(candidates) > 1 and len(narrowed) == 1 else None
 
@@ -507,6 +509,10 @@ def _template_reply(cards: list[dict]) -> str:
             return "请选择付款卡和免密额度，提交后仍需确认和验证。"
         case "payment_overview":
             return "这是您的支付协议和免密授权情况。"
+        case "contacts":
+            return "这是您的联系人，可在卡片中添加、修改或管理亲密关系。"
+        case "pot_detail":
+            return "这是心愿罐的余额和收支明细。"
         case "balance":
             return f"你名下账户余额合计 {c['total']} 元。"
         case "confirm":
@@ -541,6 +547,10 @@ def _rule_turn(ctx: ToolContext, guard) -> tuple[str, str]:
                  ctx.session.id)
     if intent.intent == "balance":
         return prefix + _apply(ctx, get_balance(ctx)), "rule"
+    if intent.intent == "contact":
+        return prefix + _apply(ctx, contact.manage(ctx)), "rule"
+    if intent.intent == "pot" and intent.slots.get("op") == "detail":
+        return prefix + _apply(ctx, pot_detail(ctx)), "rule"
     if intent.intent == "mandate":
         handler = {"form": payment.mandate_form, "revoke": payment.revoke_propose, "overview": payment.overview}[intent.slots["op"]]
         return prefix + _apply(ctx, handler(ctx)), "rule"
@@ -578,6 +588,10 @@ def _apply(ctx: ToolContext, result: ToolResult) -> str:
 
 
 def _selection_turn(ctx: ToolContext, selection: dict) -> str:
+    if selection.get("type") in {"contact_" + op for op in contact.VERBS}:
+        return _apply(ctx, contact.selection_turn(ctx, selection))
+    if selection.get("type") == "pot_detail":
+        return _apply(ctx, pot_detail(ctx, pot_id=selection.get("pot_id")))
     if selection.get("type") in ("payment_agreement", "mandate_setup", "mandate_change", "mandate_offer"):
         result = payment.selection_turn(ctx, selection)
         reply = _apply(ctx, result)

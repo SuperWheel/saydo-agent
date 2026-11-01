@@ -19,14 +19,14 @@ from sqlalchemy.orm.attributes import flag_modified
 from .. import audit
 from ..auth import actions
 from ..auth.actions import PolicyEnv, base_context, create_action, decide, propose_action
-from ..cards import action_display, confirm_card, notice_card
+from ..cards import action_display, clarify_card, confirm_card, notice_card
 from ..clock import now
 from ..core_mock import shops
 from ..core_mock.ledger import LedgerError, post
-from ..models import (Account, ChatMessage, Contact, MerchantOrder, PendingAction, ScheduledTransfer, TaskPlan,
+from ..models import (Account, ChatMessage, Contact, LedgerEntry, MerchantOrder, PendingAction, ScheduledTransfer, TaskPlan,
                       Transaction, WishPot)
 from ..money import fmt_yuan, parse_amount
-from ..nlu import amount_from_user, ordinal_index, resolve_payee
+from ..nlu import amount_from_user, ordinal_index, resolve_payee, rule_intent
 from ..nlu.when import MONTH_END, next_monthly, parse_date, parse_when
 from ..policy import PolicyContext, Risk
 from ..security import breaker, mask_pii
@@ -85,6 +85,56 @@ def _need_amount_from_user(ctx: ToolContext, amount_text: str) -> tuple[int | No
 
 
 # ---------- 心愿罐（F-XS-02） ----------
+
+def pot_txns(db: Session, user_id: int, pot_id: str) -> dict:
+    """按存款分录取心愿罐实际进出，释放后的罐也可查历史。"""
+    pot = _own_pot(db, user_id, pot_id)
+    acct = db.get(Account, pot.account_id) if pot else None
+    if pot is None or acct is None or acct.user_id != user_id:
+        raise LookupError("心愿罐不存在")
+    items = []
+    entries = db.execute(select(Transaction, LedgerEntry).join(LedgerEntry, LedgerEntry.txn_id == Transaction.id)
+                         .where(LedgerEntry.account_code == f"DEP:{pot.account_id}", Transaction.status == "succeeded")
+                         .order_by(Transaction.created_at.desc(), Transaction.id.desc(), LedgerEntry.id.desc()))
+    labels = {"deposit": "从活期存入", "pay": "付款", "refund": "退款", "release": "退回活期"}
+    for txn, line in entries:
+        fen = line.cr_fen - line.dr_fen  # 存款负债：贷方增加余额、借方减少余额
+        if not fen:
+            continue
+        internal = txn.category == "心愿罐"
+        kind = ("deposit" if fen > 0 else "release") if internal else ("refund" if fen > 0 else "pay")
+        items.append({"at": f"{txn.created_at:%Y-%m-%d %H:%M}", "kind": kind, "label": labels[kind],
+                      "amount": ("+" if fen > 0 else "-") + fmt_yuan(abs(fen)), "amount_fen": fen})
+    return {"pot": {"pot_id": pot.id, "purpose": pot.purpose, "balance": fmt_yuan(acct.balance_fen),
+                    "balance_fen": acct.balance_fen}, "items": items}
+
+
+@bank_tool(name="pot.detail", domain=DOMAIN, base_risk=Risk.GREEN,
+           description="查看心愿罐余额和收支明细；多个罐时请用户在选择卡上选罐。",
+           capability="查看心愿罐明细", examples=("心愿罐明细", "心愿罐收支", "心愿罐记录"),
+           parameters={"type": "object", "properties": {"pot_hint": {"type": "string"}}})
+def pot_detail(ctx: ToolContext, pot_hint: str = "", *, pot_id: str | None = None) -> ToolResult:
+    if pot_id is not None:
+        if not isinstance(pot_id, str):
+            return ToolResult({"status": "not_found"}, notice_card("心愿罐不存在", "warning"))
+        try:
+            data = pot_txns(ctx.db, ctx.user_id, pot_id)
+        except LookupError:
+            return ToolResult({"status": "not_found"}, notice_card("心愿罐不存在", "warning"))
+        return ToolResult({"status": "ok", **data}, {"type": "pot_detail", **data})
+    pots = list(ctx.db.scalars(select(WishPot).where(WishPot.user_id == ctx.user_id)
+                               .order_by(WishPot.created_at.desc(), WishPot.id)))
+    hint = pot_hint or (ctx.user_texts[0] if ctx.user_texts else "")
+    hint = hint.replace("心愿罐", "").strip() if not pot_hint else hint
+    pots = [p for p in pots if p.purpose in hint or p.id == hint] or pots
+    if not pots:
+        return ToolResult({"status": "no_pot"}, notice_card("您还没有心愿罐，可以先存一笔钱。"))
+    if len(pots) == 1:
+        return pot_detail(ctx, pot_id=pots[0].id)
+    return ToolResult({"status": "need_pot"}, clarify_card("要查看哪个心愿罐的明细？", [
+        {"label": p.purpose, "detail": "余额 " + fmt_yuan(ctx.db.get(Account, p.account_id).balance_fen) + " 元",
+         "selection": {"type": "pot_detail", "pot_id": p.id}} for p in pots]))
+
 
 @bank_tool(
     name="pot.lock_propose", domain=DOMAIN, base_risk=Risk.GREEN,
@@ -637,7 +687,7 @@ def schedule_transfer_propose(ctx: ToolContext, payee_hint: str, amount_text: st
 
 def schedule_context(db: Session, args: dict, env: PolicyEnv) -> PolicyContext:
     c = db.get(Contact, args["contact_id"])
-    changed = c is None or c.user_id != env.user_id or c.account_no != args["account_no"]
+    changed = c is None or c.user_id != env.user_id or c.status != "active" or c.account_no != args["account_no"]
     ctx = base_context(db, env, tool="schedule.transfer_create", block_reason="收款人信息已变化" if changed else None)
     ctx.facts |= {"amount_over": args["amount_fen"] > _YELLOW_MAX_FEN,
                   "payee_new": not changed and c.first_transfer_at is None}
@@ -933,6 +983,8 @@ def pot_slots(text: str) -> dict | None:
 def rule_turn(ctx: ToolContext, text: str) -> tuple[str | None, list[tuple[str, dict, ToolResult]]] | None:
     """规则模式下的单步跨场景意图。返回 (回复, [(工具, 参数, 结果), ...])，回复为空时按最后一张卡片说；
     不是这类话返回 None。"""
+    if rule_intent(text).intent == "pot":
+        return None  # 明细入口交回主循环，不能被「我的心愿罐」总览抢走
     if _LIST.search(text):
         r = automation_list(ctx)
         return r.card["reply"], [("automation.list", {}, r)]

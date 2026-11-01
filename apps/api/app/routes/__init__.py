@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import agentic_setup, audit, clock, embedding_setup, llm_setup, rerank_setup, wecom_setup
+from .. import agentic_setup, audit, clock, embedding_setup, llm_setup, payments, rerank_setup, wecom_setup
 from ..agent.loop import handle_turn
 from ..auth import actions, entry
 from ..channels import take_handoff, wecom
@@ -18,12 +18,13 @@ from ..core_mock.ledger import is_balanced, ledger_balance
 from ..core_mock.seed import catch_up, seed
 from ..db import Base, get_db, get_engine, new_session
 from ..flags import kill_switch_on, set_flag
-from ..models import Account, AuditLog, PendingAction
+from ..models import Account, AuditLog, PaymentMandate, PendingAction
 from ..money import fmt_yuan
 from ..security import breaker, support
 from ..tools.bill import DETAIL_MAX_DAYS, txn_detail
 from ..tools import card as card_tools
 from ..tools.wealth import product_detail
+from ..tools.automation import pot_txns
 
 
 
@@ -113,6 +114,14 @@ def verify(challenge_id: str, body: VerifyIn, db: Session = Depends(get_db), use
 def accounts(db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
     rows = db.scalars(select(Account).where(Account.user_id == user_id)).all()
     return [{"id": a.id, "name": a.name, "tail": a.card_tail, "balance": fmt_yuan(a.balance_fen)} for a in rows]
+
+
+@api.get("/pots/{pot_id}/txns")
+def pot_transactions(pot_id: str, db: Session = Depends(get_db), user_id: int = Depends(current_user_id)):
+    try:
+        return pot_txns(db, user_id, pot_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
 
 
 @api.get("/wealth/products/{code}")
@@ -481,6 +490,19 @@ def breaker_support_review(trip_id: str, body: SupportReviewIn, db: Session = De
 def _demo_only():
     if not get_settings().demo_mode:
         raise HTTPException(404)
+
+
+@dev.post("/payment-agreement/reset", dependencies=[Depends(_demo_only)])
+def reset_payment_agreement(db: Session = Depends(get_db)):
+    """演示协议流程时撤回用户1的协议和免密授权，不重建银行账本。"""
+    row = payments.consent(db, 1)
+    row.agreement_version, row.agreement_signed_at = None, None
+    row.agreement_revoked_at, row.mandate_offer_dismissed_at = clock.now(), None
+    for mandate in db.scalars(select(PaymentMandate).where(PaymentMandate.user_id == 1,
+                                                         PaymentMandate.status == "active")):
+        mandate.status, mandate.revoked_at = "revoked", clock.now()
+    db.commit()
+    return {"ok": True}
 
 
 @dev.post("/seed", dependencies=[Depends(_demo_only)])
