@@ -112,7 +112,7 @@ def rule_intent(text: str) -> RuleIntent:
             return RuleIntent("transfer", {"payee_hint": m.group("payee"), "amount_text": m.group("amount"), "memo": memo})
     if wealth := _wealth_intent(text):  # 理财（WS5）：「理财这个月赚了多少」不能被账单的「赚了多少」抢走
         return wealth
-    if re.search(r"心愿罐.*(明细|收支|记录)", text):
+    if re.search(r"心愿罐.*(明细|收支|记录|流水|花(?:到|在)?哪|用(?:到|在)?哪|去哪|进出)", text):
         return RuleIntent("pot", {"op": "detail"})
     if ("联系人" in text or re.search(r"(添加|新增|删除|删掉|修改).{0,12}收款人|^(?:请|帮我)?(?:删除|删掉)(?!.*(?:卡|订单|订阅|计划|心愿罐)).{2,10}$", text)):
         return RuleIntent("contact", {"op": "manage"})

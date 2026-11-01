@@ -66,7 +66,7 @@ def _problem(db, user_id: int, args: dict, *, revoke: bool = False) -> str | Non
     if args["single_max_fen"] > args["daily_max_fen"]:
         return "单笔免密额度不能超过每日额度"
     if type(args.get("card_id")) is not int or not payments.payable(db, db.get(Card, args["card_id"]), user_id):
-        return "请选择本人可付款的银行卡；演示环境不支持用绑定的他行卡付款"
+        return "请选择本人可付款的银行卡；演示环境只支持用Ⅰ类借记卡主账户付款"
     return None
 
 
@@ -97,8 +97,8 @@ def submit_setup(ctx: ToolContext, selection: dict) -> ToolResult:
     summary = f"{verb}：单笔{fmt_yuan(args['single_max_fen'])}元，每日{fmt_yuan(args['daily_max_fen'])}元"
     display = action_display(title=verb + "确认", verb=verb, summary=summary,
                              rows=[["付款卡", payments.card_label(card)],
-                                   ["单笔额度", fmt_yuan(args["single_max_fen"]) + "元"],
-                                   ["每日额度", fmt_yuan(args["daily_max_fen"]) + "元"],
+                                   ["单笔额度", fmt_yuan(args["single_max_fen"]) + " 元"],
+                                   ["每日额度", fmt_yuan(args["daily_max_fen"]) + " 元"],
                                    ["有效期", "365天"], ["规则", "免验证不免确认，新收款人与风险交易仍需强验证"]])
     return actions.propose_action(ctx, tool=f"mandate.{operation}", args=args, display=display)
 
@@ -163,8 +163,8 @@ def update(db, args: dict, *, idempotency_key: str, user_id: int) -> dict:
     row = payments.active_mandate(db, user_id)
     row.card_id, row.single_max_fen, row.daily_max_fen = args["card_id"], args["single_max_fen"], args["daily_max_fen"]
     row.version += 1
-    return _result(db, row, [["单笔额度", fmt_yuan(row.single_max_fen) + "元"],
-                             ["每日额度", fmt_yuan(row.daily_max_fen) + "元"]])
+    return _result(db, row, [["单笔额度", fmt_yuan(row.single_max_fen) + " 元"],
+                             ["每日额度", fmt_yuan(row.daily_max_fen) + " 元"]])
 
 
 @bank_tool(name="mandate.revoke", domain="payment", base_risk=Risk.YELLOW, side_effect=True, llm_visible=False,

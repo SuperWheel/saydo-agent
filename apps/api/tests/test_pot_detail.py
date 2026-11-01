@@ -26,7 +26,7 @@ def deposit(client, amount=500, purpose="心愿"):
     return response, pot_id
 
 
-@pytest.mark.parametrize("sentence", ["心愿罐明细", "心愿罐收支", "心愿罐记录", "我的心愿罐明细"])
+@pytest.mark.parametrize("sentence", ["心愿罐明细", "心愿罐收支", "心愿罐记录", "我的心愿罐明细", "心愿罐里的钱都花哪了"])
 def test_detail_dialogue_and_empty_state(client, sentence):
     assert rule_intent(sentence).intent == "pot"
     assert rule_intent(sentence).slots == {"op": "detail"}

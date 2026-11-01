@@ -132,7 +132,8 @@ def _propose(ctx: ToolContext, op: str, values: dict, *, from_form: bool = False
     if op == "bind_intimacy":
         rows += [["亲密关系", args["intimacy"]], ["验证", "需人脸识别或短信验证码，任选一种"]]
     if op in ("delete", "unbind_intimacy") or (op == "update" and "account_no" in changes and changes["account_no"] != c.account_no):
-        rows.append(["说明", "对该联系人的免密支付立即失效；更换卡号后转账按新收款人验证"])
+        rows.append(["说明", "对该联系人的免密支付立即失效；更换卡号后转账按新收款人验证" if op == "update"
+                     else "对该联系人的免密支付立即失效，重新绑定亲密关系后才恢复"])
     display = action_display(title=VERBS[op] + "确认", verb=VERBS[op],
                              summary=f"{VERBS[op]}：{view['name_masked']}（尾号{view['tail']}）",
                              rows=rows, fields=view)

@@ -139,7 +139,7 @@ def mandate_card(db, user_id: int, mode: str = "form") -> dict:
         ok = payable(db, card, user_id)
         item = {"id": card.id, "label": card_label(card), "tail": card.card_no[-4:], "payable": ok}
         if not ok:
-            item["reason"] = ("演示环境暂不支持用绑定的他行卡付款" if not card.account_id
+            item["reason"] = ("演示环境只支持用Ⅰ类借记卡主账户付款" if not card.account_id
                               else "虚拟卡不支持作为免密授权卡" if card.kind == "virtual" else "付款卡当前不可用")
         cards.append(item)
     current = current_view(db, user_id)
