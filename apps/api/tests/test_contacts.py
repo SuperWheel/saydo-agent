@@ -305,3 +305,17 @@ def test_multiple_contacts_for_phone_clarify_after_amount(client):
     option = clarify["options"][0]
     selected = say(client, "选择收款人", r["session_id"], selection=option["selection"])["cards"][0]
     assert selected["type"] == "confirm"
+
+
+def test_outdated_local_db_is_rebuilt_on_startup(tmp_path, monkeypatch):
+    """本机老版本的演示库没有联系人手机号、亲密关系这些列：启动时按种子重建，不能一查联系人就报错。"""
+    import sqlite3
+
+    from .conftest import _make_client, enter
+
+    db_file = tmp_path / "test.db"
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("CREATE TABLE contacts (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT)")
+    with _make_client(tmp_path, monkeypatch, llm=False) as c:
+        enter(c)
+        assert say(c, "我的联系人")["cards"][0]["type"] == "contacts"

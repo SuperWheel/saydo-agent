@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from sqlalchemy import inspect
 
 from .channels import wecom
 from .config import get_settings
@@ -31,11 +32,21 @@ def _log_to_console() -> None:
         logger.setLevel(logging.INFO)
 
 
+def _schema_outdated(engine) -> bool:
+    """本地演示库是旧版本建的（缺新加的列）：没有迁移脚本，启动时按种子重建，否则查到新列就报错。"""
+    insp = inspect(engine)
+    return any(insp.has_table(t.name) and {c.name for c in t.columns} - {c["name"] for c in insp.get_columns(t.name)}
+               for t in Base.metadata.sorted_tables)
+
+
 def create_app() -> FastAPI:
     _log_to_console()
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         engine = init_engine(get_settings().database_url)
+        if _schema_outdated(engine):
+            logging.getLogger("saydo").warning("演示库结构是旧版本的，按种子数据重建（等同「重置演示数据」）")
+            Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
         with new_session() as db:
             seed(db)
